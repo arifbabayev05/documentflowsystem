@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, OAuthProvider } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -14,6 +15,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 const microsoftProvider = new OAuthProvider('microsoft.com');
 
 // Azure AD specific parameters to use your App ID and Secret
@@ -22,4 +24,4 @@ microsoftProvider.setCustomParameters({
     tenant: 'common'
 });
 
-export { auth, microsoftProvider };
+export { auth, db, microsoftProvider };

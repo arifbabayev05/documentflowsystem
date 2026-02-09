@@ -1,150 +1,225 @@
-import { CosmosClient } from "@azure/cosmos";
+import { db } from "./firebase";
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    setDoc,
+    updateDoc,
+    query,
+    where,
+    limit,
+    serverTimestamp,
+    deleteDoc,
+    writeBatch
+} from "firebase/firestore";
 
-const endpoint = process.env.COSMOS_ENDPOINT || "";
-const key = process.env.COSMOS_KEY || "";
-const databaseId = process.env.COSMOS_DB_ID || "Legal12Ecosystem";
-const customersContainerId = process.env.COSMOS_CONTAINER || "Customers";
-const usersContainerId = "Users";
-const permissionsContainerId = "Permissions";
-
-let client: CosmosClient | null = null;
-let dbCache: any = null;
-const containerCache: Record<string, any> = {};
-
-if (endpoint && key) {
-    client = new CosmosClient({
-        endpoint,
-        key,
-        connectionPolicy: { enableEndpointDiscovery: true }
-    });
-}
-
-export async function getContainer(id: string, partitionKey: string = "/id") {
-    if (!client) throw new Error("Azure Cosmos DB configuration is missing");
-
-    // Cache the container reference to avoid redundant 'createIfNotExists' calls
-    if (containerCache[id]) return containerCache[id];
-
-    if (!dbCache) {
-        const { database } = await client.databases.createIfNotExists({ id: databaseId });
-        dbCache = database;
-    }
-
-    const { container } = await dbCache.containers.createIfNotExists({
-        id,
-        partitionKey: { paths: [partitionKey] }
-    });
-
-    containerCache[id] = container;
-    return container;
-}
+const USERS_COLLECTION = "Users";
+const PERMISSIONS_COLLECTION = "Permissions";
+const CUSTOMERS_COLLECTION = "Customers";
 
 // Permissions Logic
 export async function getRolePermissions(role: string) {
-    const container = await getContainer(permissionsContainerId);
     try {
-        const { resource } = await container.item(role, role).read();
-        return resource?.allowedPaths || [];
+        const docRef = doc(db, PERMISSIONS_COLLECTION, role);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            return docSnap.data().allowedPaths || [];
+        }
     } catch (e) {
-        if (role === "SUPERADMIN") return ["/dashboard", "/reports", "/settings"];
-        if (role === "ADMIN") return ["/dashboard", "/settings"];
-        return ["/dashboard"];
+        console.error("getRolePermissions error:", e);
     }
+
+    // Default fallback if not found in Firestore
+    if (role === "SUPERADMIN") return ["customers_read", "customers_create", "customers_update", "customers_delete", "reports_read", "reports_audit", "users_manage"];
+    if (role === "ADMIN") return ["customers_read", "reports_read", "users_manage"];
+    return ["customers_read"];
 }
 
 export async function updateRolePermissions(role: string, paths: string[]) {
-    const container = await getContainer(permissionsContainerId);
-    return await container.items.upsert({
+    const docRef = doc(db, PERMISSIONS_COLLECTION, role);
+    return await setDoc(docRef, {
         id: role,
         role,
         allowedPaths: paths,
-        updatedAt: new Date().toISOString()
-    });
+        updatedAt: serverTimestamp()
+    }, { merge: true });
 }
 
 // User Logic
-export async function syncUser(user: any) {
-    const container = await getContainer(usersContainerId);
+export async function syncUser(user: { email: string; displayName?: string }) {
+    const normalizedEmail = user.email.toLowerCase().trim();
+    console.log("DB: syncUser starting for", normalizedEmail);
+
     try {
-        const { resource: existing } = await container.item(user.email, user.email).read();
-        let userDoc;
-        if (existing) {
+        const userRef = doc(db, USERS_COLLECTION, normalizedEmail);
+        const userSnap = await getDoc(userRef);
+
+        let userDoc: any;
+        if (userSnap.exists()) {
             userDoc = {
-                ...existing,
+                ...userSnap.data(),
                 lastLogin: new Date().toISOString(),
-                displayName: existing.displayName || user.displayName || user.email.split('@')[0]
+                displayName: userSnap.data().displayName || user.displayName || normalizedEmail.split('@')[0]
             };
-            await container.item(user.email, user.email).replace(userDoc);
+            console.log("DB: syncUser existing user found. Role:", userDoc.role);
+            await updateDoc(userRef, userDoc);
         } else {
-            const { resources: existingUsers } = await container.items.query("SELECT * FROM c OFFSET 0 LIMIT 1").fetchAll();
-            const isFirstUser = existingUsers.length === 0;
+            console.log("DB: syncUser user not found, checking if it's the first ever user...");
+            // Check if this is the first user
+            const usersRef = collection(db, USERS_COLLECTION);
+            const q = query(usersRef, limit(1));
+            const querySnap = await getDocs(q);
+            const isFirstUser = querySnap.empty;
 
             userDoc = {
-                id: user.email,
-                email: user.email,
-                displayName: user.displayName || user.email.split('@')[0],
+                id: normalizedEmail,
+                email: normalizedEmail,
+                displayName: user.displayName || normalizedEmail.split('@')[0],
                 role: isFirstUser ? "SUPERADMIN" : "USER",
                 lastLogin: new Date().toISOString(),
-                status: "ACTIVE"
+                status: "ACTIVE",
+                permissions: []
             };
-            const { resource } = await container.items.upsert(userDoc);
-            userDoc = resource;
+            console.log("DB: syncUser creating new user. Role:", userDoc.role);
+            await setDoc(userRef, userDoc);
         }
 
-        // Attach permissions to the synced object for faster auth
+        // Attach default permissions if none set
         if (!userDoc.permissions || userDoc.permissions.length === 0) {
+            console.log("DB: syncUser permissions empty, fetching defaults for role", userDoc.role);
             userDoc.permissions = await getRolePermissions(userDoc.role);
+        } else {
+            console.log("DB: syncUser has", userDoc.permissions.length, "custom permissions");
         }
+
         return userDoc;
     } catch (e) {
-        console.error("syncUser error:", e);
+        console.error("DB: syncUser error:", e);
         throw e;
     }
 }
 
 export async function getUser(email: string) {
-    const container = await getContainer(usersContainerId);
     try {
-        const { resource } = await container.item(email, email).read();
-        return resource;
+        const docRef = doc(db, USERS_COLLECTION, email);
+        const docSnap = await getDoc(docRef);
+        return docSnap.exists() ? docSnap.data() : null;
     } catch (e) {
+        console.error("getUser error:", e);
         return null;
     }
 }
 
 export async function getAllUsers() {
-    const container = await getContainer(usersContainerId);
-    const { resources } = await container.items.query("SELECT * FROM c").fetchAll();
-    return resources;
+    try {
+        const querySnap = await getDocs(collection(db, USERS_COLLECTION));
+        return querySnap.docs.map(doc => ({ ...doc.data() }));
+    } catch (e) {
+        console.error("getAllUsers error:", e);
+        return [];
+    }
 }
 
 export async function updateUserRole(userId: string, role: string, permissions: string[] = []) {
-    const container = await getContainer(usersContainerId);
-    const { resource: existing } = await container.item(userId, userId).read();
-    if (existing) {
-        const updated = { ...existing, role, permissions };
-        await container.item(userId, userId).replace(updated);
-        return updated;
+    try {
+        const userRef = doc(db, USERS_COLLECTION, userId);
+        const updateData = { role, permissions };
+        await updateDoc(userRef, updateData);
+        return { id: userId, ...updateData };
+    } catch (e) {
+        console.error("updateUserRole error:", e);
+        throw e;
     }
 }
 
 // Customer Logic
-export async function bulkAddCustomers(customers: any[]) {
-    const container = await getContainer(customersContainerId, "/customerCode");
-    const results = [];
-    for (const customer of customers) {
-        const item = {
-            ...customer,
-            id: customer.customerCode || Math.random().toString(36).substring(7),
-        };
-        const { resource } = await container.items.upsert(item);
-        results.push(resource);
+export async function bulkAddCustomers(customers: any[], userEmail: string = "system") {
+    try {
+        const batch = writeBatch(db);
+        const results = [];
+
+        for (const customer of customers) {
+            const customerId = customer.customerCode || Math.random().toString(36).substring(7);
+            const customerRef = doc(db, CUSTOMERS_COLLECTION, customerId);
+            const data = {
+                ...customer,
+                id: customerId,
+                updatedAt: serverTimestamp()
+            };
+            batch.set(customerRef, data, { merge: true });
+            results.push(data);
+        }
+
+        await batch.commit();
+        await addAuditLog("BULK_ADD", `${customers.length} müştəri əlavə edildi`, userEmail);
+        return results;
+    } catch (e) {
+        console.error("bulkAddCustomers error:", e);
+        throw e;
     }
-    return results;
 }
 
 export async function getCustomers() {
-    const container = await getContainer(customersContainerId, "/customerCode");
-    const { resources } = await container.items.query("SELECT * FROM c").fetchAll();
-    return resources;
+    try {
+        const querySnap = await getDocs(collection(db, CUSTOMERS_COLLECTION));
+        return querySnap.docs.map(doc => ({ ...doc.data() }));
+    } catch (e) {
+        console.error("getCustomers error:", e);
+        return [];
+    }
+}
+
+export async function deleteCustomer(id: string, userEmail: string = "system") {
+    try {
+        await deleteDoc(doc(db, CUSTOMERS_COLLECTION, id));
+        await addAuditLog("DELETE", `Müştəri silindi: ${id}`, userEmail);
+        return true;
+    } catch (e) {
+        console.error("deleteCustomer error:", e);
+        throw e;
+    }
+}
+
+export async function updateCustomer(id: string, data: any, userEmail: string = "system") {
+    try {
+        const customerRef = doc(db, CUSTOMERS_COLLECTION, id);
+        await updateDoc(customerRef, {
+            ...data,
+            updatedAt: serverTimestamp()
+        });
+        await addAuditLog("UPDATE", `Müştəri məlumatı yeniləndi: ${id}`, userEmail);
+        return true;
+    } catch (e) {
+        console.error("updateCustomer error:", e);
+        throw e;
+    }
+}
+// Audit Log Logic
+const AUDIT_COLLECTION = "AuditLogs";
+
+export async function addAuditLog(action: string, details: string, userEmail: string) {
+    try {
+        const docRef = doc(collection(db, AUDIT_COLLECTION));
+        await setDoc(docRef, {
+            id: docRef.id,
+            action,
+            details,
+            userEmail,
+            timestamp: serverTimestamp()
+        });
+    } catch (e) {
+        console.error("addAuditLog error:", e);
+    }
+}
+
+export async function getAuditLogs(limitCount = 50) {
+    try {
+        const q = query(collection(db, AUDIT_COLLECTION), limit(limitCount));
+        const querySnap = await getDocs(q);
+        return querySnap.docs.map(doc => ({ ...doc.data() }));
+    } catch (e) {
+        console.error("getAuditLogs error:", e);
+        return [];
+    }
 }

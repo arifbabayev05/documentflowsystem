@@ -8,10 +8,11 @@ import {
     Settings,
     FileText,
     LogOut,
-    ChevronRight,
     ShieldAlert,
     ShieldCheck,
-    UserCircle
+    UserCircle,
+    History,
+    X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,12 +20,18 @@ import { useAuth } from "@/hooks/useAuth";
 const menuItems = [
     { icon: LayoutDashboard, label: "Müştəri məlumatı", href: "/dashboard" },
     { icon: FileText, label: "Hesabatlar", href: "/reports" },
-    { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" }, // Renamed from Tənzimləmələr
+    { icon: History, label: "Audit Loqları", href: "/audit-logs" },
+    { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onClose }: { onClose?: () => void }) {
     const pathname = usePathname();
     const { user, hasAccess, logout, isSuperAdmin, isAdmin } = useAuth();
+
+    // Close sidebar on navigation (mobile)
+    const handleLinkClick = () => {
+        if (onClose) onClose();
+    };
 
     // Dynamic filtering based on permissions
     const visibleItems = menuItems.filter(item => hasAccess(item.href));
@@ -41,6 +48,13 @@ export function Sidebar() {
                         <span className="text-[10px] font-bold text-primary uppercase tracking-widest">{user?.role || "Gözlənilir..."}</span>
                     </div>
                 </div>
+
+                <button
+                    onClick={onClose}
+                    className="lg:hidden p-2 -mr-2 text-text-soft hover:bg-bg-main rounded-xl transition-all active:scale-90"
+                >
+                    <X size={20} />
+                </button>
             </div>
 
             <nav className="flex-1 space-y-1 px-4 py-8">
@@ -50,6 +64,7 @@ export function Sidebar() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            onClick={handleLinkClick}
                             className={cn(
                                 "group flex items-center justify-between rounded-2xl px-5 py-3.5 text-sm font-bold transition-all duration-300",
                                 isActive
@@ -72,6 +87,17 @@ export function Sidebar() {
 
             <div className="border-t border-border-soft p-6 bg-bg-main/20">
                 <div className="mb-6 px-2">
+                    {/* Debug Info: Shows during the 5-10s sync window */}
+                    <div className="mb-4 p-2 bg-primary/5 rounded-lg border border-primary/10">
+                        <p className="text-[9px] font-black text-primary uppercase tracking-tighter">Sistem Statusu</p>
+                        <div className="flex items-center gap-2 mt-1">
+                            <div className={cn("h-1.5 w-1.5 rounded-full animate-pulse", user ? "bg-green-500" : "bg-orange-500")} />
+                            <span className="text-[10px] font-bold text-text-main">
+                                {user?.role || "Giriş edilir..."}
+                            </span>
+                        </div>
+                    </div>
+
                     <div className="flex items-center gap-3">
                         <div className="h-9 w-9 bg-white rounded-xl flex items-center justify-center font-bold text-primary border border-border-soft shadow-sm">
                             {(user?.displayName || "?")[0].toUpperCase()}

@@ -30,6 +30,7 @@ export const AVAILABLE_PERMISSIONS: Permission[] = [
  */
 export const PATH_TO_PERMISSION_MAP: Record<string, PermissionID[]> = {
     "/dashboard": ["customers_read", "customers_create", "customers_update", "customers_delete"],
-    "/reports": ["reports_read", "reports_audit"],
+    "/reports": ["reports_read"],
+    "/audit-logs": ["reports_audit"],
     "/settings": ["users_manage"]
 };
