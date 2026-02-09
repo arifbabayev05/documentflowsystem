@@ -181,6 +181,19 @@ export async function deleteCustomer(id: string, userEmail: string = "system") {
     }
 }
 
+export async function getCustomer(id: string) {
+    try {
+        const docSnap = await getDoc(doc(db, CUSTOMERS_COLLECTION, id));
+        if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() };
+        }
+        return null;
+    } catch (e) {
+        console.error("getCustomer error:", e);
+        return null;
+    }
+}
+
 export async function updateCustomer(id: string, data: any, userEmail: string = "system") {
     try {
         const customerRef = doc(db, CUSTOMERS_COLLECTION, id);
@@ -195,6 +208,126 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
         throw e;
     }
 }
+// Template Logic
+const TEMPLATES_COLLECTION = "Templates";
+
+export async function getTemplates() {
+    try {
+        const querySnap = await getDocs(collection(db, TEMPLATES_COLLECTION));
+        return querySnap.docs.map(doc => ({ ...doc.data() }));
+    } catch (e) {
+        console.error("getTemplates error:", e);
+        return [];
+    }
+}
+
+export async function addTemplate(template: { name: string; content: string }) {
+    try {
+        const id = Math.random().toString(36).substring(7);
+        const docRef = doc(db, TEMPLATES_COLLECTION, id);
+        const data = { id, ...template, updatedAt: serverTimestamp() };
+        await setDoc(docRef, data);
+        return data;
+    } catch (e) {
+        console.error("addTemplate error:", e);
+        throw e;
+    }
+}
+
+export async function deleteTemplate(id: string) {
+    try {
+        await deleteDoc(doc(db, TEMPLATES_COLLECTION, id));
+        return true;
+    } catch (e) {
+        console.error("deleteTemplate error:", e);
+        throw e;
+    }
+}
+
+// Court Logic
+const COURTS_COLLECTION = "Courts";
+
+export async function getCourts() {
+    try {
+        const querySnap = await getDocs(collection(db, COURTS_COLLECTION));
+        return querySnap.docs.map(doc => ({ ...doc.data() }));
+    } catch (e) {
+        console.error("getCourts error:", e);
+        return [];
+    }
+}
+
+export async function addCourt(court: { name: string; address: string; phone: string; fax: string }) {
+    try {
+        const id = Math.random().toString(36).substring(7);
+        const docRef = doc(db, COURTS_COLLECTION, id);
+        const data = { id, ...court, updatedAt: serverTimestamp() };
+        await setDoc(docRef, data);
+        return data;
+    } catch (e) {
+        console.error("addCourt error:", e);
+        throw e;
+    }
+}
+
+export async function updateCourt(id: string, data: any) {
+    try {
+        const courtRef = doc(db, COURTS_COLLECTION, id);
+        await updateDoc(courtRef, {
+            ...data,
+            updatedAt: serverTimestamp()
+        });
+        return true;
+    } catch (e) {
+        console.error("updateCourt error:", e);
+        throw e;
+    }
+}
+
+export async function deleteCourt(id: string) {
+    try {
+        await deleteDoc(doc(db, COURTS_COLLECTION, id));
+        return true;
+    } catch (e) {
+        console.error("deleteCourt error:", e);
+        throw e;
+    }
+}
+
+// Global Settings Logic
+const SETTINGS_COLLECTION = "Settings";
+
+export async function getGlobalSettings() {
+    try {
+        const docRef = doc(db, SETTINGS_COLLECTION, "companyInfo");
+        const docSnap = await getDoc(docRef);
+        return docSnap.exists() ? docSnap.data() : {
+            companyName: "",
+            address: "",
+            phone: "",
+            fax: "",
+            representative: ""
+        };
+    } catch (e) {
+        console.error("getGlobalSettings error:", e);
+        return null;
+    }
+}
+
+export async function updateGlobalSettings(data: any) {
+    try {
+        const docRef = doc(db, SETTINGS_COLLECTION, "companyInfo");
+        await setDoc(docRef, {
+            ...data,
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+        return true;
+    } catch (e) {
+        console.error("updateGlobalSettings error:", e);
+        throw e;
+    }
+}
+
 // Audit Log Logic
 const AUDIT_COLLECTION = "AuditLogs";
 

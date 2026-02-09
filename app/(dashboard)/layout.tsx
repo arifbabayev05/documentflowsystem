@@ -57,10 +57,7 @@ export default function DashboardLayout({
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <button className="relative rounded-xl p-2 text-text-soft hover:bg-bg-main transition-colors">
-                            <Bell size={20} />
-                            <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary border-2 border-white"></span>
-                        </button>
+
                         <div className="h-8 w-px bg-border-soft mx-2"></div>
                         <div className="flex items-center gap-3 pl-4 border-l border-border-soft cursor-pointer group">
                             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary-soft text-primary font-bold soft-shadow group-hover:bg-primary group-hover:text-white transition-all duration-300">

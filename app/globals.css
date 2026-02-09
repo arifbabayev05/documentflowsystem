@@ -9,6 +9,7 @@
   --color-text-main: #2D3748;
   --color-text-soft: #718096;
   --color-border-soft: #EDF2F7;
+  --font-sans: var(--font-montserrat), "Montserrat", ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -21,7 +22,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-montserrat), 'Montserrat', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 

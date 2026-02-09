@@ -19,8 +19,9 @@ import { useAuth } from "@/hooks/useAuth";
 
 const menuItems = [
     { icon: LayoutDashboard, label: "Müştəri məlumatı", href: "/dashboard" },
-    { icon: FileText, label: "Hesabatlar", href: "/reports" },
+    // { icon: FileText, label: "Sənəd Dövriyyəsi", href: "/reports" },
     { icon: History, label: "Audit Loqları", href: "/audit-logs" },
+    { icon: Settings, label: "Parametrlər", href: "/parameters" },
     { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" },
 ];
 
@@ -45,7 +46,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                     </div>
                     <div>
                         <span className="text-lg font-black text-text-main tracking-tight block leading-none">Legal12</span>
-                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">{user?.role || "Gözlənilir..."}</span>
                     </div>
                 </div>
 
@@ -87,17 +87,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
             <div className="border-t border-border-soft p-6 bg-bg-main/20">
                 <div className="mb-6 px-2">
-                    {/* Debug Info: Shows during the 5-10s sync window */}
-                    <div className="mb-4 p-2 bg-primary/5 rounded-lg border border-primary/10">
-                        <p className="text-[9px] font-black text-primary uppercase tracking-tighter">Sistem Statusu</p>
-                        <div className="flex items-center gap-2 mt-1">
-                            <div className={cn("h-1.5 w-1.5 rounded-full animate-pulse", user ? "bg-green-500" : "bg-orange-500")} />
-                            <span className="text-[10px] font-bold text-text-main">
-                                {user?.role || "Giriş edilir..."}
-                            </span>
-                        </div>
-                    </div>
-
                     <div className="flex items-center gap-3">
                         <div className="h-9 w-9 bg-white rounded-xl flex items-center justify-center font-bold text-primary border border-border-soft shadow-sm">
                             {(user?.displayName || "?")[0].toUpperCase()}
