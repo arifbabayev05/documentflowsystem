@@ -88,12 +88,16 @@ export default function ReportsPage() {
                     const fullBase64 = base64Reader.result as string;
                     const base64Content = fullBase64.split(',')[1];
 
-                    const newTemp = await addTemplate({
+                    const newTempId = await addTemplate({
                         name: file.name,
                         content: base64Content
                     });
 
-                    setTemplates(prev => [...prev, newTemp as Template]);
+                    setTemplates(prev => [...prev, {
+                        id: newTempId as string,
+                        name: file.name,
+                        content: base64Content
+                    }]);
                     toast.success(`${file.name} şablonu yaddaşa əlavə edildi`);
                 };
                 base64Reader.readAsDataURL(blob);
@@ -126,23 +130,18 @@ export default function ReportsPage() {
 
     return (
         <AuthGuard>
-            <div className="max-w-[1400px] mx-auto space-y-8 animate-in fade-in duration-500 pb-24 relative min-h-screen px-4">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-blue-100">
-                    <div className="space-y-1 text-center lg:text-left">
-                        <h1 className="text-3xl lg:text-4xl font-black text-slate-800 tracking-tight">Sənəd Dövriyyəsi</h1>
-                        <p className="text-slate-500 font-medium text-sm lg:text-base italic">Müştəri seçin və sənədləri sürətli hazırlayın</p>
-                    </div>
-
-                    <div className="flex bg-slate-100/50 p-1.5 rounded-[1.2rem] gap-1 self-center lg:self-auto border border-blue-50">
+            <div className="max-w-[1400px] mx-auto space-y-6 pt-10 pb-20 px-4 animate-in fade-in duration-500">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6">
+                    <div className="flex p-1 bg-slate-100/80 rounded-lg gap-1 border border-slate-200 shadow-sm self-start">
                         <button
                             onClick={() => setActiveTab("customers")}
-                            className={`px-8 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === "customers" ? "bg-white text-primary shadow-sm border border-blue-100" : "text-slate-500 hover:text-primary hover:bg-white/50"}`}
+                            className={`px-6 py-2 rounded-md text-xs font-black uppercase tracking-widest transition-all ${activeTab === "customers" ? "bg-white text-slate-800 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-800"}`}
                         >
                             Müştəri Seçimi
                         </button>
                         <button
                             onClick={() => setActiveTab("templates")}
-                            className={`px-8 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === "templates" ? "bg-white text-primary shadow-sm border border-blue-100" : "text-slate-500 hover:text-primary hover:bg-white/50"}`}
+                            className={`px-6 py-2 rounded-md text-xs font-black uppercase tracking-widest transition-all ${activeTab === "templates" ? "bg-white text-slate-800 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-800"}`}
                         >
                             Şablonlar
                         </button>
@@ -152,19 +151,19 @@ export default function ReportsPage() {
                 {activeTab === "customers" ? (
                     <div className="space-y-8">
                         {/* Search Bar */}
-                        <div className="max-w-2xl mx-auto">
+                        <div className="max-w-2xl">
                             <div className="relative group">
-                                <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-primary transition-colors" size={24} />
+                                <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-800 transition-colors" size={20} />
                                 <input
                                     type="text"
-                                    placeholder="Müştəri axtar (Ad, Soyad, FİN)..."
-                                    className="w-full pl-16 pr-12 py-6 bg-white rounded-[2.5rem] border border-blue-100 soft-shadow focus:border-primary/20 focus:ring-8 focus:ring-primary/5 outline-none transition-all font-bold text-lg"
+                                    placeholder="Axtar (Ad, Soyad, FİN)..."
+                                    className="w-full pl-14 pr-12 py-4 bg-white rounded-xl border border-slate-200 focus:border-slate-400 focus:ring-4 focus:ring-slate-400/5 outline-none transition-all font-bold text-base shadow-sm"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                                 {searchTerm && (
-                                    <button onClick={() => setSearchTerm("")} className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors">
-                                        <X size={20} />
+                                    <button onClick={() => setSearchTerm("")} className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-800 transition-colors">
+                                        <X size={18} />
                                     </button>
                                 )}
                             </div>
@@ -186,38 +185,34 @@ export default function ReportsPage() {
                                     <button
                                         key={customer.id}
                                         onClick={() => router.push(`/reports/generate?id=${customer.id}`)}
-                                        className="bg-white p-8 rounded-[2.5rem] border border-blue-50 soft-shadow hover:border-primary/30 hover:shadow-2xl hover:translate-y-[-4px] transition-all group text-left relative overflow-hidden"
+                                        className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-slate-400 hover:shadow-md transition-all group text-left relative"
                                     >
-                                        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/[0.02] rounded-full translate-x-16 -translate-y-16 group-hover:scale-150 transition-transform duration-500" />
-
-                                        <div className="flex flex-col h-full gap-6 relative">
+                                        <div className="flex flex-col h-full gap-5 relative">
                                             <div className="flex items-center justify-between">
-                                                <div className="h-14 w-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:bg-primary group-hover:text-white group-hover:border-transparent transition-all">
-                                                    <User size={28} className="stroke-[2.5px]" />
+                                                <div className="h-10 w-10 rounded-lg bg-slate-50 text-slate-600 flex items-center justify-center border border-slate-200 group-hover:bg-slate-800 group-hover:text-white transition-all">
+                                                    <User size={20} className="stroke-[2.5px]" />
                                                 </div>
                                                 <div className="flex flex-col items-end">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">FİN</span>
-                                                    <span className="text-sm font-black text-slate-800 tracking-widest group-hover:text-primary transition-colors bg-slate-50 px-2 py-1 rounded-lg border border-blue-50/50">{customer.customerCode || "-"}</span>
+                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">FİN</span>
+                                                    <span className="text-xs font-black text-slate-800 tracking-widest bg-slate-50 px-2 py-1 rounded border border-slate-200">{customer.customerCode || "-"}</span>
                                                 </div>
                                             </div>
 
-                                            <div className="space-y-2">
-                                                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-2 min-h-[3.5rem] group-hover:text-primary transition-colors">
+                                            <div className="space-y-1.5">
+                                                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-1 group-hover:text-slate-600 transition-colors">
                                                     {customer.fullName}
                                                 </h3>
                                                 <div className="flex items-center gap-2">
                                                     <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sənəd Hazırlanıla bilər</span>
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sənəd Hazırlanıla bilər</span>
                                                 </div>
                                             </div>
 
-                                            <div className="pt-4 border-t border-blue-50 mt-auto flex items-center justify-between">
-                                                <span className="text-primary font-black text-xs uppercase tracking-widest group-hover:translate-x-1 transition-transform flex items-center gap-2">
-                                                    SEÇİM ET <ArrowRight size={14} className="stroke-[3px]" />
+                                            <div className="pt-4 border-t border-slate-100 mt-auto flex items-center justify-between">
+                                                <span className="text-slate-800 font-bold text-[10px] uppercase tracking-widest flex items-center gap-2">
+                                                    SEÇİM ET <ArrowRight size={12} className="stroke-[3px]" />
                                                 </span>
-                                                <div className="h-10 w-10 rounded-full bg-slate-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
-                                                    <FileText size={18} className="text-primary" />
-                                                </div>
+                                                <FileText size={16} className="text-slate-300 group-hover:text-slate-800 transition-colors" />
                                             </div>
                                         </div>
                                     </button>

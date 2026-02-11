@@ -31,7 +31,7 @@ interface UserDoc {
     id: string;
     email: string;
     displayName: string;
-    role: "SUPERADMIN" | "ADMIN" | "USER";
+    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "ARCHIVIST" | "ARCHIVER" | "USER";
     lastLogin: string;
     permissions?: string[];
 }
@@ -177,7 +177,11 @@ export default function UsersPage() {
                                         <option value="all">Bütün rollar</option>
                                         <option value="SUPERADMIN">Super Admin</option>
                                         <option value="ADMIN">Admin</option>
-                                        <option value="USER">User</option>
+                                        <option value="MANAGER">Bölmə Rəhbəri</option>
+                                        <option value="INSPECTOR">Müfəttiş</option>
+                                        <option value="ARCHIVIST">Arxivist</option>
+                                        <option value="ARCHIVER">Arxivçi</option>
+                                        <option value="USER">İstifadəçi</option>
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-text-main pointer-events-none" size={18} />
                                 </div>
@@ -317,7 +321,11 @@ export default function UsersPage() {
                                         >
                                             <option value="SUPERADMIN">Super Admin</option>
                                             <option value="ADMIN">Admin</option>
-                                            <option value="USER">User</option>
+                                            <option value="MANAGER">Bölmə Rəhbəri</option>
+                                            <option value="INSPECTOR">Müfəttiş</option>
+                                            <option value="ARCHIVIST">Arxivist</option>
+                                            <option value="ARCHIVER">Arxivçi</option>
+                                            <option value="USER">İstifadəçi</option>
                                         </select>
                                         <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-text-main pointer-events-none" size={18} />
                                     </div>

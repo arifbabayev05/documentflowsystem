@@ -12,14 +12,17 @@ import {
     ShieldCheck,
     UserCircle,
     History,
-    X
+    X,
+    Briefcase,
+    FolderArchive
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 
 const menuItems = [
-    { icon: LayoutDashboard, label: "Müştəri məlumatı", href: "/dashboard" },
-    // { icon: FileText, label: "Sənəd Dövriyyəsi", href: "/reports" },
+    { icon: LayoutDashboard, label: "Müştəri bazası", href: "/dashboard" },
+    { icon: Briefcase, label: "Müfəttiş Paneli", href: "/inspector" },
+    { icon: FolderArchive, label: "Arxiv İdarəetməsi", href: "/archive" },
     { icon: History, label: "Audit Loqları", href: "/audit-logs" },
     { icon: Settings, label: "Parametrlər", href: "/parameters" },
     { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" },
@@ -40,12 +43,12 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     return (
         <div className="flex h-screen w-64 flex-col border-r border-border-soft bg-white">
             <div className="flex h-16 items-center border-b border-border-soft px-6">
-                <div className="flex items-center gap-2">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-lg shadow-primary/20">
-                        {isSuperAdmin ? <ShieldCheck size={22} /> : (isAdmin ? <ShieldAlert size={22} /> : <UserCircle size={22} />)}
+                <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800 text-white shadow-lg shadow-slate-200">
+                        {isSuperAdmin ? <ShieldCheck size={20} /> : (isAdmin ? <ShieldAlert size={20} /> : <UserCircle size={20} />)}
                     </div>
                     <div>
-                        <span className="text-lg font-black text-text-main tracking-tight block leading-none">Legal12</span>
+                        <span className="text-xl font-black text-slate-800 tracking-tight block leading-none">Legal12</span>
                     </div>
                 </div>
 

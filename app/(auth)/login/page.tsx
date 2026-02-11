@@ -90,10 +90,7 @@ export default function LoginPage() {
                     </div>
 
                     <div className="relative z-10 space-y-4">
-                        <h2 className="text-2xl font-bold leading-tight">Peşəkar Hüquq<br />İdarəetmə Sistemi</h2>
-                        <p className="text-white/60 text-xs font-medium leading-relaxed max-w-[250px]">
-                            Məlumatlarınızın təhlükəsizliyi və işinizin axıcılığı bizim üçün prioritetdir.
-                        </p>
+                        <h2 className="text-2xl font-bold leading-tight">Müştəri Borclarının<br />İdarəetmə Sistemi</h2>
                     </div>
                 </div>
 
@@ -134,9 +131,6 @@ export default function LoginPage() {
                                     <ShieldCheck size={14} className="text-green-600" />
                                     <span>Məlumat Təhlükəsizliyi</span>
                                 </div>
-                                <p className="text-[10px] text-neutral-300 font-medium px-8 leading-relaxed">
-                                    Davam etməklə siz istifadə şərtlərini və məxfilik siyasətini qəbul edirsiniz.
-                                </p>
                             </div>
                         </div>
                     </div>

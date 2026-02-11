@@ -13,9 +13,12 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
+import { getStorage } from "firebase/storage";
+
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 const microsoftProvider = new OAuthProvider('microsoft.com');
 
 // Azure AD specific parameters to use your App ID and Secret
@@ -24,4 +27,4 @@ microsoftProvider.setCustomParameters({
     tenant: 'common'
 });
 
-export { auth, db, microsoftProvider };
+export { auth, db, storage, microsoftProvider };

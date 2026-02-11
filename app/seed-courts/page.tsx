@@ -567,8 +567,7 @@ export default function SeedCourtsPage() {
                     }
                     if (isAddress) currentCourt.address = line.replace(/^ünvan\s*:?\s*/i, "").trim();
                     if (isPhone) {
-                        let p = line.replace(/^(tel|telefon)\s*:?\s*/i, "").trim();
-                        p = p.replace(/^(tel|telefon)\s*:?\s*/i, "").trim();
+                        let p = line.replace(/^(telefon|tel)\s*:?\s*/i, "").trim();
                         currentCourt.phone = p;
                     }
                     if (isFax) currentCourt.fax = line.replace(/^faks\s*:?\s*/i, "").trim();

@@ -14,7 +14,8 @@ import {
     Phone,
     MapPin,
     Printer,
-    UserCircle
+    UserCircle,
+    Store
 } from "lucide-react";
 import {
     getCourts,
@@ -22,7 +23,11 @@ import {
     updateCourt,
     deleteCourt,
     getGlobalSettings,
-    updateGlobalSettings
+    updateGlobalSettings,
+    getStores,
+    addStore,
+    updateStore,
+    deleteStore
 } from "@/lib/db";
 import { toast } from "sonner";
 import AuthGuard from "@/components/auth/AuthGuard";
@@ -35,32 +40,45 @@ interface Court {
     fax: string;
 }
 
+interface Store {
+    id: string;
+    name: string;
+}
+
 interface CompanyInfo {
     companyName: string;
     address: string;
     phone: string;
     fax: string;
     representative: string;
+    representativeFin: string;
 }
 
 export default function ParametersPage() {
     const [courts, setCourts] = useState<Court[]>([]);
+    const [stores, setStores] = useState<Store[]>([]);
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo>({
         companyName: "",
         address: "",
         phone: "",
         fax: "",
-        representative: ""
+        representative: "",
+        representativeFin: ""
     });
     const [isLoading, setIsLoading] = useState(true);
     const [isSavingSettings, setIsSavingSettings] = useState(false);
     const [isCourtModalOpen, setIsCourtModalOpen] = useState(false);
+    const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
     const [editingCourt, setEditingCourt] = useState<Court | null>(null);
+    const [editingStore, setEditingStore] = useState<Store | null>(null);
     const [courtForm, setCourtForm] = useState({
         name: "",
         address: "",
         phone: "",
         fax: ""
+    });
+    const [storeForm, setStoreForm] = useState({
+        name: ""
     });
 
     useEffect(() => {
@@ -70,13 +88,18 @@ export default function ParametersPage() {
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [courtsData, settingsData] = await Promise.all([
+            const [courtsData, storesData, settingsData] = await Promise.all([
                 getCourts(),
+                getStores(),
                 getGlobalSettings()
             ]);
             setCourts(courtsData as Court[]);
+            setStores(storesData as Store[]);
             if (settingsData) {
-                setCompanyInfo(settingsData as CompanyInfo);
+                setCompanyInfo(prev => ({
+                    ...prev,
+                    ...settingsData as CompanyInfo
+                }));
             }
         } catch (error) {
             console.error(error);
@@ -147,6 +170,50 @@ export default function ParametersPage() {
         }
     };
 
+    const handleOpenStoreModal = (store?: Store) => {
+        if (store) {
+            setEditingStore(store);
+            setStoreForm({ name: store.name });
+        } else {
+            setEditingStore(null);
+            setStoreForm({ name: "" });
+        }
+        setIsStoreModalOpen(true);
+    };
+
+    const handleSaveStore = async () => {
+        if (!storeForm.name.trim()) {
+            toast.error("Mağaza adı mütləqdir");
+            return;
+        }
+
+        try {
+            if (editingStore) {
+                await updateStore(editingStore.id, storeForm.name);
+                setStores(prev => prev.map(s => s.id === editingStore.id ? { ...s, name: storeForm.name } : s));
+                toast.success("Mağaza yeniləndi");
+            } else {
+                const newStore = await addStore(storeForm.name);
+                setStores(prev => [...prev, newStore as Store]);
+                toast.success("Mağaza əlavə edildi");
+            }
+            setIsStoreModalOpen(false);
+        } catch (error) {
+            toast.error("Xəta baş verdi");
+        }
+    };
+
+    const handleDeleteStore = async (id: string) => {
+        if (!confirm("Bu mağazanı silmək istədiyinizə əminsiniz?")) return;
+        try {
+            await deleteStore(id);
+            setStores(prev => prev.filter(s => s.id !== id));
+            toast.info("Mağaza silindi");
+        } catch (error) {
+            toast.error("Silmək mümkün olmadı");
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="h-[80vh] flex flex-col items-center justify-center space-y-4">
@@ -167,6 +234,67 @@ export default function ParametersPage() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+
+                    {/* Stores Section */}
+                    <div className="lg:col-span-12">
+                        <div className="bg-white rounded-[2.5rem] border border-blue-50 soft-shadow overflow-hidden">
+                            <div className="p-8 lg:p-12 border-b border-blue-50 flex items-center justify-between bg-slate-50/30">
+                                <div className="flex items-center gap-4">
+                                    <div className="h-12 w-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shadow-sm border border-emerald-100">
+                                        <Store size={24} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Mağazalar</h3>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Cəmi {stores.length} qeydiyyat</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => handleOpenStoreModal()}
+                                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
+                                >
+                                    <Plus size={16} />
+                                    Mağaza Əlavə Et
+                                </button>
+                            </div>
+
+                            <div className="p-4 lg:p-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    {stores.length === 0 ? (
+                                        <div className="col-span-full py-20 text-center text-slate-400">
+                                            <p className="font-bold uppercase tracking-widest text-xs">Heç bir mağaza tapılmadı</p>
+                                        </div>
+                                    ) : (
+                                        stores.map((store) => (
+                                            <div key={store.id} className="bg-white rounded-2xl border border-slate-100 p-5 soft-shadow hover:border-emerald-200 transition-all group relative">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                        <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0">
+                                                            <Store size={18} />
+                                                        </div>
+                                                        <h4 className="font-black text-slate-800 text-sm leading-tight truncate">{store.name}</h4>
+                                                    </div>
+                                                    <div className="flex gap-1.5 shrink-0">
+                                                        <button
+                                                            onClick={() => handleOpenStoreModal(store)}
+                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 flex items-center justify-center transition-all border border-slate-100"
+                                                        >
+                                                            <Edit2 size={12} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteStore(store.id)}
+                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-all border border-slate-100"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
                     {/* Courts Section */}
                     <div className="lg:col-span-12">
@@ -272,7 +400,7 @@ export default function ParametersPage() {
                                 <div className="space-y-2 md:col-span-2">
                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">İddiaçının Tam Adı</label>
                                     <input
-                                        value={companyInfo.companyName}
+                                        value={companyInfo.companyName || ""}
                                         onChange={(e) => setCompanyInfo({ ...companyInfo, companyName: e.target.value })}
                                         placeholder="Məs: 'ABC TELECOM' Məhdud Məsuliyyətli Cəmiyyəti"
                                         className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
@@ -281,16 +409,25 @@ export default function ParametersPage() {
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndə</label>
                                     <input
-                                        value={companyInfo.representative}
+                                        value={companyInfo.representative || ""}
                                         onChange={(e) => setCompanyInfo({ ...companyInfo, representative: e.target.value })}
                                         placeholder="Məs: Süleymanlı Rauf Xudayar oğlu..."
+                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndənin FİN Kodu</label>
+                                    <input
+                                        value={companyInfo.representativeFin || ""}
+                                        onChange={(e) => setCompanyInfo({ ...companyInfo, representativeFin: e.target.value })}
+                                        placeholder="Məs: 0WY0TVF"
                                         className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
                                     />
                                 </div>
                                 <div className="space-y-2 md:col-span-3">
                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Hüquqi Ünvan</label>
                                     <input
-                                        value={companyInfo.address}
+                                        value={companyInfo.address || ""}
                                         onChange={(e) => setCompanyInfo({ ...companyInfo, address: e.target.value })}
                                         className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
                                     />
@@ -298,7 +435,7 @@ export default function ParametersPage() {
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Telefon</label>
                                     <input
-                                        value={companyInfo.phone}
+                                        value={companyInfo.phone || ""}
                                         onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })}
                                         className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
                                     />
@@ -306,7 +443,7 @@ export default function ParametersPage() {
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Faks</label>
                                     <input
-                                        value={companyInfo.fax}
+                                        value={companyInfo.fax || ""}
                                         onChange={(e) => setCompanyInfo({ ...companyInfo, fax: e.target.value })}
                                         className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
                                     />
@@ -390,6 +527,60 @@ export default function ParametersPage() {
                                         className="flex-1 py-4 bg-primary hover:bg-primary/95 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-primary/20"
                                     >
                                         {editingCourt ? "Yenilə" : "Əlavə Et"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Store Add/Edit Modal */}
+                {isStoreModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+                        <div className="bg-white w-full max-w-md rounded-[2.5rem] soft-shadow-lg p-8 lg:p-10 relative animate-in zoom-in-95 duration-300">
+                            <button
+                                onClick={() => setIsStoreModalOpen(false)}
+                                className="absolute top-8 right-8 text-slate-300 hover:text-slate-600 transition-colors"
+                            >
+                                <X size={24} />
+                            </button>
+
+                            <div className="flex items-center gap-4 mb-8">
+                                <div className="h-12 w-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center border border-emerald-100">
+                                    <Store size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">
+                                        {editingStore ? "Mağazanı Yenilə" : "Yeni Mağaza"}
+                                    </h3>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Mağaza adını daxil edin</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Mağaza Adı</label>
+                                    <input
+                                        value={storeForm.name}
+                                        onChange={(e) => setStoreForm({ name: e.target.value })}
+                                        placeholder='Məs: Kontakt "Vurğun Residence"'
+                                        className="w-full px-6 py-4 bg-slate-50 border border-emerald-50 rounded-[1.5rem] outline-none focus:border-emerald-300 focus:bg-white transition-all font-bold text-sm text-slate-800"
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div className="pt-4 flex gap-4">
+                                    <button
+                                        onClick={() => setIsStoreModalOpen(false)}
+                                        className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all"
+                                    >
+                                        Ləğv Et
+                                    </button>
+                                    <button
+                                        onClick={handleSaveStore}
+                                        className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/20"
+                                    >
+                                        {editingStore ? "Yenilə" : "Əlavə Et"}
                                     </button>
                                 </div>
                             </div>

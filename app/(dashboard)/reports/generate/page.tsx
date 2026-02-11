@@ -28,7 +28,12 @@ import {
     Check,
     AlignLeft,
     CreditCard,
-    Shield
+    Trash2,
+    Shield,
+    Plus,
+    Minus,
+    ChevronRight,
+    Store,
 } from "lucide-react";
 import {
     getCustomer,
@@ -57,6 +62,8 @@ interface Customer {
     fullName: string;
     debtAmount: string;
     fullData?: boolean;
+    process_status?: string;
+    store?: string;
     details?: {
         address?: string;
         actualAddress?: string;
@@ -83,6 +90,30 @@ interface Customer {
         representativeFin?: string;
         installmentMonths?: string;
         courtFee?: string;
+        productDescription?: string;
+        penaltyPercent?: string;
+        discountAmount?: string;
+        warningDate?: string;
+        isWarningSent?: boolean;
+        phoneCount?: number;
+        executorName?: string;
+        invoices?: Array<{
+            id: string;
+            invoiceNumber: string;
+            archiveUrl?: string;
+            archiveBase64?: string;
+            archiveName?: string;
+            orders: Array<{
+                id: string;
+                productDescription: string;
+                phoneCount: number;
+                contractDate: string;
+                paymentPeriod: string;
+                monthlyPayment: string;
+                initialPayment: string;
+                totalPrice: string;
+            }>;
+        }>;
     };
 }
 
@@ -106,38 +137,72 @@ interface CompanyInfo {
     phone: string;
     fax: string;
     representative: string;
+    representativeFin: string;
 }
 
 // --- Components ---
-
-const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options }: any) => {
+function normalizeAZ(text: string) {
+    return text
+        .toLowerCase()
+        .replace(/ə/g, "e")
+        .replace(/ı/g, "i")
+        .replace(/i̇/g, "i")
+        .replace(/ö/g, "o")
+        .replace(/ü/g, "u")
+        .replace(/ç/g, "c")
+        .replace(/ş/g, "s")
+        .replace(/ğ/g, "g")
+        .replace(/[^a-z0-9\s]/g, "")
+        .trim();
+}
+const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options, onFocus, onBlur }: any) => {
     return (
         <div className="space-y-1.5 group">
-            <label className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 transition-colors group-focus-within:text-primary">
-                {Icon && <Icon size={11} />}
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] ml-1 transition-colors group-focus-within:text-primary">
                 {label}
             </label>
             {isSelect ? (
-                <select
-                    value={value || ""}
-                    onChange={(e) => onChange(e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none transition-all font-bold text-sm shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none"
-                >
-                    <option value="">Seçin</option>
-                    {options?.map((opt: any) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                </select>
+                <div className="relative">
+                    <select
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        onFocus={() => onFocus?.(label)}
+                        onBlur={onBlur}
+                        className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[14px] shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none"
+                    >
+                        <option value="">-</option>
+                        {options?.map((opt: any) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
+                        <ChevronRight size={14} className="rotate-90" />
+                    </div>
+                </div>
             ) : (
                 <input
                     value={value || ""}
-                    onChange={(e) => onChange(e.target.value)}
-                    placeholder={placeholder || "-"}
+                    onFocus={() => onFocus?.(label)}
+                    onBlur={onBlur}
+                    onChange={(e) => {
+                        let val = e.target.value;
+                        const dateFields = ["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"];
+                        if (dateFields.includes(label)) {
+                            val = val.replace(/\D/g, "").slice(0, 8);
+                            if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
+                            else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
+                        }
+                        if (isFin) {
+                            val = val.toUpperCase();
+                        }
+                        onChange(val);
+                    }}
+                    placeholder={placeholder || (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label) ? "GG.AA.İİİİ" : "-")}
                     className={cn(
-                        "w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none transition-all font-bold text-sm shadow-sm",
-                        "focus:border-primary/30 focus:ring-4 focus:ring-primary/5",
-                        isPrice ? "text-primary font-black" : "text-slate-700",
-                        isFin ? "uppercase tracking-widest font-black" : ""
+                        "w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[14px] shadow-sm",
+                        "focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 placeholder:text-slate-300 placeholder:font-medium",
+                        isFin ? "uppercase tracking-widest" : "",
+                        isPrice ? "text-primary font-black bg-primary/5 border-primary/10" : ""
                     )}
                 />
             )}
@@ -146,10 +211,12 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
 });
 CustomerField.displayName = "CustomerField";
 
-const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating }: any) => {
+const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating, user, focusedField }: any) => {
     const [isRendering, setIsRendering] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const viewerRef = useRef<HTMLDivElement>(null);
+
+    const AZ_MONTHS = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
 
     useEffect(() => {
         const renderPreview = async () => {
@@ -204,14 +271,19 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     IDDIACI_TELEFON: companyInfo?.phone || "",
                     IDDIACI_FAKS: companyInfo?.fax || "",
                     NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
-                    NUMAYENDE_FIN: customer.details?.representativeFin || "",
+                    NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
                     CAVABDEH_AD_SOYAD: customer.fullName || "",
                     CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
-                    CAVABDEH_FIN: customer.details?.fin || "",
-                    CAVABDEH_UNVAN: customer.details?.actualAddress || customer.details?.address || "",
+                    CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
+                    CAVABDEH_UNVAN: customer.details?.address || "",
                     CAVABDEH_MOBIL: customer.details?.phone || "",
+                    CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
+                    CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
                     MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                    MEHSUL_IMEI_SIYAHI: customer.details?.itemModel || "",
+                    MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
+                    CEMI_ODENEN: paidAmount.toFixed(2),
+                    ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
+                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
                     UMUMI_BORC: debtNum.toFixed(2),
                     UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(debtNum),
                     ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
@@ -219,14 +291,63 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     TAKSIT_AY: customer.details?.paymentPeriod || "",
                     AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                     ILKIN_ODENIS: customer.details?.initialPayment || "",
-                    ODENILMEMIS_HISSE: (totalPrice - paidAmount).toFixed(2),
-                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice - paidAmount),
                     ILM_RUSUM: customer.details?.fee || "",
                     ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.fee || "0")),
                     DEBBE_PULU: customer.details?.penalty || "",
                     DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
                     currentDate: new Date().toLocaleDateString("az-AZ"),
+                    ERIZE_GUN: `${new Date().getDate()}`,
+                    ERIZE_AY: AZ_MONTHS[new Date().getMonth()],
+                    ERIZE_IL: new Date().getFullYear().toString(),
+                    ELAQE_TEL1: "050 280 11 90",
+                    ELAQE_TEL2: "012 310 07 75",
+                    NUMAYENDE_IMZA: "Süleymanlı.R.X",
+                    CAVABDEH_TAM_AD: customer.fullName || "",
+                    CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
+                    CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
+                    ICRACI_AD_SOYAD: customer.details?.executorName || "",
+                    MEHSUL_SIYAHI: customer.details?.productDescription || "",
+                    DOVLET_RUSUMU: customer.details?.courtFee || "",
+                    PENYA_FAIZ: customer.details?.penaltyPercent || "",
+                    GUZEST_MEBLEGI: customer.details?.discountAmount || "",
+                    XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
                 };
+
+                // Apply highlighter marker to the focused value
+                const FIELD_TO_TAG: any = {
+                    "SOYAD AD ATA ADI": ["CAVABDEH_AD_SOYAD", "CAVABDEH_TAM_AD"],
+                    "Cins": ["CAVABDEH_ATA_SUFFIX", "CAVABDEH_ATA_SUFFIX_2"],
+                    "FİN": ["CAVABDEH_FIN"],
+                    "Telefon Nömrəsi": ["CAVABDEH_MOBIL"],
+                    "Doğum Tarixi": ["CAVABDEH_DOGUM_TARIXI"],
+                    "Qeydiyyat Ünvanı": ["CAVABDEH_QEYDIYYAT_UNVAN", "CAVABDEH_UNVAN"],
+                    "Faktiki Yaşayış": ["CAVABDEH_FAKTIKI_UNVAN"],
+                    "Məhsul Adı": ["MEHSUL_IMEI_SIYAHI", "MEHSUL_SIYAHI"],
+                    "Müq. Tarixi": ["MUQAVILE_TARIXI"],
+                    "Müddət (Ay)": ["TAKSIT_AY"],
+                    "Aylıq Ödəniş": ["AYLIQ_ODENIS"],
+                    "İlkin Ödəniş": ["ILKIN_ODENIS"],
+                    "Cəmi Qiymət": ["ALQI_SATQI_QIYMETI"],
+                    "Ödənilən": ["CEMI_ODENEN"],
+                    "Ödənilməmiş Hissə": ["ODENILMEMIS_HISSE"],
+                    "İDM Rüsumu": ["ILM_RUSUM"],
+                    "Dövlət Rüsumu": ["DOVLET_RUSUMU"],
+                    "Dəbbə Pulu": ["DEBBE_PULU"],
+                    "Penya Faizi": ["PENYA_FAIZ"],
+                    "Güzəşt Məbləği": ["GUZEST_MEBLEGI"],
+                    "Yekun Borc (AZN)": ["UMUMI_BORC", "UMUMI_BORC_SOZLE"],
+                    "Müfəttiş": ["ICRACI_AD_SOYAD"],
+                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI"]
+                };
+
+                if (focusedField && FIELD_TO_TAG[focusedField]) {
+                    FIELD_TO_TAG[focusedField].forEach((tag: string) => {
+                        const val = data[tag as keyof typeof data];
+                        if (val !== undefined && val !== null && val !== "") {
+                            (data as any)[tag] = `[[FOC_S]]${val}[[FOC_E]]`;
+                        }
+                    });
+                }
 
                 try {
                     doc.render(data);
@@ -246,6 +367,17 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                             experimental: true,
                             trimXmlDeclaration: true,
                         });
+
+                        // Highlighting logic: replace markers with span
+                        if (focusedField) {
+                            const container = viewerRef.current;
+                            const html = container.innerHTML;
+                            if (html.includes("[[FOC_S]]")) {
+                                container.innerHTML = html
+                                    .split("[[FOC_S]]").join('<span class="bg-amber-200 ring-2 ring-amber-400/50 rounded-sm px-0.5 animate-pulse text-slate-900 shadow-sm relative z-10">')
+                                    .split("[[FOC_E]]").join('</span>');
+                            }
+                        }
                     }
                 } catch (err: any) {
                     console.error("Docxtemplater Render Error:", err);
@@ -261,7 +393,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
 
         const timer = setTimeout(renderPreview, 300);
         return () => clearTimeout(timer);
-    }, [template, customer, companyInfo, selectedCourt]);
+    }, [template, customer, companyInfo, selectedCourt, focusedField]);
 
     return (
         <div id={`doc-${template.id}`} className="doc-page bg-white shadow-[0_24px_60px_-12px_rgba(0,0,0,0.12)] border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto relative mb-12 transition-all hover:shadow-[0_32px_80px_-16px_rgba(0,0,0,0.15)] group font-sans overflow-hidden">
@@ -346,6 +478,7 @@ function GenerateDocumentContent() {
     const [isSaving, setIsSaving] = useState(false);
     const [activeDocId, setActiveDocId] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState<string | null>(null);
+    const [focusedField, setFocusedField] = useState<string | null>(null);
 
     const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
     const [courtSearch, setCourtSearch] = useState("");
@@ -357,7 +490,7 @@ function GenerateDocumentContent() {
         if (id) {
             fetchData();
         } else {
-            router.push("/reports");
+            router.push("/dashboard");
         }
     }, [id]);
 
@@ -372,15 +505,61 @@ function GenerateDocumentContent() {
             ]);
 
             if (custData) {
-                setCustomer(custData as Customer);
+                const typedCust = custData as Customer;
+
+                // Materialize invoices if missing
+                if (!typedCust.details?.invoices || typedCust.details.invoices.length === 0) {
+                    if (!typedCust.details) typedCust.details = {};
+                    typedCust.details.invoices = [{
+                        id: 'def',
+                        invoiceNumber: typedCust.details.contractNumber || "",
+                        orders: [{
+                            id: 'o_def',
+                            productDescription: typedCust.details.productDescription || "",
+                            phoneCount: typedCust.details.phoneCount || 1,
+                            contractDate: typedCust.details.contractDate || "",
+                            paymentPeriod: typedCust.details.paymentPeriod || "",
+                            monthlyPayment: typedCust.details.monthlyPayment || "",
+                            initialPayment: typedCust.details.initialPayment || "",
+                            totalPrice: typedCust.details.totalPrice || "0.00"
+                        }]
+                    }];
+                }
+
+                setCustomer(typedCust);
                 setAllTemplates(tempData as Template[]);
                 setCourts(courtsData as Court[]);
                 setCompanyInfo(settingsData as CompanyInfo);
 
-                if (tempData.length > 0) setActiveDocId(tempData[0].id);
+                if (tempData.length > 0) {
+                    const requestedTemplate = searchParams.get('template');
+                    if (requestedTemplate) {
+                        const found = (tempData as Template[]).find(t => t.name.includes(requestedTemplate));
+                        if (found) setActiveDocId(found.id);
+                        else setActiveDocId(tempData[0].id);
+                    } else {
+                        setActiveDocId(tempData[0].id);
+                    }
+                }
+
+                // Auto-select court
+                const actualAddress = (typedCust.details?.actualAddress || "").toLowerCase();
+                const addressRaw = typedCust.details?.address || "";
+                const address = normalizeAZ(addressRaw);
+
+                if (address) {
+                    const matchedCourt = courtsData.find((court: any) => {
+                        const courtName = normalizeAZ(court.name);
+                        const courtDistrict = courtName
+                            .replace("rayon", "").replace("mehkeme", "").replace("seher", "").replace("baki", "")
+                            .trim().split(" ")[0];
+                        return courtDistrict.length > 3 && address.includes(courtDistrict);
+                    });
+                    if (matchedCourt) setSelectedCourt(matchedCourt as Court);
+                }
             } else {
                 toast.error("Müştəri tapılmadı");
-                router.push("/reports");
+                router.push("/dashboard");
             }
         } catch (error) {
             console.error(error);
@@ -392,10 +571,23 @@ function GenerateDocumentContent() {
 
     const filteredTemplates = useMemo(() => {
         if (!customer) return [];
+        const requestedTemplate = searchParams.get('template');
+
+        // Step 8: Strict restriction if 'template' param is present
+        if (requestedTemplate) {
+            return allTemplates.filter(t => t.name.includes(requestedTemplate));
+        }
+
         const debt = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
 
         return allTemplates.filter(t => {
             const name = t.name.toLowerCase();
+            const product = (customer.details?.productDescription || "").toLowerCase();
+            const hasImei = product.includes("imei");
+
+            // Hide 'Arayış' templates if no IMEI
+            if (name.includes("arayış") && !hasImei) return false;
+
             if (name.includes("məhkəmə ərizəsi") || name.includes("ödəniş cədvəli")) {
                 if (debt <= 5000) {
                     return name.includes("(5000-)") || name.includes("(5000 - )");
@@ -411,7 +603,7 @@ function GenerateDocumentContent() {
             };
             return getNum(a.name) - getNum(b.name);
         });
-    }, [allTemplates, customer]);
+    }, [allTemplates, customer, searchParams]);
 
     const handleScroll = useCallback(() => {
         if (!scrollContainerRef.current) return;
@@ -430,27 +622,147 @@ function GenerateDocumentContent() {
         }
     }, [activeDocId]);
 
-    const handleFieldChange = (path: string, value: string) => {
+    const handleFieldChange = useCallback((path: string, value: string) => {
         if (!customer) return;
         setCustomer(prev => {
             if (!prev) return null;
             const newData = { ...prev };
-            const details = { ...(newData.details || {}) };
 
-            // Nested path handling
-            if (path.includes('.')) {
-                const parts = path.split('.');
-                (details as any)[parts[1]] = value;
+            // Handle root level fields
+            if (path === 'fullName' || path === 'customerCode' || path === 'debtAmount') {
+                (newData as any)[path] = value;
             } else {
-                (details as any)[path] = value;
+                const details = { ...(newData.details || {}) };
+                // Support both "details.field" and direct "field" (into details)
+                if (path.includes('.')) {
+                    const parts = path.split('.');
+                    const fieldName = parts[parts.length - 1];
+                    (details as any)[fieldName] = value;
+                } else {
+                    (details as any)[path] = value;
+                }
+                newData.details = details;
             }
 
-            newData.details = details;
             // Mirror debtAmount if totalUnpaid is updated
             if (path === 'totalUnpaid' || path === 'details.totalUnpaid') {
                 newData.debtAmount = value;
             }
             return newData;
+        });
+    }, [customer]);
+
+    const updateInvoice = (invId: string, field: string, value: any) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const invoices = [...(prev.details?.invoices || [])];
+            const idx = invoices.findIndex(i => i.id === invId);
+            if (idx === -1) return prev;
+            invoices[idx] = { ...invoices[idx], [field]: value };
+
+            const newData = { ...prev, details: { ...prev.details, invoices } };
+            if (idx === 0 && field === 'invoiceNumber' && newData.details) {
+                newData.details.contractNumber = value;
+            }
+            return newData;
+        });
+    };
+
+    const updateOrder = (invId: string, orderId: string, field: string, value: any) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const invoices = [...(prev.details?.invoices || [])];
+            const invIdx = invoices.findIndex(i => i.id === invId);
+            if (invIdx === -1) return prev;
+
+            const orders = [...(invoices[invIdx].orders || [])];
+            const ordIdx = orders.findIndex(o => o.id === orderId);
+            if (ordIdx === -1) return prev;
+
+            const ord = { ...orders[ordIdx], [field]: value };
+            if (['paymentPeriod', 'monthlyPayment', 'initialPayment'].includes(field)) {
+                const p = parseFloat(ord.paymentPeriod || "0") || 0;
+                const m = parseFloat(ord.monthlyPayment || "0") || 0;
+                const i = parseFloat(ord.initialPayment || "0") || 0;
+                ord.totalPrice = ((p * m) + i).toFixed(2);
+            }
+            orders[ordIdx] = ord;
+            invoices[invIdx] = { ...invoices[invIdx], orders };
+
+            const newData = { ...prev, details: { ...prev.details, invoices } };
+            // Sync legacy fields for first order
+            if (invIdx === 0 && ordIdx === 0 && newData.details) {
+                if (field === 'productDescription') newData.details.productDescription = value;
+                if (field === 'contractDate') newData.details.contractDate = value;
+                if (field === 'paymentPeriod') newData.details.paymentPeriod = value;
+                if (field === 'monthlyPayment') newData.details.monthlyPayment = value;
+                if (field === 'initialPayment') newData.details.initialPayment = value;
+                if (field === 'phoneCount') newData.details.phoneCount = value;
+                newData.details.totalPrice = ord.totalPrice;
+            }
+            return newData;
+        });
+    };
+
+    const addInvoice = () => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const newInv = {
+                id: Math.random().toString(36).substring(7),
+                invoiceNumber: "",
+                orders: [{
+                    id: Math.random().toString(36).substring(7),
+                    productDescription: "",
+                    phoneCount: 1,
+                    contractDate: "",
+                    paymentPeriod: "",
+                    monthlyPayment: "",
+                    initialPayment: "",
+                    totalPrice: "0.00"
+                }]
+            };
+            return { ...prev, details: { ...prev.details, invoices: [...(prev.details?.invoices || []), newInv] } };
+        });
+    };
+
+    const addOrder = (invId: string) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const invoices = [...(prev.details?.invoices || [])];
+            const idx = invoices.findIndex(i => i.id === invId);
+            if (idx === -1) return prev;
+
+            const newOrder = {
+                id: Math.random().toString(36).substring(7),
+                productDescription: "",
+                phoneCount: 1,
+                contractDate: "",
+                paymentPeriod: "",
+                monthlyPayment: "",
+                initialPayment: "",
+                totalPrice: "0.00"
+            };
+            invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrder] };
+            return { ...prev, details: { ...prev.details, invoices } };
+        });
+    };
+
+    const removeInvoice = (id: string) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const invoices = (prev.details?.invoices || []).filter(i => i.id !== id);
+            return { ...prev, details: { ...prev.details, invoices } };
+        });
+    };
+
+    const removeOrder = (invId: string, orderId: string) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const invoices = [...(prev.details?.invoices || [])];
+            const idx = invoices.findIndex(i => i.id === invId);
+            if (idx === -1) return prev;
+            invoices[idx] = { ...invoices[idx], orders: (invoices[idx].orders || []).filter(o => o.id !== orderId) };
+            return { ...prev, details: { ...prev.details, invoices } };
         });
     };
 
@@ -472,8 +784,188 @@ function GenerateDocumentContent() {
         }
     };
 
+    // --- Automatic Calculations ---
+    useEffect(() => {
+        if (!customer) return;
+
+        // Aggregate from ALL invoices and orders
+        let totalAggregatedPrice = 0;
+        let totalPhoneCount = 0;
+        let firstProductDesc = "";
+        let firstContractDate = "";
+        let firstPaymentPeriod = "";
+        let firstMonthlyPayment = "";
+        let firstInitialPayment = "";
+
+        const invoices = customer.details?.invoices || [];
+        invoices.forEach((inv, iidx) => {
+            (inv.orders || []).forEach((ord, oidx) => {
+                totalAggregatedPrice += parseFloat(ord.totalPrice || "0");
+                totalPhoneCount += (ord.phoneCount || 0);
+                if (iidx === 0 && oidx === 0) {
+                    firstProductDesc = ord.productDescription;
+                    firstContractDate = ord.contractDate;
+                    firstPaymentPeriod = ord.paymentPeriod;
+                    firstMonthlyPayment = ord.monthlyPayment;
+                    firstInitialPayment = ord.initialPayment;
+                }
+            });
+        });
+
+        const paid = parseFloat(customer.details?.paidAmount || "0");
+        const hasImei = (customer.details?.invoices || []).some(inv =>
+            (inv.orders || []).some(ord => ord.productDescription.toLowerCase().includes("imei"))
+        );
+
+        // 1. Total Price (aggregated)
+        const calculatedTotalPrice = totalAggregatedPrice;
+
+        // 2. Unpaid Amount
+        const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
+
+        // 3. IDM Fee
+        let calculatedFee = 0;
+        if (hasImei) {
+            calculatedFee = totalPhoneCount * 47.2;
+        }
+
+        // 4. Penalty
+        const calculatedPenalty = calculatedUnpaid * 0.10;
+
+        // 5. Total Unpaid
+        const calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
+
+        // 6. Discount
+        const calculatedDiscount = Math.max(0, calculatedUnpaid - calculatedPenalty);
+
+        const updates: Record<string, string> = {};
+        const currentTotalPrice = parseFloat(customer.details?.totalPrice || "0");
+        if (Math.abs(calculatedTotalPrice - currentTotalPrice) > 0.01) {
+            updates['details.totalPrice'] = calculatedTotalPrice.toFixed(2);
+        }
+
+        const currentUnpaid = parseFloat(customer.details?.unpaidAmount || "0");
+        if (Math.abs(calculatedUnpaid - currentUnpaid) > 0.01) {
+            updates['details.unpaidAmount'] = calculatedUnpaid.toFixed(2);
+        }
+
+        const currentFee = parseFloat(customer.details?.fee || "0");
+        if (Math.abs(calculatedFee - currentFee) > 0.01) {
+            updates['details.fee'] = calculatedFee.toFixed(2);
+        }
+
+        const currentPenalty = parseFloat(customer.details?.penalty || "0");
+        if (Math.abs(calculatedPenalty - currentPenalty) > 0.01) {
+            updates['details.penalty'] = calculatedPenalty.toFixed(2);
+        }
+
+        const currentTotalUnpaid = parseFloat(customer.details?.totalUnpaid || "0");
+        if (Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 0.01) {
+            updates['details.totalUnpaid'] = calculatedTotalUnpaid.toFixed(2);
+        }
+
+        const currentDiscount = parseFloat(customer.details?.discountAmount || "0");
+        if (Math.abs(calculatedDiscount - currentDiscount) > 0.01) {
+            updates['details.discountAmount'] = calculatedDiscount.toFixed(2);
+        }
+
+        // Sync legacy fields
+        if (customer.details?.productDescription !== firstProductDesc) updates['details.productDescription'] = firstProductDesc;
+        if (customer.details?.contractDate !== firstContractDate) updates['details.contractDate'] = firstContractDate;
+        if (customer.details?.paymentPeriod !== firstPaymentPeriod) updates['details.paymentPeriod'] = firstPaymentPeriod;
+        if (customer.details?.monthlyPayment !== firstMonthlyPayment) updates['details.monthlyPayment'] = firstMonthlyPayment;
+        if (customer.details?.initialPayment !== firstInitialPayment) updates['details.initialPayment'] = firstInitialPayment;
+        if (customer.details?.phoneCount !== totalPhoneCount) updates['details.phoneCount'] = String(totalPhoneCount) as any;
+
+        if (Object.keys(updates).length > 0) {
+            setCustomer(prev => {
+                if (!prev) return null;
+                const next = { ...prev };
+                const details = { ...next.details };
+                Object.entries(updates).forEach(([path, val]) => {
+                    const key = path.split('.')[1];
+                    (details as any)[key] = val;
+                });
+                next.details = details;
+                if (updates['details.totalUnpaid']) next.debtAmount = updates['details.totalUnpaid'];
+                return next;
+            });
+        }
+    }, [
+        customer?.details?.invoices,
+        customer?.details?.paidAmount,
+        customer?.details?.totalPrice
+    ]);
+
+    const validateData = () => {
+        if (!customer) return false;
+
+        const sections = {
+            "Sənədi Hazırlayan": { "İcraçı": "details.executorName" },
+            "Şəxsi Məlumatlar": {
+                "Ad Soyad": "fullName",
+                "Cins": "details.gender",
+                "Doğum Tarixi": "details.birthDate",
+                "FİN": "details.fin",
+                "Telefon": "details.phone",
+                "Seriya №": "details.passportSeries"
+            },
+            "Ünvan Məlumatları": {
+                "Qeydiyyat Ünvanı": "details.address",
+                "Faktiki Yaşayış": "details.actualAddress"
+            },
+            "Maliyyə Hesabatı": { "Ödənilən məbləğ": "details.paidAmount" }
+        };
+
+        const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
+
+        for (const [title, fields] of Object.entries(sections)) {
+            for (const [name, path] of Object.entries(fields)) {
+                const val = path.includes('.')
+                    ? (customer as any).details?.[path.split('.')[1]]
+                    : (customer as any)[path];
+
+                if (isEmpty(val)) {
+                    toast.error(`Əskik məlumat: [${title}] bölməsində "${name}" xanasını doldurun.`);
+                    return false;
+                }
+            }
+        }
+
+        if (isEmpty(customer.store)) {
+            toast.error("Faktura və Sifariş Detalları bölməsində, sifarişin \"Mağaza\" xanasını doldurun.");
+            return false;
+        }
+
+        const invoices = customer.details?.invoices || [];
+        if (invoices.length === 0) {
+            toast.error("Əskik doldurulan məlumat var: Faktura və Sifariş bölməsinə məlumat əlavə edin.");
+            return false;
+        }
+
+        for (const inv of invoices) {
+            if (!inv.invoiceNumber) {
+                toast.error("Əskik doldurulan məlumat var: Faktura və Sifariş (Faktura №) xanasını doldurun.");
+                return false;
+            }
+            if (!inv.orders || inv.orders.length === 0) {
+                toast.error("Əskik doldurulan məlumat var: Faktura və Sifariş bölməsinə məhsul əlavə edin.");
+                return false;
+            }
+            for (const ord of inv.orders) {
+                if (!ord.productDescription || !ord.contractDate || !ord.paymentPeriod || !ord.monthlyPayment || !ord.initialPayment) {
+                    toast.error("Əskik doldurulan məlumat var: [Faktura və Sifariş] detallarını tam doldurun.");
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    };
+
     const generateDocument = async (template: Template) => {
         if (!customer) return;
+        if (!validateData()) return;
         if (!selectedCourt) {
             toast.error("Zəhmət olmasa məhkəmə seçin");
             setIsCourtDropdownOpen(true);
@@ -510,6 +1002,9 @@ function GenerateDocumentContent() {
             const totalPrice = parseFloat(customer.details?.totalPrice || "0");
             const paidAmount = parseFloat(customer.details?.paidAmount || "0");
 
+            const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
+            const now = new Date();
+
             const data = {
                 // Court Info
                 MEHKEME_ADI: selectedCourt.name,
@@ -523,18 +1018,23 @@ function GenerateDocumentContent() {
                 IDDIACI_TELEFON: companyInfo?.phone || "",
                 IDDIACI_FAKS: companyInfo?.fax || "",
                 NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
-                NUMAYENDE_FIN: customer.details?.representativeFin || "",
+                NUMAYENDE_FIN: companyInfo?.representativeFin || customer.details?.representativeFin || "",
 
                 // Defendant (Cavabdeh) Info
                 CAVABDEH_AD_SOYAD: customer.fullName || "",
                 CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
                 CAVABDEH_FIN: customer.details?.fin || "",
-                CAVABDEH_UNVAN: customer.details?.actualAddress || customer.details?.address || "",
+                CAVABDEH_UNVAN: customer.details?.address || "", // Registration address
                 CAVABDEH_MOBIL: customer.details?.phone || "",
+                CAVABDEH_VESIQE_SERIYA_NOMRE: customer.details?.passportNumber || "",
+                CAVABDEH_VESIQE_VERILME_TARIXI: customer.details?.issueDate || "",
+                CAVABDEH_VESIQE_VEREN_ORQAN: customer.details?.authority || "",
+                CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
+                CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
 
                 // Contract & Items
                 MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                MEHSUL_IMEI_SIYAHI: customer.details?.itemModel || "",
+                MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
 
                 // Financials
                 UMUMI_BORC: debtNum.toFixed(2),
@@ -544,8 +1044,9 @@ function GenerateDocumentContent() {
                 TAKSIT_AY: customer.details?.paymentPeriod || "",
                 AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                 ILKIN_ODENIS: customer.details?.initialPayment || "",
-                ODENILMEMIS_HISSE: (totalPrice - paidAmount).toFixed(2),
-                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice - paidAmount),
+                CEMI_ODENEN: paidAmount.toFixed(2),
+                ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
+                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
 
                 // Fees & Others
                 ILM_RUSUM: customer.details?.fee || "",
@@ -553,19 +1054,35 @@ function GenerateDocumentContent() {
                 DEBBE_PULU: customer.details?.penalty || "",
                 DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
 
-                // Dates
-                currentDate: new Date().toLocaleDateString("az-AZ"),
+                // Dates & New Tags
+                currentDate: now.toLocaleDateString("az-AZ"),
+                ERIZE_GUN: `${now.getDate()}`,
+                ERIZE_AY: AZ_MONTHS_CAP[now.getMonth()],
+                ERIZE_IL: now.getFullYear().toString(),
+                ELAQE_TEL1: "050 280 11 90",
+                ELAQE_TEL2: "012 310 07 75",
+                NUMAYENDE_IMZA: "Süleymanlı.R.X",
+                CAVABDEH_TAM_AD: customer.fullName || "",
+                CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
+                CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
+                ICRACI_AD_SOYAD: user?.displayName || user?.email || "",
+                MEHSUL_SIYAHI: customer.details?.productDescription || "",
+                DOVLET_RUSUMU: customer.details?.courtFee || "",
+                PENYA_FAIZ: customer.details?.penaltyPercent || "",
+                GUZEST_MEBLEGI: customer.details?.discountAmount || "",
+                XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
             };
 
             doc.render(data);
             const out = doc.getZip().generate({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-            saveAs(out, `${customer.fullName.replace(/\s+/g, '_')}_${template.name}`);
+            saveAs(out, `${customer.fullName.replace(/\s+/g, '_')
+                }_${template.name}`);
             toast.success(`${template.name} yükləndi`);
             await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${template.name} yaradıldı`, user?.email || "system");
         } catch (error: any) {
             console.error("Document generation error:", error);
             if (error.name === "XTTemplateError") {
-                toast.error(`"${template.name}" şablonunda etiket (tag) xətası var. Mötərizələri yoxlayın.`);
+                toast.error(`"${template.name}" şablonunda etiket(tag) xətası var.Mötərizələri yoxlayın.`);
             } else {
                 toast.error("Sənəd yaradılmadı");
             }
@@ -595,7 +1112,7 @@ function GenerateDocumentContent() {
                 {/* Fixed Top Header */}
                 <div className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0 z-50 shadow-sm">
                     <div className="flex items-center gap-10">
-                        <button onClick={() => router.push("/reports")} className="h-10 w-10 flex items-center justify-center bg-slate-50 text-slate-400 hover:text-primary rounded-xl border border-slate-100 transition-all hover:bg-white hover:shadow-md">
+                        <button onClick={() => router.push("/dashboard")} className="h-10 w-10 flex items-center justify-center bg-slate-50 text-slate-400 hover:text-primary rounded-xl border border-slate-100 transition-all hover:bg-white hover:shadow-md">
                             <ArrowLeft size={18} />
                         </button>
 
@@ -613,6 +1130,7 @@ function GenerateDocumentContent() {
                     </div>
 
                     <div className="flex items-center gap-6">
+                        {/* Court Selection */}
                         <div className="relative group">
                             <button
                                 onClick={() => setIsCourtDropdownOpen(!isCourtDropdownOpen)}
@@ -662,6 +1180,44 @@ function GenerateDocumentContent() {
                         </div>
 
                         <button
+                            onClick={async () => {
+                                if (!customer) return;
+                                if (!validateData()) return;
+                                if (!selectedCourt) {
+                                    toast.error("Zəhmət olmasa məhkəmə seçin");
+                                    setIsCourtDropdownOpen(true);
+                                    return;
+                                }
+
+                                const loadingId = toast.loading("Bütün sənədlər hazırlanır...");
+                                try {
+                                    // 1. Generate all filtered documents sequentially
+                                    for (const temp of filteredTemplates) {
+                                        await generateDocument(temp);
+                                        // Small delay for browser's download queue
+                                        await new Promise(r => setTimeout(r, 800));
+                                    }
+
+                                    // 2. Update status to COMPLETED
+                                    await updateCustomer(customer.id, {
+                                        ...customer,
+                                        process_status: 'COMPLETED'
+                                    }, user?.email);
+
+                                    toast.success("Bütün sənədlər yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
+
+                                    // Refresh local customer state
+                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED' } : null);
+                                } catch (err) {
+                                    toast.error("Sənədləri yaradarkən xəta baş verdi", { id: loadingId });
+                                }
+                            }}
+                            className="bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-emerald-700 transition-all shadow-xl active:scale-95 flex items-center gap-3"
+                        >
+                            <Printer size={18} /> ÜMUMİ ÇAP (HAMISI)
+                        </button>
+
+                        <button
                             onClick={handleSave}
                             disabled={isSaving}
                             className="bg-slate-900 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl active:scale-95 disabled:opacity-50 flex items-center gap-3"
@@ -693,6 +1249,75 @@ function GenerateDocumentContent() {
                         </div>
 
                         <div className="p-8 space-y-10 flex-1">
+                            {/* Executor Info */}
+                            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200/60 shadow-sm transition-all hover:bg-white hover:shadow-md group">
+                                <div className="flex items-center gap-4 mb-4">
+                                    <div className="h-10 w-10 rounded-2xl bg-white text-primary flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-primary/20 transition-all">
+                                        <Edit3 size={20} className="stroke-[2.5px]" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em] leading-none">Sənədi Hazırlayan</h4>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1.5">Müfəttiş Məlumatı</p>
+                                    </div>
+                                </div>
+                                <CustomerField
+                                    label="Müfəttiş"
+                                    icon={User}
+                                    value={customer.details?.executorName || user?.displayName || ""}
+                                    onFocus={setFocusedField}
+                                    onBlur={() => setFocusedField(null)}
+                                    onChange={(v: string) => handleFieldChange("details.executorName", v)}
+                                    placeholder="Ad Soyad"
+                                />
+                            </div>
+
+                            {/* Warning Section */}
+                            <div className="bg-amber-50/50 p-6 rounded-[2rem] border border-amber-200/50 shadow-sm transition-all hover:bg-amber-50">
+                                <div className="flex items-center justify-between gap-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="h-10 w-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
+                                            <AlertTriangle size={20} className="stroke-[2.5px]" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em] leading-none">Xəbərdarlıq Göndərilibmi?</h4>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={!!customer.details?.isWarningSent}
+                                            onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                handleFieldChange("details.isWarningSent", checked as any);
+                                                if (!checked) {
+                                                    handleFieldChange("details.warningDate", "");
+                                                } else if (!customer.details?.warningDate) {
+                                                    const now = new Date();
+                                                    const dd = String(now.getDate()).padStart(2, '0');
+                                                    const mm = String(now.getMonth() + 1).padStart(2, '0');
+                                                    const yyyy = now.getFullYear();
+                                                    handleFieldChange("details.warningDate", `${dd}.${mm}.${yyyy}`);
+                                                }
+                                            }}
+                                        />
+                                        <div className="w-14 h-7 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-[21px] after:w-[21px] after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
+                                    </label>
+                                </div>
+
+                                {customer.details?.isWarningSent && (
+                                    <div className="mt-6 pt-6 border-t border-amber-200/30 animate-in fade-in slide-in-from-top-2 duration-300">
+                                        <CustomerField
+                                            label="Xəbərdarlıq Tarixi"
+                                            icon={Calendar}
+                                            value={customer.details?.warningDate}
+                                            onChange={(v: string) => handleFieldChange("details.warningDate", v)}
+                                            placeholder="GG.AA.İİİİ"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
                             {/* Personal Information */}
                             <div className="space-y-6">
                                 <div className="flex items-center gap-3 border-b-2 border-primary/10 pb-4">
@@ -701,58 +1326,47 @@ function GenerateDocumentContent() {
                                     </div>
                                     <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Şəxsi Məlumatlar</h4>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <CustomerField
-                                        label="Cins"
-                                        isSelect={true}
-                                        options={[{ label: "Kişi", value: "Kişi" }, { label: "Qadın", value: "Qadın" }]}
-                                        value={customer.details?.gender}
-                                        onChange={(v: string) => handleFieldChange("details.gender", v)}
-                                    />
-                                    <CustomerField
-                                        label="FİN"
-                                        isFin={true}
-                                        value={customer.details?.fin}
-                                        onChange={(v: string) => handleFieldChange("details.fin", v)}
-                                        placeholder="7 Simvollu"
-                                    />
+                                <div className="space-y-4">
+                                    <CustomerField label="SOYAD AD ATA ADI" icon={User} value={customer.fullName} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("fullName", v)} />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <CustomerField
+                                            label="Cins"
+                                            isSelect={true}
+                                            options={[{ label: "Kişi", value: "Kişi" }, { label: "Qadın", value: "Qadın" }]}
+                                            value={customer.details?.gender}
+                                            onFocus={setFocusedField}
+                                            onBlur={() => setFocusedField(null)}
+                                            onChange={(v: string) => handleFieldChange("details.gender", v)}
+                                        />
+                                        <CustomerField
+                                            label="FİN"
+                                            isFin={true}
+                                            value={customer.details?.fin}
+                                            onFocus={setFocusedField}
+                                            onBlur={() => setFocusedField(null)}
+                                            onChange={(v: string) => handleFieldChange("details.fin", v)}
+                                            placeholder="7 Simvollu"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <CustomerField
+                                            label="Doğum Tarixi"
+                                            value={customer.details?.birthDate}
+                                            onFocus={setFocusedField}
+                                            onBlur={() => setFocusedField(null)}
+                                            onChange={(v: string) => handleFieldChange("details.birthDate", v)}
+                                            placeholder="GG.AA.İİİİ"
+                                        />
+                                        <CustomerField
+                                            label="Telefon Nömrəsi"
+                                            value={customer.details?.phone}
+                                            onFocus={setFocusedField}
+                                            onBlur={() => setFocusedField(null)}
+                                            onChange={(v: string) => handleFieldChange("details.phone", v)}
+                                            placeholder="+994"
+                                        />
+                                    </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <CustomerField
-                                        label="Doğum Tarixi"
-                                        value={customer.details?.birthDate}
-                                        onChange={(v: string) => handleFieldChange("details.birthDate", v)}
-                                        placeholder="GG.AA.İİİİ"
-                                    />
-                                    <CustomerField
-                                        label="Nümayəndə FİN"
-                                        value={customer.details?.representativeFin}
-                                        onChange={(v: string) => handleFieldChange("details.representativeFin", v)}
-                                        isFin={true}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <CustomerField
-                                        label="Vəsiqə Seriya/No"
-                                        value={customer.details?.passportNumber}
-                                        onChange={(v: string) => handleFieldChange("details.passportNumber", v)}
-                                        placeholder="AA0000000"
-                                    />
-                                    <CustomerField
-                                        label="Verilmə Tarixi"
-                                        icon={Calendar}
-                                        value={customer.details?.issueDate}
-                                        onChange={(v: string) => handleFieldChange("details.issueDate", v)}
-                                        placeholder="GG.AA.İİİİ"
-                                    />
-                                </div>
-                                <CustomerField
-                                    label="Verən Orqan"
-                                    icon={Shield}
-                                    value={customer.details?.authority}
-                                    onChange={(v: string) => handleFieldChange("details.authority", v)}
-                                    placeholder="Daxili İşlər Nazirliyi"
-                                />
                             </div>
 
                             {/* Address Information */}
@@ -768,6 +1382,8 @@ function GenerateDocumentContent() {
                                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
                                         <textarea
                                             value={customer.details?.address || ""}
+                                            onFocus={() => setFocusedField("Qeydiyyat Ünvanı")}
+                                            onBlur={() => setFocusedField(null)}
                                             onChange={(e) => handleFieldChange("details.address", e.target.value)}
                                             className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:border-primary/20 transition-all font-medium text-xs text-slate-600 shadow-sm min-h-[70px] resize-none"
                                         />
@@ -776,6 +1392,8 @@ function GenerateDocumentContent() {
                                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
                                         <textarea
                                             value={customer.details?.actualAddress || ""}
+                                            onFocus={() => setFocusedField("Faktiki Yaşayış")}
+                                            onBlur={() => setFocusedField(null)}
                                             onChange={(e) => handleFieldChange("details.actualAddress", e.target.value)}
                                             className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:border-primary/20 transition-all font-medium text-xs text-slate-600 shadow-sm min-h-[70px] resize-none"
                                         />
@@ -783,24 +1401,127 @@ function GenerateDocumentContent() {
                                 </div>
                             </div>
 
-                            {/* Order Details */}
+                            {/* Faktura və Sifariş Detalları - MULTI INVOICE */}
                             <div className="space-y-6">
-                                <div className="flex items-center gap-3 border-b-2 border-primary/10 pb-4">
-                                    <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                                        <Box size={16} className="stroke-[2.5px]" />
+                                <div className="flex items-center justify-between border-b-2 border-primary/10 pb-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                                            <Box size={16} className="stroke-[2.5px]" />
+                                        </div>
+                                        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Faktura və Sifariş Detalları</h4>
                                     </div>
-                                    <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Sifariş Detalları</h4>
+                                    <button
+                                        onClick={addInvoice}
+                                        className="h-9 px-4 bg-primary text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-primary/90 transition-all flex items-center gap-2 shadow-lg shadow-primary/20 active:scale-95"
+                                    >
+                                        <Plus size={14} strokeWidth={3} /> Faktura Əlavə Et
+                                    </button>
                                 </div>
-                                <div className="space-y-4">
-                                    <CustomerField label="Əşya Modeli" icon={Smartphone} value={customer.details?.itemModel} onChange={(v: string) => handleFieldChange("details.itemModel", v)} />
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Müq. Tarixi" icon={Calendar} value={customer.details?.contractDate} onChange={(v: string) => handleFieldChange("details.contractDate", v)} />
-                                        <CustomerField label="Müddət (Ay)" value={customer.details?.paymentPeriod} onChange={(v: string) => handleFieldChange("details.paymentPeriod", v)} />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Aylıq Ödəniş" value={customer.details?.monthlyPayment} onChange={(v: string) => handleFieldChange("details.monthlyPayment", v)} />
-                                        <CustomerField label="İlkin Ödəniş" value={customer.details?.initialPayment} onChange={(v: string) => handleFieldChange("details.initialPayment", v)} />
-                                    </div>
+
+                                <div className="space-y-8">
+                                    {(customer.details?.invoices || []).map((inv, idx) => (
+                                        <div key={inv.id} className="bg-slate-50/50 p-6 rounded-[2.5rem] border border-slate-200/60 space-y-6 relative group/inv">
+                                            {/* Invoice Header */}
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-4 flex-1">
+                                                    <div className="h-10 w-10 rounded-2xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-400 text-xs shadow-sm">
+                                                        {idx + 1}
+                                                    </div>
+                                                    <input
+                                                        value={inv.invoiceNumber}
+                                                        onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                        className="flex-1 bg-white border border-slate-200 px-4 py-2.5 rounded-xl font-bold text-xs outline-none focus:border-primary/30 transition-all shadow-sm"
+                                                        placeholder="Faktura Nömrəsi"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={() => removeInvoice(inv.id)}
+                                                    className="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all border border-transparent hover:border-red-100"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+
+                                            {/* Orders List */}
+                                            <div className="space-y-4">
+                                                {(inv.orders || []).map((ord) => (
+                                                    <div key={ord.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4 group/ord">
+                                                        <div className="flex items-center justify-between gap-4">
+                                                            <div className="flex-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Məhsul Adı (İMEİ)</label>
+                                                                <input
+                                                                    value={ord.productDescription}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 px-4 py-2.5 rounded-xl font-bold text-xs outline-none focus:border-primary/20 transition-all"
+                                                                    placeholder="Məs: iPhone 13 (IMEI: ...)"
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                onClick={() => removeOrder(inv.id, ord.id)}
+                                                                className="h-9 w-9 flex items-center justify-center text-slate-200 hover:text-red-400 transition-all"
+                                                            >
+                                                                <Minus size={14} />
+                                                            </button>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-4 gap-3">
+                                                            <div className="space-y-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Müddət</label>
+                                                                <input
+                                                                    value={ord.paymentPeriod}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Sayı</label>
+                                                                <input
+                                                                    value={ord.phoneCount}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'phoneCount', parseInt(e.target.value) || 1)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Aylıq</label>
+                                                                <input
+                                                                    value={ord.monthlyPayment}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">İlkin</label>
+                                                                <input
+                                                                    value={ord.initialPayment}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="pt-3 border-t border-slate-50 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold text-primary tracking-tight">Cəmi: {ord.totalPrice} AZN</span>
+                                                            <div className="flex items-center gap-1">
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest px-2">Tarix</label>
+                                                                <input
+                                                                    value={ord.contractDate}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', e.target.value)}
+                                                                    className="w-24 bg-slate-50 border border-slate-100 py-1.5 rounded-lg font-bold text-[10px] text-center outline-none"
+                                                                    placeholder="GG.AA.İİİİ"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                <button
+                                                    onClick={() => addOrder(inv.id)}
+                                                    className="w-full py-3 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
+                                                >
+                                                    <Plus size={14} /> Məhsul Əlavə Et
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
@@ -814,18 +1535,30 @@ function GenerateDocumentContent() {
                                 </div>
                                 <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Cəmi Qiymət" value={customer.details?.totalPrice} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
-                                        <CustomerField label="Ödənilən" value={customer.details?.paidAmount} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
+                                        <CustomerField label="Cəmi Qiymət" value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
+                                        <CustomerField label="Ödənilən" value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
+                                    </div>
+                                    <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm">
+                                        <CustomerField label="Ödənilməmiş Hissə" value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
-                                        <CustomerField label="Dövlət Rüsumu" value={customer.details?.fee} onChange={(v: string) => handleFieldChange("details.fee", v)} />
-                                        <CustomerField label="Gecikmə Cəriməsi" value={customer.details?.penalty} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
+                                        <CustomerField label="İDM Rüsumu" value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
+                                        <CustomerField label="Dövlət Rüsumu" value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <CustomerField label="Dəbbə Pulu" value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
+                                        <CustomerField label="Penya Faizi" value={customer.details?.penaltyPercent} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penaltyPercent", v)} />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <CustomerField label="Güzəşt Məbləği" value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
                                     <div className="pt-2 border-t border-primary/10">
                                         <CustomerField
                                             label="Yekun Borc (AZN)"
                                             icon={DollarSign}
                                             value={customer.details?.totalUnpaid}
+                                            onFocus={setFocusedField}
+                                            onBlur={() => setFocusedField(null)}
                                             onChange={(v: string) => handleFieldChange("details.totalUnpaid", v)}
                                             isPrice={true}
                                         />
@@ -851,6 +1584,8 @@ function GenerateDocumentContent() {
                                     selectedCourt={selectedCourt}
                                     onDownload={generateDocument}
                                     isGenerating={isGenerating}
+                                    user={user}
+                                    focusedField={focusedField}
                                 />
                             ))}
                         </div>
