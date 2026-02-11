@@ -1,426 +1,74 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, memo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-    Trash2,
-    Loader2,
     Search,
-    X,
-    AlertTriangle,
-    Edit2,
-    Check,
-    User,
-    MapPin,
-    Box,
-    Tag,
-    DollarSign,
-    UserCircle,
+    Loader2,
     FileText,
-    Smartphone,
-    Minus,
-    Zap,
-    RefreshCw,
-    Download,
-    UserPlus,
-    Users,
-    Calendar,
-    Upload,
     FileUp,
-    Shield,
-    ChevronDown,
-    Store,
-    FolderArchive
+    Download,
+    Trash2,
+    User,
+    Box,
+    X,
+    ArrowRight,
+    FileArchive,
+    SearchX,
+    CreditCard,
+    ChevronRight,
+    ExternalLink,
+    CheckCircle2
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
+import { getCustomers, updateCustomer } from "@/lib/db";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
+import { ProcessStatus } from "../dashboard/page";
 
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
-import { ProcessStatus, STATUS_ORDER, STATUS_LABELS } from "../dashboard/page";
+interface Invoice {
+    id: string;
+    invoiceNumber: string;
+    archiveUrl?: string;
+    archiveName?: string;
+    orders?: any[];
+}
 
 interface CustomerRow {
-    id?: string;
+    id: string;
     customerCode: string;
     fullName: string;
     debtAmount: string;
-    createdAt?: string;
-    fullData?: boolean;
-    gender?: string;
-    process_status?: ProcessStatus;
-    assignedTo?: string;
-    assignedAt?: string;
-    isArchived?: boolean;
-    store?: string;
+    process_status: ProcessStatus;
     details?: {
-        address?: string;
-        actualAddress?: string;
-        phone?: string;
-        gender?: string;
-        passportSeries?: string;
-        passportNumber?: string;
-        birthDate?: string;
-        issueDate?: string;
-        authority?: string;
-        contractNumber?: string;
-        contractDate?: string;
-        itemModel?: string;
-        paymentPeriod?: string;
-        monthlyPayment?: string;
-        initialPayment?: string;
-        totalPrice?: string;
-        paidAmount?: string;
-        unpaidAmount?: string;
-        fee?: string;
-        penalty?: string;
-        totalUnpaid?: string;
-        fin?: string;
-        productDescription?: string;
-        phoneCount?: number;
-        discountAmount?: string;
-        isWarningSent?: boolean;
-        warningDate?: string;
-        executorName?: string;
-        invoices?: Array<{
-            id: string;
-            invoiceNumber: string;
-            archiveUrl?: string;
-            archiveBase64?: string;
-            archiveName?: string;
-            orders: Array<{
-                id: string;
-                productDescription: string;
-                phoneCount: number;
-                contractDate: string;
-                paymentPeriod: string;
-                monthlyPayment: string;
-                initialPayment: string;
-                totalPrice: string;
-            }>;
-        }>;
+        invoices?: Invoice[];
     };
+    updatedAt?: any;
 }
 
-const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi, isSelect, value, onChange, isEditing, maxLength, action }: any) => {
-    const handleValueChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-        let val = e.target.value;
-        const datePaths = ['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'];
-        if (datePaths.includes(path)) {
-            val = val.replace(/\D/g, '').slice(0, 8);
-            if (val.length >= 4) val = val.slice(0, 2) + '.' + val.slice(2, 4) + '.' + val.slice(4);
-            else if (val.length >= 2) val = val.slice(0, 2) + '.' + val.slice(2);
-        }
-        if (isFin) val = val.toUpperCase();
-        onChange(path, val);
-    };
-
-    return (
-        <div className={cn("space-y-1.5", className)}>
-            <label className="text-[10px] font-semibold text-slate-600 ml-1">{label}</label>
-            <div className="flex items-center gap-2">
-                {isSelect ? (
-                    <select
-                        disabled={!isEditing}
-                        className={cn("w-full px-3.5 py-2.5 rounded-xl border outline-none text-[13px] transition-all appearance-none", isEditing ? "bg-white border-slate-200 shadow-sm" : "bg-slate-100 border-slate-200")}
-                        value={value || ""}
-                        onChange={handleValueChange}
-                    >
-                        <option value="">-</option>
-                        <option value="Kişi">Kişi</option>
-                        <option value="Qadın">Qadın</option>
-                    </select>
-                ) : (
-                    <input
-                        type="text"
-                        readOnly={!isEditing}
-                        maxLength={maxLength}
-                        className={cn("w-full px-3.5 py-2 rounded-xl border outline-none text-[13px] transition-all", isEditing ? "bg-white border-slate-200 focus:border-slate-400 focus:ring-4 focus:ring-slate-100 font-semibold" : "bg-slate-100 border-slate-200 cursor-default")}
-                        value={value || ""}
-                        onChange={handleValueChange}
-                        placeholder={placeholder || (['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'].includes(path) ? "GG.AA.İİİİ" : "-")}
-                    />
-                )}
-                {action}
-            </div>
-        </div>
-    );
-});
-CustomerField.displayName = "CustomerField";
-
-const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores, onSave, onDelete }: any) => {
-    const router = useRouter();
+export default function ArchiveDocumentsPage() {
     const { user } = useAuth();
-    const [isEditing, setIsEditing] = useState(false);
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
-    const [uploading, setUploading] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (!isEditing) setLocalData(JSON.parse(JSON.stringify(row)));
-    }, [row, isEditing]);
-
-    const handleFieldChange = useCallback((path: string, value: string) => {
-        setLocalData(prev => {
-            const newData = { ...prev };
-            const details = { ...(newData.details || {}) };
-            if (path.startsWith('details.')) {
-                (details as any)[path.split('.')[1]] = value;
-            } else {
-                (newData as any)[path] = value;
-            }
-            newData.details = details;
-            return newData;
-        });
-    }, []);
-
-    const updateInvoice = (invId: string, field: string, value: any) => {
-        setLocalData(prev => {
-            const invoices = [...(prev.details?.invoices || [])];
-            const idx = invoices.findIndex(i => i.id === invId);
-            if (idx === -1) return prev;
-            invoices[idx] = { ...invoices[idx], [field]: value };
-            return { ...prev, details: { ...prev.details, invoices } };
-        });
-    };
-
-    const handleUpload = async (invId: string, file: File) => {
-        if (!file.name.endsWith(".pdf")) {
-            toast.error("Yalnız PDF faylları yüklənə bilər");
-            return;
-        }
-        try {
-            setUploading(invId);
-            const storagePath = `UploadedPDFs/${row.id}/${invId}.pdf`;
-            const storageRef = ref(storage, storagePath);
-            const snapshot = await uploadBytes(storageRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
-
-            const updatedInvoices = [...(localData.details?.invoices || [])];
-            const invIdx = updatedInvoices.findIndex(i => i.id === invId);
-            if (invIdx !== -1) {
-                updatedInvoices[invIdx] = {
-                    ...updatedInvoices[invIdx],
-                    archiveUrl: downloadURL,
-                    archiveName: file.name
-                };
-            }
-            const updatedData = { ...localData, process_status: 'ARCHIVE_UPLOADED' as ProcessStatus, details: { ...localData.details, invoices: updatedInvoices } };
-            await onSave(updatedData);
-            setLocalData(updatedData);
-            toast.success("Sənəd uğurla yükləndi!");
-        } catch (err) {
-            toast.error("Yükləmə xətası");
-        } finally {
-            setUploading(null);
-        }
-    };
-
-    const handleRemoveFile = async (invId: string) => {
-        try {
-            const inv = localData.details?.invoices?.find(i => i.id === invId);
-            if (inv?.archiveUrl) {
-                const storageRef = ref(storage, `UploadedPDFs/${row.id}/${invId}.pdf`);
-                await deleteObject(storageRef).catch(() => { });
-            }
-            const updatedInvoices = [...(localData.details?.invoices || [])];
-            const invIdx = updatedInvoices.findIndex(i => i.id === invId);
-            if (invIdx !== -1) {
-                updatedInvoices[invIdx] = { ...updatedInvoices[invIdx], archiveUrl: "", archiveName: "" };
-            }
-            const updatedData = { ...localData, details: { ...localData.details, invoices: updatedInvoices } };
-            await onSave(updatedData);
-            setLocalData(updatedData);
-            toast.success("Sənəd silindi");
-        } catch (err) {
-            toast.error("Silmə xətası");
-        }
-    };
-
-    const handleRestore = async (e: React.MouseEvent) => {
-        e.stopPropagation();
-        const updated = { ...localData, isArchived: false };
-        toast.promise(onSave(updated), {
-            loading: 'Bərpa edilir...',
-            success: 'Müştəri Dashboard-a qaytarıldı',
-            error: 'Xəta baş verdi'
-        });
-    };
-
-    return (
-        <div className="flex items-stretch gap-4 group/row">
-            <div className="hidden lg:flex flex-col gap-2 shrink-0 w-[120px] transition-all opacity-90 group-hover/row:opacity-100 cursor-default">
-                {row.createdAt && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm text-center">
-                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Daxil Edilib</span>
-                        <div className="flex flex-col items-center leading-none">
-                            <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                {new Date(row.createdAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
-                            </span>
-                            <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                {new Date(row.createdAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                        </div>
-                    </div>
-                )}
-                {row.assignedAt && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm border-l-slate-400 border-l-[3px] text-center">
-                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Təyinat Edilib</span>
-                        <div className="flex flex-col items-center leading-none">
-                            <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                {new Date(row.assignedAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
-                            </span>
-                            <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                {new Date(row.assignedAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            <div className={cn("relative bg-white rounded-xl border transition-all duration-300 overflow-hidden flex-1", isExpanded ? "border-slate-300 shadow-lg ring-1 ring-slate-200" : "border-slate-200 hover:border-slate-400 hover:shadow-md cursor-pointer group")}>
-                <div className={cn("flex flex-col transition-all cursor-pointer", isExpanded ? "bg-slate-50/50" : "hover:bg-slate-50/30")} onClick={() => setIsExpanded(!isExpanded)}>
-                    <div className="px-6 pt-4 pb-4 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-5 flex-1 min-w-0">
-                            <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center text-[12px] font-black transition-all shrink-0 border", isExpanded ? "bg-slate-900 text-white shadow-lg" : "bg-white text-slate-600 border-slate-100")}>
-                                {index + 1}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <h3 className="text-[17px] font-black text-slate-900 uppercase tracking-tight leading-none truncate">{row.fullName}</h3>
-                                <div className="flex items-center gap-3 mt-2">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KOD: {row.customerCode}</span>
-                                    <span className="h-1 w-1 rounded-full bg-slate-200"></span>
-                                    <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">BORC: {row.debtAmount} AZN</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
-                                <RefreshCw size={14} /> Bərpa Et
-                            </button>
-                            {canDelete && (
-                                <button onClick={(e) => { e.stopPropagation(); onDelete(index); }} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100">
-                                    <Trash2 size={16} />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {isExpanded && (
-                    <div className="p-6 border-t border-slate-100 animate-in slide-in-from-top-2 duration-300">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                            <div className="space-y-4 p-5 bg-slate-50/50 rounded-2xl border border-slate-100">
-                                <h4 className="flex items-center gap-2 text-[10px] font-black text-slate-900 uppercase tracking-widest mb-2"><User size={14} /> Şəxsi Məlumatlar</h4>
-                                <div className="grid gap-4">
-                                    <CustomerField label="FİN" value={row.details?.fin} isEditing={false} />
-                                    <CustomerField label="Telefon" value={row.details?.phone} isEditing={false} />
-                                </div>
-                            </div>
-                            <div className="space-y-4 p-5 bg-slate-50/50 rounded-2xl border border-slate-100">
-                                <h4 className="flex items-center gap-2 text-[10px] font-black text-slate-900 uppercase tracking-widest mb-2"><MapPin size={14} /> Ünvan</h4>
-                                <div className="grid gap-4">
-                                    <CustomerField label="Qeydiyyat" value={row.details?.address} isEditing={false} />
-                                    <CustomerField label="Faktiki" value={row.details?.actualAddress} isEditing={false} />
-                                </div>
-                            </div>
-                            <div className="space-y-4 p-5 bg-slate-50/50 rounded-2xl border border-slate-100">
-                                <h4 className="flex items-center gap-2 text-[10px] font-black text-slate-900 uppercase tracking-widest mb-2"><Smartphone size={14} /> Status</h4>
-                                <div className="flex flex-col gap-3">
-                                    <div className={cn(
-                                        "px-4 py-3 rounded-xl border font-bold text-[11px] uppercase tracking-wider",
-                                        STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].bg,
-                                        STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].color
-                                    )}>
-                                        {STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].label}
-                                    </div>
-                                    <div className="px-4 py-3 bg-white border border-slate-100 rounded-xl font-bold text-[11px] text-slate-600 uppercase tracking-wider">
-                                        Mağaza: {row.store || "-"}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* INVOICES SECTION WITH UPLOAD */}
-                        <div className="space-y-4">
-                            <h4 className="flex items-center gap-2 text-[11px] font-black text-slate-900 uppercase tracking-[0.15em] mb-4">
-                                <Box size={16} /> Faktura və Arxiv Sənədləri
-                            </h4>
-                            <div className="grid gap-4">
-                                {(localData.details?.invoices || []).map((inv: any) => (
-                                    <div key={inv.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                                        <div className="flex items-center justify-between mb-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="h-10 w-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 font-bold">
-                                                    <FileText size={18} />
-                                                </div>
-                                                <div>
-                                                    <p className="text-[14px] font-black text-slate-800">{inv.invoiceNumber || "Nömrəsiz Faktura"}</p>
-                                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Faktura Detalları</p>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-3">
-                                                {inv.archiveUrl ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <a href={inv.archiveUrl} target="_blank" className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl font-bold text-[10px] uppercase border border-emerald-100 hover:bg-emerald-100 transition-all">
-                                                            <Download size={14} /> Bax
-                                                        </a>
-                                                        <button onClick={() => handleRemoveFile(inv.id)} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 rounded-xl border border-red-100 hover:bg-red-500 hover:text-white transition-all">
-                                                            <Trash2 size={14} />
-                                                        </button>
-                                                    </div>
-                                                ) : (
-                                                    <label className="h-9 px-4 flex items-center gap-2 bg-blue-50 text-blue-600 rounded-xl font-bold text-[10px] uppercase border border-blue-100 hover:bg-blue-100 cursor-pointer transition-all">
-                                                        {uploading === inv.id ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
-                                                        {uploading === inv.id ? "Yüklənir..." : "Sənəd Yüklə"}
-                                                        <input type="file" className="hidden" accept=".pdf" disabled={!!uploading} onChange={(e) => e.target.files?.[0] && handleUpload(inv.id, e.target.files[0])} />
-                                                    </label>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-2 pl-14">
-                                            {inv.orders?.map((ord: any) => (
-                                                <div key={ord.id} className="flex items-center justify-between text-[12px] py-1 border-b border-slate-50 last:border-0 opacity-70">
-                                                    <span className="font-semibold text-slate-700">{ord.productDescription}</span>
-                                                    <span className="font-bold text-slate-900">{ord.totalPrice} AZN</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-});
-CustomerCard.displayName = "CustomerCard";
-
-export default function ArchivePage() {
-    const { user } = useAuth();
-    const [rows, setRows] = useState<CustomerRow[]>([]);
+    const [customers, setCustomers] = useState<CustomerRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
-    const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({ isOpen: false, index: null });
-    const [stores, setStores] = useState<any[]>([]);
+    const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
+    const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
 
-    const fetchData = useCallback(async () => {
+    const fetchCustomers = useCallback(async () => {
         try {
             setLoading(true);
-            const [custData, storeData] = await Promise.all([
-                getCustomers(),
-                getStores()
-            ]);
-            setRows(custData as CustomerRow[]);
-            setStores(storeData);
+            const data = await getCustomers();
+            const filtered = (data as CustomerRow[]).filter(c =>
+                c.process_status === 'COMPLETED' ||
+                c.process_status === 'ARCHIVE_UPLOADED' ||
+                (c.details?.invoices && c.details.invoices.some(inv => inv.archiveUrl))
+            );
+            setCustomers(filtered);
         } catch (e) {
             toast.error("Məlumatlar yüklənmədi");
         } finally {
@@ -428,41 +76,111 @@ export default function ArchivePage() {
         }
     }, []);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        fetchCustomers();
+    }, [fetchCustomers]);
 
-    const handleSave = async (data: CustomerRow) => {
-        if (!data.id) return;
-        await updateCustomer(data.id, data);
-        setRows(prev => prev.map(r => r.id === data.id ? data : r));
-    };
-
-    const confirmDelete = async () => {
-        if (deleteModal.index !== null) {
-            const customer = filteredRows[deleteModal.index];
-            if (customer.id) {
-                await deleteCustomer(customer.id);
-                setRows(prev => prev.filter(r => r.id !== customer.id));
-                toast.success("Müştəri silindi");
-            }
+    const handleUpload = async (file: File) => {
+        if (!selectedCustomer || !selectedInvoiceId) return;
+        if (!file.name.endsWith(".pdf")) {
+            toast.error("Yalnız PDF faylları yüklənə bilər");
+            return;
         }
-        setDeleteModal({ isOpen: false, index: null });
+
+        try {
+            setUploading(true);
+            const storagePath = `UploadedPDFs/${selectedCustomer.id}/${selectedInvoiceId}.pdf`;
+            const storageRef = ref(storage, storagePath);
+            const snapshot = await uploadBytes(storageRef, file);
+            const downloadURL = await getDownloadURL(snapshot.ref);
+
+            const updatedInvoices = [...(selectedCustomer.details?.invoices || [])];
+            const invIdx = updatedInvoices.findIndex(i => i.id === selectedInvoiceId);
+
+            if (invIdx !== -1) {
+                updatedInvoices[invIdx] = {
+                    ...updatedInvoices[invIdx],
+                    archiveUrl: downloadURL,
+                    archiveName: file.name
+                };
+            }
+
+            const updatedCustomer = {
+                ...selectedCustomer,
+                process_status: 'ARCHIVE_UPLOADED' as ProcessStatus,
+                details: { ...selectedCustomer.details, invoices: updatedInvoices }
+            };
+
+            await updateCustomer(selectedCustomer.id, updatedCustomer, user?.email || "system");
+
+            setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? updatedCustomer : c));
+            setSelectedCustomer(updatedCustomer);
+            toast.success("Sənəd yükləndi");
+        } catch (err) {
+            toast.error("Xəta baş verdi");
+        } finally {
+            setUploading(false);
+        }
     };
 
-    const filteredRows = useMemo(() => {
-        const lowSearch = searchTerm.toLowerCase();
-        return rows.filter(c => {
-            if (!c.isArchived) return false;
-            return !searchTerm || c.fullName.toLowerCase().includes(lowSearch) || (c.customerCode || "").toLowerCase().includes(lowSearch);
-        });
-    }, [rows, searchTerm]);
+    const handleRemoveFile = async (customer: CustomerRow, invoiceId: string) => {
+        try {
+            const storageRef = ref(storage, `UploadedPDFs/${customer.id}/${invoiceId}.pdf`);
+            await deleteObject(storageRef).catch(() => { });
+
+            const updatedInvoices = [...(customer.details?.invoices || [])];
+            const invIdx = updatedInvoices.findIndex(i => i.id === invoiceId);
+
+            if (invIdx !== -1) {
+                updatedInvoices[invIdx] = {
+                    ...updatedInvoices[invIdx],
+                    archiveUrl: "",
+                    archiveName: ""
+                };
+            }
+
+            const updatedCustomer = {
+                ...customer,
+                details: { ...customer.details, invoices: updatedInvoices }
+            };
+
+            await updateCustomer(customer.id, updatedCustomer, user?.email || "system");
+            setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
+            if (selectedCustomer?.id === customer.id) {
+                setSelectedCustomer(updatedCustomer);
+            }
+            toast.success("Sənəd silindi");
+        } catch (err) {
+            toast.error("Xəta baş verdi");
+        }
+    };
+
+    const filteredCustomers = useMemo(() => {
+        const s = searchTerm.toLowerCase();
+        return customers.filter(c =>
+            c.fullName.toLowerCase().includes(s) ||
+            (c.customerCode || "").toLowerCase().includes(s)
+        );
+    }, [customers, searchTerm]);
+
+    const activeInvoice = useMemo(() => {
+        if (!selectedCustomer || !selectedInvoiceId) return null;
+        return selectedCustomer.details?.invoices?.find(i => i.id === selectedInvoiceId);
+    }, [selectedCustomer, selectedInvoiceId]);
+
+    const uploadedDocuments = useMemo(() => {
+        if (!selectedCustomer) return [];
+        return (selectedCustomer.details?.invoices || []).filter(inv => inv.archiveUrl);
+    }, [selectedCustomer]);
 
     if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ARCHIVIST' && user.role !== 'ARCHIVER')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-                    <div className="h-20 w-20 rounded-full bg-red-50 flex items-center justify-center mb-6"><AlertTriangle size={32} className="text-red-400" /></div>
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <FileArchive size={32} className="text-red-400" />
+                    </div>
                     <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
-                    <p className="text-sm text-slate-500">Yalnız Arxivçi və Admin bu səhifəni görə bilər.</p>
                 </div>
             </AuthGuard>
         );
@@ -470,47 +188,244 @@ export default function ArchivePage() {
 
     return (
         <AuthGuard>
-            <div className="max-w-[1400px] mx-auto pb-20 px-4">
-                <div className="mb-10 pt-4 flex items-center justify-between">
-                    <div className="flex items-center gap-5">
-                        <div className="h-14 w-14 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-xl shadow-slate-200"><FolderArchive size={28} /></div>
-                        <div>
-                            <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Arxivlənmiş Müştərilər</h1>
-                            <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">Tamamlanmış işlərin idarə edilməsi</p>
+            <div className="flex bg-[#fcfdfe] h-[calc(100vh-64px)] overflow-hidden">
+
+                {/* ═══ SİDEBAR ═══ */}
+                <div className="w-[380px] border-r border-slate-200 bg-white flex flex-col shrink-0 shadow-sm relative z-10">
+                    <div className="p-8 pb-4 shrink-0">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] leading-none">Arxiv Portfeli</h2>
+                            <div className="h-6 px-2 bg-slate-900 text-white rounded-md flex items-center justify-center text-[10px] font-black">
+                                {filteredCustomers.length}
+                            </div>
                         </div>
+                        <div className="relative group">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={18} />
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Axtar..."
+                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-[14px] font-bold text-slate-900 outline-none focus:bg-white focus:border-slate-900 transition-all shadow-sm"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 scrollbar-thin scrollbar-thumb-slate-300">
+                        {loading ? (
+                            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-200" size={24} /></div>
+                        ) : filteredCustomers.length === 0 ? (
+                            <div className="text-center py-20">
+                                <SearchX size={32} className="mx-auto text-slate-200 mb-2" />
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Məlumat yoxdur</p>
+                            </div>
+                        ) : (
+                            filteredCustomers.map(c => {
+                                const isSelected = selectedCustomer?.id === c.id;
+                                const hasFiles = c.details?.invoices?.some(inv => inv.archiveUrl);
+                                return (
+                                    <button
+                                        key={c.id}
+                                        onClick={() => {
+                                            setSelectedCustomer(c);
+                                            setSelectedInvoiceId(null);
+                                        }}
+                                        className={cn(
+                                            "w-full p-5 rounded-2xl text-left transition-all relative border outline-none group",
+                                            isSelected
+                                                ? "bg-slate-900 border-slate-900 shadow-xl shadow-slate-200"
+                                                : "bg-white border-slate-200 hover:border-slate-400"
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="min-w-0 flex-1">
+                                                <p className={cn(
+                                                    "text-[15px] font-black uppercase leading-tight truncate mb-1",
+                                                    isSelected ? "text-white" : "text-slate-900"
+                                                )}>
+                                                    {c.fullName}
+                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={cn("text-[10px] font-bold", isSelected ? "text-slate-400" : "text-slate-500")}>#{c.customerCode || "---"}</span>
+                                                    <div className={cn("w-1 h-1 rounded-full", isSelected ? "bg-slate-700" : "bg-slate-300")} />
+                                                    <span className={cn("text-[10px] font-black", isSelected ? "text-white/60" : "text-red-500")}>{c.debtAmount} AZN</span>
+                                                </div>
+                                            </div>
+                                            {hasFiles && (
+                                                <div className={cn(
+                                                    "h-8 w-8 rounded-xl flex items-center justify-center transition-all",
+                                                    isSelected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                                )}>
+                                                    <FileArchive size={14} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })
+                        )}
                     </div>
                 </div>
 
-                <div className="mb-8 relative max-w-2xl">
-                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                    <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Arxivdə axtar (Ad, Kod, FİN)..." className="w-full pl-14 pr-6 py-5 bg-white border border-slate-200 rounded-3xl text-sm font-bold text-slate-800 outline-none focus:border-slate-400 focus:ring-8 focus:ring-slate-100 transition-all shadow-sm" />
-                </div>
+                {/* ═══ WORKSPACE ═══ */}
+                <div className="flex-1 overflow-y-auto bg-slate-50/20 scrollbar-thin scrollbar-thumb-slate-300">
+                    {!selectedCustomer ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-30">
+                            <Box size={60} strokeWidth={1} className="text-slate-300 mb-6" />
+                            <p className="font-black text-[14px] uppercase tracking-[0.4em] text-slate-400 italic">Məlumat Portfeli</p>
+                        </div>
+                    ) : (
+                        <div className="max-w-5xl mx-auto py-16 px-10 space-y-12 animate-in fade-in slide-in-from-bottom-3 duration-500">
 
-                <div className="space-y-4">
-                    {loading ? (
-                        <div className="py-20 flex flex-col items-center gap-4"><Loader2 className="animate-spin text-slate-300" size={40} /><p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Arxiv Yüklənir...</p></div>
-                    ) : filteredRows.map((row, idx) => (
-                        <CustomerCard key={row.id || idx} row={row} index={idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
-                    ))}
-                    {!loading && filteredRows.length === 0 && (
-                        <div className="py-20 text-center opacity-20"><Search size={60} className="mx-auto mb-4" /><p className="font-black text-2xl uppercase tracking-widest italic">Arxiv Boşdur</p></div>
-                    )}
-                </div>
+                            {/* Profile Header */}
+                            <div className="bg-white rounded-[2rem] border border-slate-300 p-8 flex items-center justify-between shadow-xl shadow-slate-200/50">
+                                <div className="flex items-center gap-8">
+                                    <div className="h-20 w-20 rounded-3xl bg-slate-900 flex items-center justify-center text-white shadow-lg">
+                                        <User size={36} />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none">{selectedCustomer.fullName}</h2>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <div className="flex items-center gap-2 text-xs font-black text-slate-400 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                                                <span>KOD:</span>
+                                                <span className="text-slate-900 font-black">{selectedCustomer.customerCode}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs font-black text-red-500 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
+                                                <span>BORC:</span>
+                                                <span className="text-red-700 font-black">{selectedCustomer.debtAmount} AZN</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => { setSelectedCustomer(null); setSelectedInvoiceId(null); }}
+                                    className="h-12 w-12 flex items-center justify-center bg-slate-50 border border-slate-200 text-slate-400 hover:bg-red-500 hover:text-white rounded-2xl transition-all shadow-sm"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
 
-                {deleteModal.isOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
-                        <div className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200">
-                            <div className="flex flex-col items-center text-center gap-6">
-                                <div className="h-16 w-16 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100"><Trash2 size={32} /></div>
-                                <div><h3 className="text-xl font-black text-slate-800 uppercase">Arxivdən Silinsin?</h3><p className="text-sm text-slate-600 mt-2 font-medium">Bu əməliyyat geri qaytarıla bilməz.</p></div>
-                                <div className="flex flex-col w-full gap-3">
-                                    <button onClick={confirmDelete} className="w-full bg-red-600 text-white py-4 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95">Silinsin</button>
-                                    <button onClick={() => setDeleteModal({ isOpen: false, index: null })} className="w-full bg-slate-50 text-slate-600 py-4 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all">Ləğv Et</button>
+                            <div className="grid grid-cols-12 gap-10">
+                                {/* Invoices List */}
+                                <div className="col-span-12 lg:col-span-5 space-y-6">
+                                    <div className="flex items-center gap-3 px-2 border-l-4 border-slate-900 py-1">
+                                        <CreditCard size={18} className="text-slate-900" />
+                                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest leading-none">FAKTURA SEÇİMİ</h3>
+                                    </div>
+                                    <div className="grid gap-3">
+                                        {(selectedCustomer.details?.invoices || []).map((inv, idx) => {
+                                            const isSelected = selectedInvoiceId === inv.id;
+                                            const isUploaded = !!inv.archiveUrl;
+                                            return (
+                                                <button
+                                                    key={inv.id}
+                                                    onClick={() => setSelectedInvoiceId(inv.id)}
+                                                    className={cn(
+                                                        "w-full px-6 py-8 rounded-3xl border transition-all text-left relative group outline-none",
+                                                        isSelected
+                                                            ? "bg-slate-900 border-slate-900 shadow-2xl shadow-slate-400 text-white"
+                                                            : "bg-white border-slate-300 hover:border-slate-900 shadow-sm"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <span className={cn(
+                                                            "text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg",
+                                                            isSelected ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
+                                                        )}>
+                                                            Faktura #{idx + 1}
+                                                        </span>
+                                                        {isUploaded && (
+                                                            <CheckCircle2 size={18} className={isSelected ? "text-emerald-400" : "text-emerald-600"} />
+                                                        )}
+                                                    </div>
+                                                    <p className={cn(
+                                                        "text-[20px] font-black uppercase tracking-tighter leading-tight truncate",
+                                                        isSelected ? "text-white" : "text-slate-900"
+                                                    )}>
+                                                        {inv.invoiceNumber || "Faktura..."}
+                                                    </p>
+                                                    {!isUploaded && isSelected && (
+                                                        <p className="text-[10px] font-bold text-white/40 uppercase mt-2 tracking-widest">Seçilib</p>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Upload & Status */}
+                                <div className="col-span-12 lg:col-span-7 space-y-8">
+                                    {!selectedInvoiceId ? (
+                                        <div className="h-full min-h-[400px] border border-slate-300 rounded-[2.5rem] flex flex-col items-center justify-center text-slate-300 bg-white shadow-inner">
+                                            <FileUp size={48} strokeWidth={1} className="mb-4 opacity-50" />
+                                            <p className="text-sm font-black uppercase tracking-widest opacity-50">Sənəd İdarəsi Üçün Faktura Seçin</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-8 animate-in slide-in-from-right-4 duration-500">
+                                            {/* Upload Zone */}
+                                            <div className="bg-white border-2 border-slate-900 shadow-2xl shadow-slate-200 rounded-[3rem] p-12 flex flex-col items-center text-center relative overflow-hidden">
+                                                <div className="h-24 w-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-900 mb-8 border border-slate-200">
+                                                    {uploading ? <Loader2 size={40} className="animate-spin" /> : <FileUp size={40} />}
+                                                </div>
+                                                <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-2">{activeInvoice?.invoiceNumber}</h4>
+                                                <p className="text-sm font-bold text-slate-400 mb-10 max-w-[280px]">Faktura üçün PDF arxiv sənədini təmin edin</p>
+
+                                                <label className="w-full h-20 bg-slate-900 text-white rounded-[1.5rem] flex items-center justify-center gap-4 text-[13px] font-black uppercase tracking-[0.25em] cursor-pointer hover:bg-slate-800 transition-all shadow-xl shadow-slate-300 active:scale-95">
+                                                    {uploading ? "Hazırlanır..." : "Sənəd Seçin"}
+                                                    {!uploading && <ArrowRight size={20} />}
+                                                    <input
+                                                        type="file"
+                                                        className="hidden"
+                                                        accept=".pdf"
+                                                        disabled={uploading}
+                                                        onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+                                                    />
+                                                </label>
+                                            </div>
+
+                                            {/* Files associated with this invoice */}
+                                            {activeInvoice?.archiveUrl && (
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center gap-2 px-4 py-1 border-l-4 border-emerald-500">
+                                                        <h3 className="text-[10px] font-black text-emerald-700 uppercase tracking-[0.2em]">YÜKLƏNMİŞ ARXIV SƏNƏDİ</h3>
+                                                    </div>
+                                                    <div className="bg-white border border-slate-300 p-6 rounded-3xl flex items-center justify-between group shadow-lg shadow-slate-100">
+                                                        <div className="flex items-center gap-5">
+                                                            <div className="h-14 w-14 bg-emerald-50 text-emerald-700 rounded-2xl flex items-center justify-center border border-emerald-100 shadow-sm transition-transform group-hover:scale-105">
+                                                                <FileText size={24} />
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="text-base font-black text-slate-900 truncate max-w-[200px] uppercase tracking-tighter">{activeInvoice.archiveName || "PDF Sənəd"}</p>
+                                                                <p className="text-[10px] text-emerald-600 font-black uppercase mt-1 tracking-widest">Sistemdə Mövcuddur</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            <a
+                                                                href={activeInvoice.archiveUrl}
+                                                                target="_blank"
+                                                                className="h-12 px-8 flex items-center justify-center bg-slate-100 text-slate-900 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-900 hover:text-white transition-all border border-slate-200 shadow-sm"
+                                                            >
+                                                                Bax <ExternalLink size={14} className="ml-3 opacity-40 group-hover:opacity-100" />
+                                                            </a>
+                                                            <button
+                                                                onClick={() => handleRemoveFile(selectedCustomer, activeInvoice.id)}
+                                                                className="h-12 w-12 flex items-center justify-center text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-2xl transition-all border border-red-100 shadow-sm"
+                                                            >
+                                                                <Trash2 size={20} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
         </AuthGuard>
     );

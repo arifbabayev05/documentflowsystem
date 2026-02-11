@@ -30,6 +30,7 @@ import {
     deleteStore
 } from "@/lib/db";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 interface Court {
@@ -55,6 +56,7 @@ interface CompanyInfo {
 }
 
 export default function ParametersPage() {
+    const { user } = useAuth();
     const [courts, setCourts] = useState<Court[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo>({
@@ -112,7 +114,7 @@ export default function ParametersPage() {
     const handleSaveSettings = async () => {
         setIsSavingSettings(true);
         try {
-            await updateGlobalSettings(companyInfo);
+            await updateGlobalSettings(companyInfo, user?.email || "system");
             toast.success("Şirkət məlumatları yadda saxlanıldı");
         } catch (error) {
             toast.error("Xəta baş verdi");
@@ -145,11 +147,11 @@ export default function ParametersPage() {
 
         try {
             if (editingCourt) {
-                await updateCourt(editingCourt.id, courtForm);
+                await updateCourt(editingCourt.id, courtForm, user?.email || "system");
                 setCourts(prev => prev.map(c => c.id === editingCourt.id ? { ...c, ...courtForm } : c));
                 toast.success("Məhkəmə yeniləndi");
             } else {
-                const newCourt = await addCourt(courtForm);
+                const newCourt = await addCourt(courtForm, user?.email || "system");
                 setCourts(prev => [...prev, newCourt as Court]);
                 toast.success("Məhkəmə əlavə edildi");
             }
@@ -162,7 +164,7 @@ export default function ParametersPage() {
     const handleDeleteCourt = async (id: string) => {
         if (!confirm("Bu məhkəməni silmək istədiyinizə əminsiniz?")) return;
         try {
-            await deleteCourt(id);
+            await deleteCourt(id, user?.email || "system");
             setCourts(prev => prev.filter(c => c.id !== id));
             toast.info("Məhkəmə silindi");
         } catch (error) {
@@ -189,11 +191,11 @@ export default function ParametersPage() {
 
         try {
             if (editingStore) {
-                await updateStore(editingStore.id, storeForm.name);
+                await updateStore(editingStore.id, storeForm.name, user?.email || "system");
                 setStores(prev => prev.map(s => s.id === editingStore.id ? { ...s, name: storeForm.name } : s));
                 toast.success("Mağaza yeniləndi");
             } else {
-                const newStore = await addStore(storeForm.name);
+                const newStore = await addStore(storeForm.name, user?.email || "system");
                 setStores(prev => [...prev, newStore as Store]);
                 toast.success("Mağaza əlavə edildi");
             }
@@ -206,7 +208,7 @@ export default function ParametersPage() {
     const handleDeleteStore = async (id: string) => {
         if (!confirm("Bu mağazanı silmək istədiyinizə əminsiniz?")) return;
         try {
-            await deleteStore(id);
+            await deleteStore(id, user?.email || "system");
             setStores(prev => prev.filter(s => s.id !== id));
             toast.info("Mağaza silindi");
         } catch (error) {

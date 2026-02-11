@@ -137,7 +137,7 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
             results.push(data);
         }
         await batch.commit();
-        await addAuditLog("BULK_ADD", `${customers.length} müştəri əlavə edildi`, userEmail);
+        await addAuditLog("BULK_ADD", `Bulk əlavə: ${customers.length} müştəri sistemi daxil edildi`, userEmail, { count: customers.length });
         return results;
     } catch (e) {
         console.error("bulkAddCustomers error:", e);
@@ -167,7 +167,7 @@ export async function getInspectorCustomers(email: string) {
 export async function deleteCustomer(id: string, userEmail: string = "system") {
     try {
         await deleteDoc(doc(db, CUSTOMERS_COLLECTION, id));
-        await addAuditLog("DELETE", `Müştəri silindi: ${id}`, userEmail);
+        await addAuditLog("DELETE", `Müştəri silindi`, userEmail, { targetId: id });
         return true;
     } catch (e) {
         throw e;
@@ -188,10 +188,46 @@ export async function getCustomer(id: string) {
 export async function updateCustomer(id: string, data: any, userEmail: string = "system") {
     try {
         const customerRef = doc(db, CUSTOMERS_COLLECTION, id);
+        const oldDoc = await getDoc(customerRef);
+        const oldData = oldDoc.exists() ? oldDoc.data() : null;
         const cleanedData = { ...data };
 
         await updateDoc(customerRef, { ...cleanedData, updatedAt: serverTimestamp() });
-        await addAuditLog("UPDATE", `Müştəri məlumatı yeniləndi: ${id}`, userEmail);
+
+        let action = "UPDATE";
+        let detail = `Müştəri məlumatı yeniləndi`;
+
+        const oldFiles = oldData?.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
+        const newFiles = data.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
+
+        if (data.isArchived && !oldData?.isArchived) {
+            action = "ARCHIVE";
+            detail = "Müştəri arxivə göndərildi";
+        } else if (oldData?.isArchived && !data.isArchived) {
+            action = "RESTORE";
+            detail = "Müştəri arxivdən bərpa edildi";
+        } else if (newFiles > oldFiles) {
+            action = "FILE_UPLOAD";
+            detail = `Sənəd yükləndi (Cəmi: ${newFiles})`;
+        } else if (oldFiles > newFiles) {
+            action = "FILE_DELETE";
+            detail = "Sənəd silindi";
+        } else if (data.process_status && oldData?.process_status !== data.process_status) {
+            action = "STATUS_CHANGE";
+            const oldStatus = oldData?.process_status || 'N/A';
+            detail = `Status: ${oldStatus} -> ${data.process_status}`;
+        } else if (data.assignedTo && oldData?.assignedTo !== data.assignedTo) {
+            action = "ASSIGN";
+            detail = `Müşfəttiş təyin edildi: ${data.assignedTo}`;
+        }
+
+        await addAuditLog(action, detail, userEmail, {
+            targetId: id,
+            targetName: data.fullName,
+            oldStatus: oldData?.process_status,
+            newStatus: data.process_status
+        });
+
         return cleanedData;
     } catch (e) {
         console.error("updateCustomer xətası:", e);
@@ -200,14 +236,21 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
 }
 
 // Audit & Global Settings
-export async function addAuditLog(action: string, details: string, userEmail: string) {
+export async function addAuditLog(action: string, details: string, userEmail: string, metadata: any = {}) {
     try {
         const logRef = doc(collection(db, AUDIT_COLLECTION));
-        await setDoc(logRef, { id: logRef.id, action, details, userEmail, createdAt: serverTimestamp() });
+        await setDoc(logRef, {
+            id: logRef.id,
+            action,
+            details,
+            userEmail,
+            metadata,
+            createdAt: serverTimestamp()
+        });
     } catch (e) { }
 }
 
-export async function getAuditLogs(limitCount: number = 100) {
+export async function getAuditLogs(limitCount: number = 200) {
     try {
         const q = query(collection(db, AUDIT_COLLECTION), orderBy("createdAt", "desc"), limit(limitCount));
         const querySnap = await getDocs(q);
@@ -224,9 +267,10 @@ export async function getGlobalSettings() {
     } catch (e) { return null; }
 }
 
-export async function updateGlobalSettings(data: any) {
+export async function updateGlobalSettings(data: any, userEmail: string = "system") {
     try {
         await setDoc(doc(db, SETTINGS_COLLECTION, "current"), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+        await addAuditLog("SETTINGS_UPDATE", "Qlobal tənzimləmələr yeniləndi", userEmail, { company: data.companyName });
         return true;
     } catch (e) { throw e; }
 }
@@ -239,19 +283,22 @@ export async function getCourts() {
     } catch (e) { return []; }
 }
 
-export async function addCourt(courtData: any) {
+export async function addCourt(courtData: any, userEmail: string = "system") {
     const docRef = doc(collection(db, COURTS_COLLECTION));
     const data = { ...courtData, id: docRef.id, createdAt: serverTimestamp() };
     await setDoc(docRef, data);
+    await addAuditLog("COURT_ADD", `Yeni məhkəmə əlavə edildi: ${courtData.name}`, userEmail, { targetId: docRef.id });
     return data;
 }
 
-export async function updateCourt(id: string, courtData: any) {
+export async function updateCourt(id: string, courtData: any, userEmail: string = "system") {
     await updateDoc(doc(db, COURTS_COLLECTION, id), { ...courtData, updatedAt: serverTimestamp() });
+    await addAuditLog("COURT_UPDATE", `Məhkəmə məlumatı yeniləndi: ${courtData.name}`, userEmail, { targetId: id });
 }
 
-export async function deleteCourt(id: string) {
+export async function deleteCourt(id: string, userEmail: string = "system") {
     await deleteDoc(doc(db, COURTS_COLLECTION, id));
+    await addAuditLog("COURT_DELETE", "Məhkəmə silindi", userEmail, { targetId: id });
 }
 
 // Store Logic
@@ -262,19 +309,22 @@ export async function getStores() {
     } catch (e) { return []; }
 }
 
-export async function addStore(name: string) {
+export async function addStore(name: string, userEmail: string = "system") {
     const docRef = doc(collection(db, STORES_COLLECTION));
     const data = { id: docRef.id, name, createdAt: serverTimestamp() };
     await setDoc(docRef, data);
+    await addAuditLog("STORE_ADD", `Yeni mağaza əlavə edildi: ${name}`, userEmail, { targetId: docRef.id });
     return data;
 }
 
-export async function updateStore(id: string, name: string) {
+export async function updateStore(id: string, name: string, userEmail: string = "system") {
     await updateDoc(doc(db, STORES_COLLECTION, id), { name, updatedAt: serverTimestamp() });
+    await addAuditLog("STORE_UPDATE", `Mağaza nömrəsi yeniləndi: ${name}`, userEmail, { targetId: id });
 }
 
-export async function deleteStore(id: string) {
+export async function deleteStore(id: string, userEmail: string = "system") {
     await deleteDoc(doc(db, STORES_COLLECTION, id));
+    await addAuditLog("STORE_DELETE", "Mağaza silindi", userEmail, { targetId: id });
 }
 
 // Templates collection logic

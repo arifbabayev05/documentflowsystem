@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { bulkAddCustomers, getInspectorCustomers } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,8 +30,232 @@ const COLUMNS: { key: keyof EntryRow; label: string; width: string; uppercase?: 
     { key: "fin", label: "FİN", width: "120px", uppercase: true, maxLen: 7 },
     { key: "serial_number", label: "Seriya", width: "125px", uppercase: true },
     { key: "total_debt", label: "Borc (AZN)", width: "130px" },
-
 ];
+
+/* ── Custom Date Picker Component ── */
+interface CustomDatePickerProps {
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+}
+
+const MONTHS_AZ = [
+    "Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun",
+    "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"
+];
+
+const WEEKDAYS_AZ = ["Bz", "Be", "Ça", "Çə", "Ca", "Cü", "Şə"];
+
+function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: CustomDatePickerProps) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [viewDate, setViewDate] = useState(() => {
+        if (value) return new Date(value);
+        return new Date();
+    });
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const selectedDate = value ? new Date(value) : null;
+
+    const getDaysInMonth = (year: number, month: number) => {
+        return new Date(year, month + 1, 0).getDate();
+    };
+
+    const getFirstDayOfMonth = (year: number, month: number) => {
+        return new Date(year, month, 1).getDay();
+    };
+
+    const generateCalendarDays = () => {
+        const year = viewDate.getFullYear();
+        const month = viewDate.getMonth();
+        const daysInMonth = getDaysInMonth(year, month);
+        const firstDay = getFirstDayOfMonth(year, month);
+        const daysInPrevMonth = getDaysInMonth(year, month - 1);
+
+        const days: { day: number; isCurrentMonth: boolean; date: Date }[] = [];
+
+        // Previous month days
+        for (let i = firstDay - 1; i >= 0; i--) {
+            const day = daysInPrevMonth - i;
+            days.push({
+                day,
+                isCurrentMonth: false,
+                date: new Date(year, month - 1, day),
+            });
+        }
+
+        // Current month days
+        for (let i = 1; i <= daysInMonth; i++) {
+            days.push({
+                day: i,
+                isCurrentMonth: true,
+                date: new Date(year, month, i),
+            });
+        }
+
+        // Next month days
+        const remaining = 42 - days.length;
+        for (let i = 1; i <= remaining; i++) {
+            days.push({
+                day: i,
+                isCurrentMonth: false,
+                date: new Date(year, month + 1, i),
+            });
+        }
+
+        return days;
+    };
+
+    const handlePrevMonth = () => {
+        setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1));
+    };
+
+    const handleNextMonth = () => {
+        setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1));
+    };
+
+    const handleSelectDate = (date: Date) => {
+        const formatted = date.toISOString().split("T")[0];
+        onChange(formatted);
+        setIsOpen(false);
+    };
+
+    const handleToday = () => {
+        const today = new Date();
+        setViewDate(today);
+        handleSelectDate(today);
+    };
+
+    const handleClear = () => {
+        onChange("");
+        setIsOpen(false);
+    };
+
+    const isSelected = (date: Date) => {
+        if (!selectedDate) return false;
+        return (
+            date.getDate() === selectedDate.getDate() &&
+            date.getMonth() === selectedDate.getMonth() &&
+            date.getFullYear() === selectedDate.getFullYear()
+        );
+    };
+
+    const isToday = (date: Date) => {
+        const today = new Date();
+        return (
+            date.getDate() === today.getDate() &&
+            date.getMonth() === today.getMonth() &&
+            date.getFullYear() === today.getFullYear()
+        );
+    };
+
+    const formatDisplayDate = (dateStr: string) => {
+        if (!dateStr) return "";
+        const date = new Date(dateStr);
+        const day = String(date.getDate()).padStart(2, "0");
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const year = date.getFullYear();
+        return `${day}.${month}.${year}`;
+    };
+
+    const days = generateCalendarDays();
+
+    return (
+        <div ref={containerRef} className="relative">
+            <div
+                onClick={() => setIsOpen(!isOpen)}
+                className="flex items-center gap-2 pl-3 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-[12px] font-bold text-slate-800 cursor-pointer hover:border-slate-300 transition-all shadow-sm min-w-[140px]"
+            >
+                <Calendar size={14} className="text-slate-400" />
+                <span className={value ? "text-slate-800" : "text-slate-400"}>
+                    {value ? formatDisplayDate(value) : placeholder}
+                </span>
+            </div>
+
+            {isOpen && (
+                <div className="absolute top-full left-0 mt-2 z-50 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 min-w-[300px] animate-in fade-in slide-in-from-top-2 duration-200">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-4">
+                        <button
+                            onClick={handlePrevMonth}
+                            className="p-2 hover:bg-slate-100 rounded-xl transition-colors"
+                        >
+                            <ChevronLeft size={18} className="text-slate-600" />
+                        </button>
+                        <div className="text-[14px] font-black text-slate-800">
+                            {MONTHS_AZ[viewDate.getMonth()]} {viewDate.getFullYear()}
+                        </div>
+                        <button
+                            onClick={handleNextMonth}
+                            className="p-2 hover:bg-slate-100 rounded-xl transition-colors"
+                        >
+                            <ChevronRight size={18} className="text-slate-600" />
+                        </button>
+                    </div>
+
+                    {/* Weekday headers */}
+                    <div className="grid grid-cols-7 gap-1 mb-2">
+                        {WEEKDAYS_AZ.map((day) => (
+                            <div
+                                key={day}
+                                className="text-center text-[11px] font-bold text-slate-400 py-2"
+                            >
+                                {day}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Calendar days */}
+                    <div className="grid grid-cols-7 gap-1">
+                        {days.map((dayInfo, idx) => (
+                            <button
+                                key={idx}
+                                onClick={() => handleSelectDate(dayInfo.date)}
+                                className={`
+                                    w-9 h-9 rounded-xl text-[13px] font-semibold transition-all
+                                    ${!dayInfo.isCurrentMonth ? "text-slate-300" : "text-slate-700"}
+                                    ${isSelected(dayInfo.date)
+                                        ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
+                                        : isToday(dayInfo.date)
+                                            ? "bg-blue-50 text-blue-600 ring-2 ring-blue-200"
+                                            : "hover:bg-slate-100"
+                                    }
+                                `}
+                            >
+                                {dayInfo.day}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+                        <button
+                            onClick={handleClear}
+                            className="text-[12px] font-bold text-slate-400 hover:text-red-500 transition-colors px-3 py-1.5 rounded-lg hover:bg-red-50"
+                        >
+                            Təmizlə
+                        </button>
+                        <button
+                            onClick={handleToday}
+                            className="text-[12px] font-bold text-blue-600 hover:text-blue-700 transition-colors px-3 py-1.5 rounded-lg hover:bg-blue-50"
+                        >
+                            Bu gün
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 export default function InspectorPage() {
     const { user } = useAuth();
@@ -168,6 +392,7 @@ export default function InspectorPage() {
             setSaving(false);
         }
     };
+
     const formatDateTime = (value?: string | Date) => {
         if (!value) return null;
 
@@ -185,6 +410,7 @@ export default function InspectorPage() {
             time: `${hours}:${minutes}`,
         };
     };
+
     /* ── keyboard (Tab on last cell → new row, Enter → next row) ── */
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIdx: number, colIdx: number) => {
         if (e.key === "Enter") {
@@ -261,7 +487,7 @@ export default function InspectorPage() {
                                                 updateCell(ri, col.key, v);
                                             }}
                                             onKeyDown={e => handleKeyDown(e, ri, ci)}
-                                            className="w-full  h-12 px-4 rounded-xl border border-border-soft focus:border-blue-500 focus:bg-white focus:shadow-sm outline-none text-[17px] font-black text-slate-900 bg-transparent transition-all"
+                                            className="w-full h-12 px-4 rounded-xl border border-border-soft focus:border-blue-500 focus:bg-white focus:shadow-sm outline-none text-[17px] font-black text-slate-900 bg-transparent transition-all"
                                             style={col.uppercase ? { textTransform: "uppercase" } : undefined}
                                         />
                                     </div>
@@ -318,25 +544,17 @@ export default function InspectorPage() {
                         </div>
 
                         <div className="flex items-center gap-3">
-                            <div className="relative group">
-                                <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="date"
-                                    value={dateRange.start}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                                    className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-[12px] font-bold text-slate-800 outline-none focus:border-slate-400 transition-all shadow-sm"
-                                />
-                            </div>
+                            <CustomDatePicker
+                                value={dateRange.start}
+                                onChange={(val) => setDateRange(prev => ({ ...prev, start: val }))}
+                                placeholder="Başlanğıc"
+                            />
                             <span className="text-slate-300 font-bold">—</span>
-                            <div className="relative group">
-                                <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="date"
-                                    value={dateRange.end}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                                    className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-[12px] font-bold text-slate-800 outline-none focus:border-slate-400 transition-all shadow-sm"
-                                />
-                            </div>
+                            <CustomDatePicker
+                                value={dateRange.end}
+                                onChange={(val) => setDateRange(prev => ({ ...prev, end: val }))}
+                                placeholder="Son"
+                            />
                             {(dateRange.start || dateRange.end) && (
                                 <button
                                     onClick={() => setDateRange({ start: "", end: "" })}
@@ -353,12 +571,12 @@ export default function InspectorPage() {
                         className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-md"
                         style={{ fontSize: 18 }}
                     >
-                        {/* header */}
+                        {/* header - Borc moved after Seriya */}
                         <div
                             className="grid bg-[#fcfdfe] border-b border-slate-200"
                             style={{ gridTemplateColumns: "60px 160px 120px 1fr 110px 110px 110px 150px" }}
                         >
-                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "Borc", "FİN", "Seriya", "Status"].map(h => (
+                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Status"].map(h => (
                                 <div key={h} className="px-4 py-4.5 text-[13px] font-black text-slate-600 uppercase tracking-widest">
                                     {h}
                                 </div>
@@ -395,9 +613,9 @@ export default function InspectorPage() {
 
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-900 flex items-center">{row.customerCode || "-"}</div>
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-900 uppercase flex items-center truncate">{row.fullName || "-"}</div>
-                                    <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} AZN</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
+                                    <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
                                     <div className="px-4 py-4">
                                         <span
                                             className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
