@@ -170,12 +170,12 @@ function getAllProducts(invoices: any[]): string {
 
 function getAllImeiProducts(invoices: any[]): string {
     const allImeiItems: string[] = [];
-    (invoices || []).forEach(inv => {
-        (inv.orders || []).forEach(ord => {
+    (invoices || []).forEach((inv: any) => {
+        (inv.orders || []).forEach((ord: any) => {
             const desc = ord.productDescription || "";
             // Split by comma to inspect individual items in a single description string
             const parts = desc.split(",");
-            parts.forEach(p => {
+            parts.forEach((p: string) => {
                 const trimmed = p.trim();
                 if (!trimmed) return;
                 // Robust check for 'imei' including Azerbaijani 'İ'
