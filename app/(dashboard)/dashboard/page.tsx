@@ -134,6 +134,7 @@ interface CustomerRow {
                 paymentPeriod: string;
                 monthlyPayment: string;
                 initialPayment: string;
+                paidAmount: string;
                 totalPrice: string;
             }>;
         }>;
@@ -267,6 +268,7 @@ const CustomerCard = memo(({
                         paymentPeriod: prev.details?.paymentPeriod || "",
                         monthlyPayment: prev.details?.monthlyPayment || "",
                         initialPayment: prev.details?.initialPayment || "",
+                        paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00"
                     }]
                 };
@@ -297,13 +299,19 @@ const CustomerCard = memo(({
                 (details as any)[detailField] = value;
 
                 // Autonomous Calculations for global fields (historical)
-                const period = parseFloat(details.paymentPeriod || "0") || 0;
-                const monthly = parseFloat(details.monthlyPayment || "0") || 0;
-                const initial = parseFloat(details.initialPayment || "0") || 0;
-                const paid = parseFloat(details.paidAmount || "0") || 0;
+                const period = parseFloat((details.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                const monthly = parseFloat((details.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                const initial = parseFloat((details.initialPayment || "0").toString().replace(',', '.')) || 0;
+                const paid = parseFloat((details.paidAmount || "0").toString().replace(',', '.')) || 0;
                 const productDesc = details.productDescription || "";
+
+                // Count imei occurrences OR commas (+1 rule) for phoneCount
+                const imeiMatches = productDesc.match(/imei/gi);
+                const imeiCount = imeiMatches ? imeiMatches.length : 0;
+                const commaCount = (productDesc.match(/,/g) || []).length;
+                const phoneCount = Math.max(1, imeiCount, commaCount + 1);
+
                 const hasImei = productDesc.toLowerCase().includes("imei");
-                const phoneCount = details.phoneCount || 1;
 
                 const baseFields = ['paymentPeriod', 'monthlyPayment', 'initialPayment', 'paidAmount', 'productDescription', 'phoneCount'];
                 if (baseFields.includes(detailField)) {
@@ -312,12 +320,15 @@ const CustomerCard = memo(({
                     let fee = hasImei ? phoneCount * 47.2 : 0;
                     const penalty = unpaidAmount * 0.10;
                     const totalUnpaid = unpaidAmount + fee + penalty;
+                    const discount = Math.max(0, unpaidAmount - penalty);
 
+                    details.phoneCount = phoneCount;
                     details.totalPrice = totalPrice.toFixed(2);
                     details.unpaidAmount = unpaidAmount.toFixed(2);
                     details.fee = fee.toFixed(2);
                     details.penalty = penalty.toFixed(2);
                     details.totalUnpaid = totalUnpaid.toFixed(2);
+                    details.discountAmount = discount.toFixed(2);
                     newData.debtAmount = totalUnpaid.toFixed(2);
                 } else if (detailField === 'totalUnpaid') {
                     newData.debtAmount = value;
@@ -361,11 +372,19 @@ const CustomerCard = memo(({
 
             const ord = { ...orders[ordIdx], [field]: value };
 
+            // Auto-calculate phoneCount based on imei count OR commas (+1 rule)
+            if (field === 'productDescription') {
+                const innerImeiMatches = value.match(/imei/gi);
+                const innerImeiCount = innerImeiMatches ? innerImeiMatches.length : 0;
+                const commaCount = (value.match(/,/g) || []).length;
+                ord.phoneCount = Math.max(1, innerImeiCount, commaCount + 1);
+            }
+
             // Recalculate order price
             if (['paymentPeriod', 'monthlyPayment', 'initialPayment'].includes(field)) {
-                const p = parseFloat(ord.paymentPeriod || "0") || 0;
-                const m = parseFloat(ord.monthlyPayment || "0") || 0;
-                const i = parseFloat(ord.initialPayment || "0") || 0;
+                const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
                 ord.totalPrice = ((p * m) + i).toFixed(2);
             }
 
@@ -374,15 +393,59 @@ const CustomerCard = memo(({
 
             const newData = { ...prev, details: { ...prev.details, invoices } };
 
-            // Backward compatibility sync for the first order
-            if (invIdx === 0 && ordIdx === 0 && newData.details) {
-                if (field === 'productDescription') newData.details.productDescription = value;
-                if (field === 'contractDate') newData.details.contractDate = value;
-                if (field === 'paymentPeriod') newData.details.paymentPeriod = value;
-                if (field === 'monthlyPayment') newData.details.monthlyPayment = value;
-                if (field === 'initialPayment') newData.details.initialPayment = value;
-                if (field === 'phoneCount') newData.details.phoneCount = value;
-                newData.details.totalPrice = ord.totalPrice;
+            // Aggregate global values from all orders
+            if (newData.details) {
+                let totalAggregatedPrice = 0;
+                let totalAggregatedPaid = 0;
+                let totalPhoneCount = 0;
+                let hasAnyImei = false;
+
+                newData.details.invoices?.forEach(inv => {
+                    inv.orders?.forEach(o => {
+                        const p = parseFloat((o.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                        const m = parseFloat((o.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                        const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
+                        const paid = parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
+
+                        totalAggregatedPrice += (p * m) + i;
+                        totalAggregatedPaid += paid;
+
+                        const desc = (o.productDescription || "").toLowerCase();
+                        const imeiMatches = desc.match(/imei/gi);
+                        const imeiCount = imeiMatches ? imeiMatches.length : 0;
+                        const commaCount = (desc.match(/,/g) || []).length;
+                        totalPhoneCount += Math.max(1, imeiCount, commaCount + 1);
+                        if (desc.includes("imei")) hasAnyImei = true;
+                    });
+                });
+
+                // Update details
+                newData.details.totalPrice = totalAggregatedPrice.toFixed(2);
+                newData.details.paidAmount = totalAggregatedPaid.toFixed(2);
+                newData.details.phoneCount = totalPhoneCount;
+
+                // Recalculate global debt fields
+                const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid);
+                const fee = hasAnyImei ? totalPhoneCount * 47.2 : 0;
+                const penalty = unpaid * 0.10;
+                const totalDebt = unpaid + fee + penalty;
+                const discount = Math.max(0, unpaid - penalty);
+
+                newData.details.unpaidAmount = unpaid.toFixed(2);
+                newData.details.fee = fee.toFixed(2);
+                newData.details.penalty = penalty.toFixed(2);
+                newData.details.totalUnpaid = totalDebt.toFixed(2);
+                newData.details.discountAmount = discount.toFixed(2);
+                newData.debtAmount = totalDebt.toFixed(2);
+
+                // Backward compatibility sync for the first order (UI elements that bind to details.*)
+                if (invIdx === 0 && ordIdx === 0) {
+                    if (field === 'productDescription') newData.details.productDescription = value;
+                    if (field === 'contractDate') newData.details.contractDate = value;
+                    if (field === 'paymentPeriod') newData.details.paymentPeriod = value;
+                    if (field === 'monthlyPayment') newData.details.monthlyPayment = value;
+                    if (field === 'initialPayment') newData.details.initialPayment = value;
+                }
             }
 
             return newData;
@@ -406,6 +469,7 @@ const CustomerCard = memo(({
                         paymentPeriod: prev.details?.paymentPeriod || "",
                         monthlyPayment: prev.details?.monthlyPayment || "",
                         initialPayment: prev.details?.initialPayment || "",
+                        paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00"
                     }]
                 }];
@@ -422,6 +486,7 @@ const CustomerCard = memo(({
                     paymentPeriod: "",
                     monthlyPayment: "",
                     initialPayment: "",
+                    paidAmount: "0.00",
                     totalPrice: "0.00"
                 }]
             };
@@ -443,6 +508,7 @@ const CustomerCard = memo(({
                 paymentPeriod: "",
                 monthlyPayment: "",
                 initialPayment: "",
+                paidAmount: "0.00",
                 totalPrice: "0.00"
             };
 
@@ -505,6 +571,56 @@ const CustomerCard = memo(({
     const handleWarningClick = async (e: React.MouseEvent) => {
         e.stopPropagation();
 
+        // 1. SIMPLIFIED VALIDATION for Warning
+        const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
+
+        // Check Personal Info
+        const personalInfo = {
+            "Ad Soyad": localData.fullName,
+            "Cins": localData.details?.gender,
+            "Doğum Tarixi": localData.details?.birthDate,
+            "FİN": localData.details?.fin,
+            "Seriya №": localData.details?.passportSeries,
+            "Telefon": localData.details?.phone
+        };
+        for (const [fieldName, val] of Object.entries(personalInfo)) {
+            if (isEmpty(val)) {
+                toast.error(`Xəbərdarlıq üçün əskik məlumat: [Şəxsi Məlumatlar] bölməsində "${fieldName}" xanasını doldurun.`);
+                if (!isExpanded) setIsExpanded(true);
+                return;
+            }
+        }
+
+        // Check Address (Only Registration is mandatory for warning)
+        if (isEmpty(localData.details?.address)) {
+            toast.error(`Xəbərdarlıq üçün əskik məlumat: [Ünvan Məlumatları] bölməsində "Qeydiyyat Ünvanı" mütləq doldurulmalıdır.`);
+            if (!isExpanded) setIsExpanded(true);
+            return;
+        }
+
+        // Check Orders (Product Name and Contract Date only)
+        const invoices = localData.details?.invoices || [];
+        if (invoices.length === 0) {
+            toast.error("Xəbərdarlıq üçün əskik məlumat: Sifariş detayları mövcud deyil.");
+            if (!isExpanded) setIsExpanded(true);
+            return;
+        }
+
+        for (const inv of invoices) {
+            if (!inv.orders || inv.orders.length === 0) {
+                toast.error("Xəbərdarlıq üçün əskik məlumat: Faktura daxilində məhsul daxil edilməyib.");
+                if (!isExpanded) setIsExpanded(true);
+                return;
+            }
+            for (const ord of inv.orders) {
+                if (isEmpty(ord.productDescription) || isEmpty(ord.contractDate)) {
+                    toast.error("Xəbərdarlıq üçün əskik məlumat: Sifariş detallarında [Məhsul adı] və [Müqavilə tarixi] mütləq dolmalıdır.");
+                    if (!isExpanded) setIsExpanded(true);
+                    return;
+                }
+            }
+        }
+
         let updatedData = { ...localData };
         const hasDate = !!getValue("details.warningDate");
 
@@ -534,7 +650,7 @@ const CustomerCard = memo(({
             await savePromise;
         }
 
-        router.push(`/reports/generate?id=${row.id}&template=Xeberdarliq_Template`);
+        router.push(`/reports/generate?id=${row.id}&template=Xəbərdarlıq Sənədi`);
     };
 
     const handleCancel = (e: React.MouseEvent) => {
@@ -676,7 +792,7 @@ const CustomerCard = memo(({
                         <div className="flex items-center gap-5 flex-1 min-w-0">
                             <div className={cn(
                                 "h-10 w-10 rounded-xl flex items-center justify-center text-[12px] font-black transition-all shrink-0 border",
-                                isExpanded ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200" : "bg-white text-slate-600 border-slate-100 group-hover:border-slate-300 group-hover:text-slate-900"
+                                isExpanded ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200" : "bg-white text-slate-600 border-slate-500 group-hover:border-slate-300 group-hover:text-slate-900"
                             )}>
                                 {totalRows - index}
                             </div>
@@ -729,7 +845,7 @@ const CustomerCard = memo(({
                             </div>
 
                             {/* QALIQ BORC - next to Müfəttiş */}
-                            <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
+                            <div className="flex items-center gap-3 pl-6 border-l border-slate-500">
                                 <div className="h-7 w-7 rounded-lg bg-red-50 text-red-500 flex items-center justify-center border border-red-100">
                                     <DollarSign size={14} />
                                 </div>
@@ -946,12 +1062,13 @@ const CustomerCard = memo(({
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                                        <CustomerField label="Cəmi Qiymət" path="details.totalPrice" value={getValue("details.totalPrice")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="Ödənilən" path="details.paidAmount" value={getValue("details.paidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="Ödənilməmiş" path="details.unpaidAmount" value={getValue("details.unpaidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="İDM Rüsumu" path="details.fee" value={getValue("details.fee")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="Penya (10%)" path="details.penalty" value={getValue("details.penalty")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="Yekun Borc" path="details.totalUnpaid" isCemi={true} value={getValue("details.totalUnpaid")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Alqı-satqı qiyməti" path="details.totalPrice" value={getValue("details.totalPrice")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Əsas borca ödənilmiş məbləğ" path="details.paidAmount" value={getValue("details.paidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Əsas borca ödənilməmiş məbləğ" path="details.unpaidAmount" value={getValue("details.unpaidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="İLM Rüsumu" path="details.fee" value={getValue("details.fee")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Cərimə" path="details.penalty" value={getValue("details.penalty")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Güzəşt Məbləği" path="details.discountAmount" value={getValue("details.discountAmount")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="Ümumilikdə ödənilməmiş məbləğ" path="details.totalUnpaid" isCemi={true} value={getValue("details.totalUnpaid")} onChange={handleFieldChange} isEditing={isEditing} className="col-span-2" />
                                     </div>
                                 </div>
                             </div>
@@ -995,6 +1112,7 @@ const CustomerCard = memo(({
                                             paymentPeriod: getValue("details.paymentPeriod"),
                                             monthlyPayment: getValue("details.monthlyPayment"),
                                             initialPayment: getValue("details.initialPayment"),
+                                            paidAmount: getValue("details.paidAmount") || "0.00",
                                             totalPrice: getValue("details.totalPrice")
                                         }]
                                     }]).map((inv, idx) => (
@@ -1003,21 +1121,21 @@ const CustomerCard = memo(({
                                             {/* HEADER SECTION */}
                                             <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6 mb-6">
                                                 {/* Left: Invoice Number */}
-                                                <div className="flex items-center gap-4 w-full xl:w-auto">
-                                                    <div className="shrink-0 h-11 w-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-sm font-black text-slate-600 shadow-sm">
+                                                <div className="flex items-end gap-4 w-full xl:w-auto">
+                                                    <div className="shrink-0 h-11 w-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-sm font-black text-slate-500 shadow-sm mb-0.5">
                                                         {idx + 1}
                                                     </div>
                                                     <div className="space-y-1.5 flex-1 xl:flex-none">
-                                                        <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block ml-1">Faktura №</label>
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block ml-1 mb-1.5">FAKTURA №</label>
                                                         <input
                                                             readOnly={!isEditing}
-                                                            value={inv.invoiceNumber}
+                                                            value={inv.invoiceNumber || ""}
                                                             onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
                                                             className={cn(
-                                                                "h-11 px-4 rounded-xl text-sm font-bold outline-none border transition-all w-full xl:w-[280px]",
+                                                                "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
                                                                 isEditing
-                                                                    ? "bg-white border-slate-900 shadow-sm focus:border-black focus:ring-4 focus:ring-slate-100"
-                                                                    : "bg-slate-100 border-slate-200 text-slate-900"
+                                                                    ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100 placeholder:text-slate-300"
+                                                                    : "bg-slate-50 border border-slate-500 text-slate-900"
                                                             )}
                                                             placeholder="Faktura Nömrəsi"
                                                         />
@@ -1048,14 +1166,14 @@ const CustomerCard = memo(({
                                                     )}
 
                                                     {/* STORE */}
-                                                    <div className="relative group/store min-w-[160px]">
+                                                    <div className="relative group/store min-w-[180px]">
                                                         {isEditing ? (
-                                                            <>
+                                                            <div className="relative">
                                                                 <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none z-10" />
                                                                 <select
                                                                     value={localData.store || ""}
                                                                     onChange={(e) => setLocalData(prev => ({ ...prev, store: e.target.value }))}
-                                                                    className="w-full h-11 pl-10 pr-8 bg-white text-[11px] font-bold text-slate-800 outline-none appearance-none cursor-pointer rounded-xl border border-slate-900 hover:border-black focus:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
+                                                                    className="w-full h-11 pl-10 pr-8 bg-white text-[11px] font-bold text-slate-800 outline-none appearance-none cursor-pointer rounded-xl border-2 border-slate-900 hover:border-black focus:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
                                                                 >
                                                                     <option value="">Mağaza Seç</option>
                                                                     {stores.map((store: any) => (
@@ -1063,13 +1181,13 @@ const CustomerCard = memo(({
                                                                     ))}
                                                                 </select>
                                                                 <ChevronDown size={12} className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-600" />
-                                                            </>
+                                                            </div>
                                                         ) : (
                                                             <div className={cn(
-                                                                "h-11 px-4 flex items-center gap-2 rounded-xl border text-[10px] font-bold uppercase tracking-wider",
-                                                                localData.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-100 text-slate-600 border-slate-200"
+                                                                "h-11 px-4 flex items-center gap-2 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm",
+                                                                localData.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-50 text-slate-400 border-slate-500"
                                                             )}>
-                                                                <Store size={14} className={localData.store ? "text-primary" : "text-slate-600"} />
+                                                                <Store size={14} className={localData.store ? "text-primary" : "text-slate-400"} />
                                                                 <span className="truncate max-w-[120px]">{localData.store || "Mağaza Seçilməyib"}</span>
                                                             </div>
                                                         )}
@@ -1096,93 +1214,99 @@ const CustomerCard = memo(({
                                             {/* ORDERS LIST */}
                                             <div className="grid gap-4">
                                                 {(inv.orders || []).map((ord, oidx) => (
-                                                    <div key={ord.id} className="bg-slate-50/50 rounded-2xl border-2 border-slate-400 p-5 shadow-sm hover:shadow-md transition-all group/ord">
-                                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+                                                    <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
+                                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
                                                             {/* Məhsul Adı */}
-                                                            <div className="lg:col-span-4 space-y-1.5">
-                                                                <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1">Məhsul Adı</label>
+                                                            <div className="lg:col-span-3 space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MƏHSUL ADI</label>
                                                                 <input
                                                                     readOnly={!isEditing}
-                                                                    value={ord.productDescription}
+                                                                    value={ord.productDescription || ""}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
-                                                                    className={cn("w-full h-10 px-3 rounded-lg text-[13px] font-bold text-slate-800 outline-none transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-transparent border border-slate-200")}
+                                                                    className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                     placeholder="Məhsul adı..."
                                                                 />
                                                             </div>
 
                                                             {/* Müqavilə Tarixi */}
-                                                            <div className="lg:col-span-2 space-y-1.5">
-                                                                <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1">Müqavilə</label>
+                                                            <div className="lg:col-span-2 space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MÜQAVİLƏ TARİXİ</label>
                                                                 <input
                                                                     readOnly={!isEditing}
-                                                                    value={ord.contractDate}
+                                                                    value={ord.contractDate || ""}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', e.target.value)}
-                                                                    className={cn("w-full h-10 px-3 rounded-lg text-[13px] font-bold text-slate-800 outline-none transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-transparent border border-slate-200")}
+                                                                    className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all text-center shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                     placeholder="GG.AA.İİİİ"
                                                                 />
                                                             </div>
 
                                                             {/* Ödəmə Parametrləri */}
-                                                            <div className="lg:col-span-5 grid grid-cols-4 gap-2">
-                                                                <div className="space-y-1.5">
-                                                                    <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1 text-center block">Ay</label>
+                                                            <div className="lg:col-span-6 grid grid-cols-4 gap-3">
+                                                                <div className="space-y-2.5">
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Müddət</label>
                                                                     <input
                                                                         readOnly={!isEditing}
-                                                                        value={ord.paymentPeriod}
+                                                                        value={ord.paymentPeriod || ""}
                                                                         onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
-                                                                        className={cn("w-full h-10 px-1 rounded-lg text-[13px] font-bold text-slate-800 outline-none text-center transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black" : "bg-transparent border border-slate-200")}
+                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
-                                                                <div className="space-y-1.5">
-                                                                    <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1 text-center block">Say</label>
+                                                                <div className="space-y-2.5">
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">İlkin</label>
                                                                     <input
                                                                         readOnly={!isEditing}
-                                                                        value={ord.phoneCount}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'phoneCount', parseInt(e.target.value) || 1)}
-                                                                        className={cn("w-full h-10 px-1 rounded-lg text-[13px] font-bold text-slate-800 outline-none text-center transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black" : "bg-transparent border border-slate-200")}
-                                                                    />
-                                                                </div>
-                                                                <div className="space-y-1.5">
-                                                                    <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1 text-center block">Aylıq</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.monthlyPayment}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
-                                                                        className={cn("w-full h-10 px-1 rounded-lg text-[13px] font-bold text-slate-800 outline-none text-center transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black" : "bg-transparent border border-slate-200")}
-                                                                    />
-                                                                </div>
-                                                                <div className="space-y-1.5">
-                                                                    <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider ml-1 text-center block">İlkin</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.initialPayment}
+                                                                        value={ord.initialPayment || ""}
                                                                         onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
-                                                                        className={cn("w-full h-10 px-1 rounded-lg text-[13px] font-bold text-slate-800 outline-none text-center transition-all", isEditing ? "bg-white border border-slate-900 focus:bg-white focus:border-black" : "bg-transparent border border-slate-200")}
+                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-2.5">
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Aylıq</label>
+                                                                    <input
+                                                                        readOnly={!isEditing}
+                                                                        value={ord.monthlyPayment || ""}
+                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
+                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-2.5">
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Ödənilmiş</label>
+                                                                    <input
+                                                                        readOnly={!isEditing}
+                                                                        value={ord.paidAmount || ""}
+                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
+                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
                                                             </div>
 
                                                             {/* DELETE PRODUCT BUTTON */}
-                                                            <div className="lg:col-span-1 flex justify-end">
+                                                            <div className="lg:col-span-1 flex justify-end pt-8">
                                                                 {(isEditing || user?.role === 'SUPERADMIN') && (
                                                                     <button
                                                                         onClick={() => {
                                                                             if (!isEditing) setIsEditing(true);
                                                                             removeOrder(inv.id, ord.id);
                                                                         }}
-                                                                        className="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                                                        className="h-11 w-11 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                                                                         title="Məhsulu Sil"
                                                                     >
-                                                                        <Trash2 size={16} />
+                                                                        <Trash2 size={20} />
                                                                     </button>
                                                                 )}
                                                             </div>
                                                         </div>
 
                                                         {/* TOTAL PRICE BAR */}
-                                                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                                                            <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Cəmi Məbləğ</span>
-                                                            <span className="text-sm font-black text-slate-800">{ord.totalPrice || "0"} <span className="text-slate-600">AZN</span></span>
+                                                        <div className="mt-6 pt-5 border-t border-slate-500 flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="h-2 w-2 rounded-full bg-primary/20 animate-pulse" />
+                                                                <span className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em]">CƏMİ MƏBLƏĞ</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xl font-black text-slate-900 tracking-tighter">{ord.totalPrice || "0.00"}</span>
+                                                                <span className="text-[11px] font-black text-slate-400 uppercase">AZN</span>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -1206,7 +1330,7 @@ const CustomerCard = memo(({
                                 </div>
                             </div>
                         ) : (
-                            <div className="bg-white p-20 rounded-[2.5rem] border-2 border-dashed border-slate-100 flex flex-col items-center justify-center text-center opacity-20">
+                            <div className="bg-white p-20 rounded-[2.5rem] border-2 border-dashed border-slate-500 flex flex-col items-center justify-center text-center opacity-20">
                                 <Shield size={40} />
                                 <p className="mt-6 text-sm font-black uppercase tracking-[0.2em] italic">Faktura Məlumatlarına Giriş Məhdudlaşdırılıb</p>
                             </div>
@@ -1245,7 +1369,7 @@ const CustomerCard = memo(({
                                         error: 'Xəta baş verdi'
                                     });
                                 }}
-                                className="w-full bg-slate-50 text-[11px] font-semibold text-slate-800 outline-none appearance-none cursor-pointer pr-6 pl-2 py-1.5 rounded-lg border border-slate-100 hover:border-slate-300 transition-colors"
+                                className="w-full bg-slate-50 text-[11px] font-semibold text-slate-800 outline-none appearance-none cursor-pointer pr-6 pl-2 py-1.5 rounded-lg border border-slate-500 hover:border-slate-300 transition-colors"
                             >
                                 <option value="">Seçilməyib</option>
                                 {appUsers.map((u: any) => (
@@ -1279,7 +1403,7 @@ const CustomerCard = memo(({
                                     }
                                     setLocalData(prev => ({ ...prev, process_status: newStatus }));
                                 }}
-                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-800 outline-none appearance-none cursor-pointer pr-5 pl-2 py-1.5 rounded-lg border border-slate-100 hover:border-slate-300 transition-colors"
+                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-800 outline-none appearance-none cursor-pointer pr-5 pl-2 py-1.5 rounded-lg border border-slate-500 hover:border-slate-300 transition-colors"
                             >
                                 {STATUS_ORDER.map(status => (
                                     <option key={status} value={status}>{STATUS_LABELS[status].label}</option>
@@ -1292,7 +1416,7 @@ const CustomerCard = memo(({
                             "px-2 py-1 rounded-lg border text-[9px] font-bold uppercase tracking-wider text-center",
                             localData.process_status ? STATUS_LABELS[localData.process_status].bg : "bg-slate-50",
                             localData.process_status ? STATUS_LABELS[localData.process_status].color : "text-slate-600",
-                            localData.process_status ? `border-current/5` : "border-slate-100"
+                            localData.process_status ? `border-current/5` : "border-slate-500"
                         )}>
                             {localData.process_status ? STATUS_LABELS[localData.process_status].label : "Daxil Edilməyib"}
                         </div>

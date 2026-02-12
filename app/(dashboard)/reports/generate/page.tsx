@@ -34,6 +34,7 @@ import {
     Minus,
     ChevronRight,
     Store,
+    File,
 } from "lucide-react";
 import {
     getCustomer,
@@ -111,6 +112,7 @@ interface Customer {
                 paymentPeriod: string;
                 monthlyPayment: string;
                 initialPayment: string;
+                paidAmount: string;
                 totalPrice: string;
             }>;
         }>;
@@ -166,6 +168,28 @@ function getAllProducts(invoices: any[]): string {
     return products.join(", ");
 }
 
+function getAllImeiProducts(invoices: any[]): string {
+    const allImeiItems: string[] = [];
+    (invoices || []).forEach(inv => {
+        (inv.orders || []).forEach(ord => {
+            const desc = ord.productDescription || "";
+            // Split by comma to inspect individual items in a single description string
+            const parts = desc.split(",");
+            parts.forEach(p => {
+                const trimmed = p.trim();
+                if (!trimmed) return;
+                // Robust check for 'imei' including Azerbaijani 'İ'
+                const normalized = trimmed.replace(/İ/g, 'i').toLowerCase();
+                if (normalized.includes("imei")) {
+                    allImeiItems.push(trimmed);
+                }
+            });
+        });
+    });
+    // Remove potential duplicates and join
+    return Array.from(new Set(allImeiItems)).join(", ");
+}
+
 function buildInvoiceData(
     inv: any,
     invIndex: number,
@@ -178,30 +202,43 @@ function buildInvoiceData(
 
     let invTotalPrice = 0;
     let invPhoneCount = 0;
+    let invPaidSum = 0;
     const productNames: string[] = [];
 
     for (const ord of orders) {
-        invTotalPrice += parseFloat(ord.totalPrice || "0");
-        invPhoneCount += (ord.phoneCount || 0);
+        const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+        const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+        const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
+        const pd = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
+        const ordTotalPrice = (p * m) + i;
+
+        invTotalPrice += ordTotalPrice;
+        invPaidSum += pd;
+
+        // Count "imei" occurrences (case-insensitive) as instructed
+        // Handle Azerbaijani dot-i (İmei, İMEİ, imei)
+        const normalizedDesc = (ord.productDescription || "").replace(/İ/g, 'i').toLowerCase();
+        const imeiCount = (normalizedDesc.match(/imei/g) || []).length;
+        invPhoneCount += imeiCount;
+
         if (ord.productDescription) productNames.push(ord.productDescription);
     }
 
     const firstOrder = orders[0] || {};
     const contractDate = firstOrder.contractDate || "";
 
-    // Proporsional ödəniş payı
-    const shareOfPaid = globalTotalPrice > 0
-        ? (invTotalPrice / globalTotalPrice) * globalPaidAmount
-        : 0;
-
-    const invUnpaid = Math.max(0, invTotalPrice - shareOfPaid);
+    const actualInvoicePaid = invPaidSum;
+    const invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
     const invPenalty = invUnpaid * 0.10;
 
     // İLM rüsumu
-    const hasImei = productNames.some(p => p.toLowerCase().includes("imei"));
+    const hasImei = productNames.some(p => p.toLowerCase().replace(/İ/g, 'i').includes("imei"));
     const invIlmFee = hasImei ? invPhoneCount * 47.2 : 0;
 
     const invTotal = invUnpaid + invPenalty + invIlmFee;
+
+    // Güzəşt Məbləği: Əsas borca ödənilməmiş - Cərimə (as per user request)
+    const invDiscount = Math.max(0, invUnpaid - invPenalty);
 
     // Əsas bölmə separator (Məhkəmə Ərizəsi body loop)
     let separator = "";
@@ -247,12 +284,12 @@ function buildInvoiceData(
         inv_index: String(invIndex + 1),
         inv_model_date: `${contractDate} ${productNames.join(", ")}`,
         cavabdeh_ad: customerName,
-        inv_odenen: shareOfPaid.toFixed(2),
+        inv_odenen: actualInvoicePaid.toFixed(2),
         inv_ilm_fee: invIlmFee > 0 ? invIlmFee.toFixed(2) : "",
 
         // Güzəşt (Qeyd bölməsi üçün)
         guzest_index: String(invIndex + 1),
-        guzest_meblegi: invPenalty.toFixed(2),
+        guzest_meblegi: invDiscount.toFixed(2),
         guzest_separator: guzestSeparator,
     };
 }
@@ -297,7 +334,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                         onChange={(e) => onChange(e.target.value)}
                         onFocus={() => onFocus?.(label)}
                         onBlur={onBlur}
-                        className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[14px] shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none"
                     >
                         <option value="">-</option>
                         {options?.map((opt: any) => (
@@ -305,7 +342,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                         ))}
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
-                        <ChevronRight size={14} className="rotate-90" />
+                        <ChevronRight size={12} className="rotate-90" />
                     </div>
                 </div>
             ) : (
@@ -316,7 +353,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     onChange={(e) => {
                         let val = e.target.value;
                         const dateFields = ["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"];
-                        if (dateFields.includes(label)) {
+                        if (dateFields.includes(label) || placeholder === "GG.AA.İİİİ" || placeholder === "DD.MM.YYYY") {
                             val = val.replace(/\D/g, "").slice(0, 8);
                             if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
                             else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
@@ -328,7 +365,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     }}
                     placeholder={placeholder || (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label) ? "GG.AA.İİİİ" : "-")}
                     className={cn(
-                        "w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[14px] shadow-sm",
+                        "w-full px-3 py-1.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm",
                         "focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 placeholder:text-slate-300 placeholder:font-medium",
                         isFin ? "uppercase tracking-widest" : "",
                         isPrice ? "text-primary font-black bg-primary/5 border-primary/10" : ""
@@ -386,9 +423,9 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 }
 
                 const invoices = customer.details?.invoices || [];
-                const debtNum = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
-                const totalPrice = parseFloat(customer.details?.totalPrice || "0");
-                const paidAmount = parseFloat(customer.details?.paidAmount || "0");
+                const debtNum = parseFloat((customer.details?.totalUnpaid || customer.debtAmount || "0").toString().replace(',', '.')) || 0;
+                const totalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.')) || 0;
+                const paidAmount = parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.')) || 0;
 
                 const invoicesData = invoices.map((inv: any, idx: number) =>
                     buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "")
@@ -406,6 +443,12 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     guzest_meblegi: invData.guzest_meblegi,
                     guzest_separator: invData.guzest_separator,
                 }));
+
+                const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
+                const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
+                const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+                const extraCosts = penaltyVal + feeVal;
+                const totalDebt = unpaidVal + extraCosts;
 
                 const data = {
                     invoices: invoicesData,
@@ -432,31 +475,36 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     CAVABDEH_TAM_AD: customer.fullName || "",
                     CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
                     CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
+                    CAVABDEH_ATA_SUFFIX_3: (customer.details?.gender === "Qadın" ? "qızından" : "oğlundan"),
+
 
                     BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
                     BUTUN_MEHSULLAR: getAllProducts(invoices),
+                    BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
 
-                    UMUMI_BORC: debtNum.toFixed(2),
-                    UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(debtNum),
+                    UMUMI_BORC: totalDebt.toFixed(2),
+                    UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
                     CEMI_ODENEN: paidAmount.toFixed(2),
                     DOVLET_RUSUMU: customer.details?.courtFee || "",
                     PENYA_FAIZ: customer.details?.penaltyPercent || "1",
                     XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
 
                     MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                    MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
-                    MEHSUL_SIYAHI: customer.details?.productDescription || "",
+                    MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices),
+                    MEHSUL_SIYAHI: getAllProducts(invoices),
                     ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
                     ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
                     TAKSIT_AY: customer.details?.paymentPeriod || "",
                     AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                     ILKIN_ODENIS: customer.details?.initialPayment || "",
-                    ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
-                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
-                    ILM_RUSUM: customer.details?.fee || "0.00",
-                    ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.fee || "0")),
-                    DEBBE_PULU: customer.details?.penalty || "0.00",
-                    DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
+                    ODENILMEMIS_HISSE: unpaidVal.toFixed(2),
+                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(unpaidVal),
+                    CERIME_ODENEN: extraCosts.toFixed(2),
+                    CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
+                    ILM_RUSUM: feeVal.toFixed(2),
+                    ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
+                    DEBBE_PULU: penaltyVal.toFixed(2),
+                    DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(penaltyVal),
                     GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
 
                     currentDate: new Date().toLocaleDateString("az-AZ"),
@@ -691,6 +739,7 @@ function GenerateDocumentContent() {
                             paymentPeriod: typedCust.details.paymentPeriod || "",
                             monthlyPayment: typedCust.details.monthlyPayment || "",
                             initialPayment: typedCust.details.initialPayment || "",
+                            paidAmount: typedCust.details.paidAmount || "0.00",
                             totalPrice: typedCust.details.totalPrice || "0.00"
                         }]
                     }];
@@ -743,28 +792,44 @@ function GenerateDocumentContent() {
         if (!customer) return [];
         const requestedTemplate = searchParams.get('template');
 
-        // Step 8: Strict restriction if 'template' param is present
+        // Check if ANY product in ANY invoice contains 'imei'
+        const invoices = customer.details?.invoices || [];
+        const hasImeiAnywhere = invoices.some(inv =>
+            (inv.orders || []).some(ord => {
+                const desc = (ord.productDescription || "").replace(/İ/g, 'i').toLowerCase();
+                return desc.includes("imei");
+            })
+        );
+
+        // Calculate totalDebt the same way as final reports
+        const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
+        const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
+        const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+        const totalDebtVal = unpaidVal + penaltyVal + feeVal;
+
+        // Strict restriction if 'template' param is present
         if (requestedTemplate) {
             return allTemplates.filter(t => t.name.includes(requestedTemplate));
         }
 
-        const debt = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
-
         return allTemplates.filter(t => {
-            const name = t.name.toLowerCase();
-            const product = (customer.details?.productDescription || "").toLowerCase();
-            const hasImei = product.includes("imei");
+            const nameLower = t.name.toLowerCase();
 
-            // Hide 'Arayış' templates if no IMEI
-            if (name.includes("arayış") && !hasImei) return false;
+            // 1. Hide 'Arayış' templates if NO IMEI found in any invoice
+            if (nameLower.includes("arayış") && !hasImeiAnywhere) return false;
 
-            if (name.includes("məhkəmə ərizəsi") || name.includes("ödəniş cədvəli")) {
-                if (debt <= 5000) {
-                    return name.includes("(5000-)") || name.includes("(5000 - )");
+            // 2. Debt-based +/- suffix filter
+            const hasPlus = t.name.includes("+");
+            const hasMinus = t.name.includes("-");
+
+            if (hasPlus || hasMinus) {
+                if (totalDebtVal <= 5000) {
+                    return hasMinus;
                 } else {
-                    return (name.includes("(5000)") || name.includes("(5000 + )")) && !name.includes("(5000-)");
+                    return hasPlus;
                 }
             }
+
             return true;
         }).sort((a, b) => {
             const getNum = (s: string) => {
@@ -850,25 +915,56 @@ function GenerateDocumentContent() {
             if (ordIdx === -1) return prev;
 
             const ord = { ...orders[ordIdx], [field]: value };
+
+            // Auto-calculate phoneCount based on 'imei' count OR comma separator count (+1 rule)
+            if (field === 'productDescription') {
+                const imeiCount = (value.match(/imei/gi) || []).length;
+                const commaCount = (value.match(/,/g) || []).length;
+                ord.phoneCount = Math.max(1, imeiCount, commaCount + 1);
+
+                // Auto-detect date from start of string (e.g. "18.08.2024 iPhone...")
+                const dateMatch = value.match(/^(\d{2}\.\d{2}\.\d{4})/);
+                if (dateMatch) {
+                    ord.contractDate = dateMatch[1];
+                }
+            }
+
             if (['paymentPeriod', 'monthlyPayment', 'initialPayment'].includes(field)) {
-                const p = parseFloat(ord.paymentPeriod || "0") || 0;
-                const m = parseFloat(ord.monthlyPayment || "0") || 0;
-                const i = parseFloat(ord.initialPayment || "0") || 0;
+                const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
                 ord.totalPrice = ((p * m) + i).toFixed(2);
             }
             orders[ordIdx] = ord;
             invoices[invIdx] = { ...invoices[invIdx], orders };
 
             const newData = { ...prev, details: { ...prev.details, invoices } };
-            // Sync legacy fields for first order
-            if (invIdx === 0 && ordIdx === 0 && newData.details) {
-                if (field === 'productDescription') newData.details.productDescription = value;
-                if (field === 'contractDate') newData.details.contractDate = value;
-                if (field === 'paymentPeriod') newData.details.paymentPeriod = value;
-                if (field === 'monthlyPayment') newData.details.monthlyPayment = value;
-                if (field === 'initialPayment') newData.details.initialPayment = value;
-                if (field === 'phoneCount') newData.details.phoneCount = value;
-                newData.details.totalPrice = ord.totalPrice;
+
+            // Aggregate global values
+            if (newData.details) {
+                let totalPaid = 0;
+                newData.details.invoices.forEach((inv: any) => {
+                    (inv.orders || []).forEach((ord: any) => {
+                        totalPaid += parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
+                    });
+                });
+                newData.details.paidAmount = totalPaid.toFixed(2);
+
+                // Sync legacy fields for first order
+                if (invIdx === 0 && ordIdx === 0) {
+                    if (field === 'productDescription') {
+                        newData.details.productDescription = value;
+                        const imeiCount = (value.match(/imei/gi) || []).length;
+                        const commaCount = (value.match(/,/g) || []).length;
+                        newData.details.phoneCount = Math.max(1, imeiCount, commaCount + 1);
+                    }
+                    if (field === 'contractDate') newData.details.contractDate = value;
+                    if (field === 'paymentPeriod') newData.details.paymentPeriod = value;
+                    if (field === 'monthlyPayment') newData.details.monthlyPayment = value;
+                    if (field === 'initialPayment') newData.details.initialPayment = value;
+                    if (field === 'phoneCount') newData.details.phoneCount = value;
+                    newData.details.totalPrice = ord.totalPrice;
+                }
             }
             return newData;
         });
@@ -877,6 +973,28 @@ function GenerateDocumentContent() {
     const addInvoice = () => {
         setCustomer(prev => {
             if (!prev) return null;
+            let currentInvoices = [...(prev.details?.invoices || [])];
+
+            if (currentInvoices.length === 0) {
+                currentInvoices = [{
+                    id: 'def',
+                    invoiceNumber: prev.details?.contractNumber || "",
+                    orders: [
+                        {
+                            id: 'o_def',
+                            productDescription: prev.details?.productDescription || "",
+                            phoneCount: prev.details?.phoneCount || 1,
+                            contractDate: prev.details?.contractDate || "",
+                            paymentPeriod: prev.details?.paymentPeriod || "",
+                            monthlyPayment: prev.details?.monthlyPayment || "",
+                            initialPayment: prev.details?.initialPayment || "",
+                            paidAmount: prev.details?.paidAmount || "0.00",
+                            totalPrice: prev.details?.totalPrice || "0.00"
+                        }
+                    ]
+                }];
+            }
+
             const newInv = {
                 id: Math.random().toString(36).substring(7),
                 invoiceNumber: "",
@@ -888,10 +1006,11 @@ function GenerateDocumentContent() {
                     paymentPeriod: "",
                     monthlyPayment: "",
                     initialPayment: "",
+                    paidAmount: "0.00",
                     totalPrice: "0.00"
                 }]
             };
-            return { ...prev, details: { ...prev.details, invoices: [...(prev.details?.invoices || []), newInv] } };
+            return { ...prev, details: { ...prev.details, invoices: [...currentInvoices, newInv] } };
         });
     };
 
@@ -902,7 +1021,7 @@ function GenerateDocumentContent() {
             const idx = invoices.findIndex(i => i.id === invId);
             if (idx === -1) return prev;
 
-            const newOrder = {
+            const newOrd = {
                 id: Math.random().toString(36).substring(7),
                 productDescription: "",
                 phoneCount: 1,
@@ -910,9 +1029,10 @@ function GenerateDocumentContent() {
                 paymentPeriod: "",
                 monthlyPayment: "",
                 initialPayment: "",
+                paidAmount: "0.00",
                 totalPrice: "0.00"
             };
-            invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrder] };
+            invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrd] };
             return { ...prev, details: { ...prev.details, invoices } };
         });
     };
@@ -960,6 +1080,7 @@ function GenerateDocumentContent() {
 
         // Aggregate from ALL invoices and orders
         let totalAggregatedPrice = 0;
+        let totalAggregatedPaid = 0;
         let totalPhoneCount = 0;
         let firstProductDesc = "";
         let firstContractDate = "";
@@ -968,10 +1089,67 @@ function GenerateDocumentContent() {
         let firstInitialPayment = "";
 
         const invoices = customer.details?.invoices || [];
-        invoices.forEach((inv, iidx) => {
+        let anyOrderUpdated = false;
+
+        const updatedInvoices = invoices.map(inv => {
+            let invUpdated = false;
+            const updatedOrders = (inv.orders || []).map(ord => {
+                const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
+                const pd = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
+
+                const calculatedOrdPrice = (p * m) + i;
+                const currentOrdPriceString = (ord.totalPrice || "0").toString().replace(',', '.');
+
+                if (Math.abs(calculatedOrdPrice - parseFloat(currentOrdPriceString)) > 0.01) {
+                    invUpdated = true;
+                    anyOrderUpdated = true;
+                    return { ...ord, totalPrice: calculatedOrdPrice.toFixed(2) };
+                }
+                return ord;
+            });
+
+            if (invUpdated) {
+                return { ...inv, orders: updatedOrders };
+            }
+            return inv;
+        });
+
+        if (anyOrderUpdated) {
+            setCustomer(prev => {
+                if (!prev) return null;
+                return {
+                    ...prev,
+                    details: {
+                        ...prev.details,
+                        invoices: updatedInvoices
+                    }
+                };
+            });
+            return;
+        }
+
+        // Use updatedInvoices for aggregation
+        updatedInvoices.forEach((inv, iidx) => {
             (inv.orders || []).forEach((ord, oidx) => {
-                totalAggregatedPrice += parseFloat(ord.totalPrice || "0");
-                totalPhoneCount += (ord.phoneCount || 0);
+                const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
+                const pd = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
+
+                totalAggregatedPrice += (p * m) + i;
+                totalAggregatedPaid += pd;
+
+                const desc = ord.productDescription || "";
+                // Handle Azerbaijani dot-i (İmei, İMEİ, imei)
+                const normalizedDesc = desc.replace(/İ/g, 'i').toLowerCase();
+                const imeiCount = (normalizedDesc.match(/imei/g) || []).length;
+
+                if (imeiCount > 0) {
+                    totalPhoneCount += imeiCount;
+                }
+
                 if (iidx === 0 && oidx === 0) {
                     firstProductDesc = ord.productDescription;
                     firstContractDate = ord.contractDate;
@@ -982,69 +1160,63 @@ function GenerateDocumentContent() {
             });
         });
 
-        const paid = parseFloat(customer.details?.paidAmount || "0");
-        const hasImei = (customer.details?.invoices || []).some(inv =>
-            (inv.orders || []).some(ord => ord.productDescription.toLowerCase().includes("imei"))
-        );
+        const paid = totalAggregatedPaid || parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.'));
 
         // 1. Total Price (aggregated)
         const calculatedTotalPrice = totalAggregatedPrice;
 
-        // 2. Unpaid Amount
-        // Only calculate if current value is 0 or price exceeds paid
+        // 2. Unpaid Amount (Əsas borca ödənilməmiş məbləğ)
         const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
 
-        // 3. IDM Fee
-        // Respect manual fee if it exists and is significantly different from 0
-        const currentFee = parseFloat(customer.details?.fee || "0");
+        // 3. IDM Fee (İLM Rüsumu)
+        // If there are IMEI products, the fee should be count * 47.20
+        const currentFee = parseFloat((customer.details?.fee || "0").toString().replace(',', '.'));
         let calculatedFee = currentFee;
-        if (currentFee === 0 && hasImei) {
-            calculatedFee = totalPhoneCount * 47.2;
+        if (totalPhoneCount > 0) {
+            // Auto-calculate if it's currently 0 or if we have a mismatch in count
+            if (currentFee === 0 || Math.abs(currentFee - (totalPhoneCount * 47.2)) > 0.01) {
+                calculatedFee = totalPhoneCount * 47.2;
+            }
+        } else {
+            calculatedFee = 0;
         }
 
-        // 4. Penalty
+        // 4. Penalty (Cərimə)
         const calculatedPenalty = calculatedUnpaid * 0.10;
 
-        // 5. Total Unpaid
-        // Respect manual total if user entered it (like the 1.00 in screenshot)
-        const currentTotalUnpaid = parseFloat(customer.details?.totalUnpaid || "0");
-        let calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
+        // 5. Total Unpaid (Ümumilikdə ödənilməmiş məbləğ)
+        const calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
 
-        // If user manually set a total and it's not 0, and our calc is 0 or close to 0, 
-        // we might be overriding their manual fix for complex cases.
-        if (currentTotalUnpaid > 0 && Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 10) {
-            // Keep user value if the difference is large (manual override)
-            calculatedTotalUnpaid = currentTotalUnpaid;
-        }
-
-        // 6. Discount
-        const calculatedDiscount = calculatedPenalty; // Generally, the penalty amount is considered as the potential discount
+        // 6. Discount (Güzəşt Məbləği: Əsas borca ödənilməmiş - Cərimə)
+        const calculatedDiscount = Math.max(0, calculatedUnpaid - calculatedPenalty);
 
         const updates: Record<string, string> = {};
-        const currentTotalPrice = parseFloat(customer.details?.totalPrice || "0");
-        if (focusedField !== "Cəmi Qiymət" && Math.abs(calculatedTotalPrice - currentTotalPrice) > 0.01) {
+        const currentTotalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.'));
+        if (focusedField !== "Alqı-satqı qiyməti" && Math.abs(calculatedTotalPrice - currentTotalPrice) > 0.01) {
             updates['details.totalPrice'] = calculatedTotalPrice.toFixed(2);
         }
 
-        const currentUnpaid = parseFloat(customer.details?.unpaidAmount || "0");
-        if (focusedField !== "Ödənilməmiş Hissə" && Math.abs(calculatedUnpaid - currentUnpaid) > 0.01) {
+        const currentUnpaid = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.'));
+        if (focusedField !== "Əsas borca ödənilməmiş məbləğ" && Math.abs(calculatedUnpaid - currentUnpaid) > 0.01) {
             updates['details.unpaidAmount'] = calculatedUnpaid.toFixed(2);
         }
 
-        if (focusedField !== "İDM Rüsumu" && Math.abs(calculatedFee - currentFee) > 0.01) {
+        const feeFieldLabel = "İnnovativ Layihələr Mərkəzi Rüsumu";
+        if (focusedField !== feeFieldLabel && Math.abs(calculatedFee - currentFee) > 0.01) {
             updates['details.fee'] = calculatedFee.toFixed(2);
         }
 
-        const currentPenalty = parseFloat(customer.details?.penalty || "0");
-        if (focusedField !== "Dəbbə Pulu" && Math.abs(calculatedPenalty - currentPenalty) > 0.01) {
+        const currentPenalty = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.'));
+        if (focusedField !== "Cərimə" && Math.abs(calculatedPenalty - currentPenalty) > 0.01) {
             updates['details.penalty'] = calculatedPenalty.toFixed(2);
         }
 
-        if (focusedField !== "Yekun Borc (AZN)" && Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 0.01) {
+        const currentTotalUnpaid = parseFloat((customer.details?.totalUnpaid || "0").toString().replace(',', '.'));
+        if (focusedField !== "Ümumilikdə ödənilməmiş məbləğ" && Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 0.01) {
             updates['details.totalUnpaid'] = calculatedTotalUnpaid.toFixed(2);
         }
 
-        const currentDiscount = parseFloat(customer.details?.discountAmount || "0");
+        const currentDiscount = parseFloat((customer.details?.discountAmount || "0").toString().replace(',', '.'));
         if (focusedField !== "Güzəşt Məbləği" && Math.abs(calculatedDiscount - currentDiscount) > 0.01) {
             updates['details.discountAmount'] = calculatedDiscount.toFixed(2);
         }
@@ -1082,10 +1254,22 @@ function GenerateDocumentContent() {
         customer?.details?.discountAmount
     ]);
 
-    const validateData = () => {
+    const validateData = (targetTemplateName?: string) => {
         if (!customer) return false;
 
-        const sections = {
+        const openedTemplate = searchParams.get('template') || "";
+        const effectiveTemplate = targetTemplateName || openedTemplate;
+        const isWarning = (effectiveTemplate || "").toLowerCase()
+            .replace(/ə/g, 'e')
+            .replace(/ı/g, 'i')
+            .replace(/ç/g, 'c')
+            .replace(/ğ/g, 'g')
+            .replace(/ö/g, 'o')
+            .replace(/ş/g, 's')
+            .replace(/ü/g, 'u')
+            .includes("xeberdarliq");
+
+        const sections: any = {
             "Sənədi Hazırlayan": { "İcraçı": "details.executorName" },
             "Şəxsi Məlumatlar": {
                 "Ad Soyad": "fullName",
@@ -1097,18 +1281,22 @@ function GenerateDocumentContent() {
             },
             "Ünvan Məlumatları": {
                 "Qeydiyyat Ünvanı": "details.address",
-                "Faktiki Yaşayış": "details.actualAddress"
             },
-            "Maliyyə Hesabatı": { "Ödənilən məbləğ": "details.paidAmount" }
         };
+
+        if (!isWarning) {
+            sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = "details.actualAddress";
+            sections["Maliyyə Hesabatı"] = { "Ödənilən məbləğ": "details.paidAmount" };
+        }
 
         const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
 
         for (const [title, fields] of Object.entries(sections)) {
-            for (const [name, path] of Object.entries(fields)) {
-                const val = path.includes('.')
-                    ? (customer as any).details?.[path.split('.')[1]]
-                    : (customer as any)[path];
+            for (const [name, path] of Object.entries(fields as any)) {
+                const pathStr = path as string;
+                const val = pathStr.includes('.')
+                    ? (customer as any).details?.[pathStr.split('.')[1]]
+                    : (customer as any)[pathStr];
 
                 if (isEmpty(val)) {
                     toast.error(`Əskik məlumat: [${title}] bölməsində "${name}" xanasını doldurun.`);
@@ -1138,9 +1326,19 @@ function GenerateDocumentContent() {
                 return false;
             }
             for (const ord of inv.orders) {
-                if (!ord.productDescription || !ord.contractDate || !ord.paymentPeriod || !ord.monthlyPayment || !ord.initialPayment) {
-                    toast.error("Əskik doldurulan məlumat var: [Faktura və Sifariş] detallarını tam doldurun.");
-                    return false;
+                const isProductOk = !!ord.productDescription && !!ord.contractDate;
+                const isPricingOk = !!ord.paymentPeriod && !!ord.monthlyPayment && !!ord.initialPayment;
+
+                if (isWarning) {
+                    if (!isProductOk) {
+                        toast.error("Xəbərdarlıq üçün əskik məlumat: [Faktura və Sifariş] detallarında məhsul adı və müqavilə tarixi doldurulmalıdır.");
+                        return false;
+                    }
+                } else {
+                    if (!isProductOk || !isPricingOk) {
+                        toast.error("Əskik doldurulan məlumat var: [Faktura və Sifariş] detallarını tam doldurun.");
+                        return false;
+                    }
                 }
             }
         }
@@ -1148,31 +1346,30 @@ function GenerateDocumentContent() {
         return true;
     };
 
-    const generateDocument = async (template: Template) => {
-        if (!customer) return;
-        if (!validateData()) return;
+    const atobWithUint8 = (base64: string) => {
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes;
+    };
+
+    const generateDocument = async (template: Template, silent: boolean = false) => {
+        if (!customer) return null;
+        if (!validateData(template.name)) return null;
         if (!selectedCourt) {
             toast.error("Zəhmət olmasa məhkəmə seçin");
             setIsCourtDropdownOpen(true);
-            return;
+            return null;
         }
-        setIsGenerating(template.id);
+        if (!silent) setIsGenerating(template.id);
 
         try {
             if (!template.content) {
-                toast.error("Şablon faylı tapılmadı");
-                setIsGenerating(null);
-                return;
+                if (!silent) toast.error("Şablon faylı tapılmadı");
+                return null;
             }
-
-            const atobWithUint8 = (base64: string) => {
-                const binaryString = atob(base64);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                return bytes;
-            };
 
             const bytes = atobWithUint8(template.content);
             const zip = new PizZip(bytes.buffer);
@@ -1208,6 +1405,12 @@ function GenerateDocumentContent() {
             const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
             const now = new Date();
 
+            const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
+            const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
+            const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+            const extraCosts = penaltyVal + feeVal;
+            const totalDebt = unpaidVal + extraCosts;
+
             const data = {
                 MEHKEME_ADI: selectedCourt.name,
                 MEHKEME_UNVAN: selectedCourt.address,
@@ -1231,28 +1434,31 @@ function GenerateDocumentContent() {
 
                 BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
                 BUTUN_MEHSULLAR: getAllProducts(invoices),
+                BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
+                MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices), // Alias for user template compatibility
 
-                UMUMI_BORC: debtNum.toFixed(2),
-                UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(debtNum),
+                UMUMI_BORC: totalDebt.toFixed(2),
+                UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
                 CEMI_ODENEN: paidAmount.toFixed(2),
                 DOVLET_RUSUMU: customer.details?.courtFee || "",
                 PENYA_FAIZ: customer.details?.penaltyPercent || "1",
                 XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
 
                 MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
-                MEHSUL_SIYAHI: customer.details?.productDescription || "",
+                MEHSUL_SIYAHI: getAllProducts(invoices),
                 ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
                 ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
                 TAKSIT_AY: customer.details?.paymentPeriod || "",
                 AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                 ILKIN_ODENIS: customer.details?.initialPayment || "",
-                ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
-                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
-                ILM_RUSUM: customer.details?.fee || "0.00",
-                ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.fee || "0")),
-                DEBBE_PULU: customer.details?.penalty || "0.00",
-                DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
+                ODENILMEMIS_HISSE: unpaidVal.toFixed(2),
+                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(unpaidVal),
+                CERIME_ODENEN: extraCosts.toFixed(2),
+                CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
+                ILM_RUSUM: feeVal.toFixed(2),
+                ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
+                DEBBE_PULU: penaltyVal.toFixed(2),
+                DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(penaltyVal),
                 GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
 
                 ERIZE_GUN: `${now.getDate()}`,
@@ -1269,20 +1475,32 @@ function GenerateDocumentContent() {
             };
 
             doc.render(data);
+            const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}`;
+
+            if (silent) {
+                return {
+                    fileName,
+                    content: doc.getZip().generate({ type: "uint8array" })
+                };
+            }
+
             const out = doc.getZip().generate({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-            saveAs(out, `${customer.fullName.replace(/\s+/g, '_')
-                }_${template.name}`);
+            saveAs(out, fileName);
             toast.success(`${template.name} yükləndi`);
             await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${template.name} yaradıldı`, user?.email || "system");
+            return true;
         } catch (error: any) {
             console.error("Document generation error:", error);
-            if (error.name === "XTTemplateError") {
-                toast.error(`"${template.name}" şablonunda etiket(tag) xətası var.Mötərizələri yoxlayın.`);
-            } else {
-                toast.error("Sənəd yaradılmadı");
+            if (!silent) {
+                if (error.name === "XTTemplateError") {
+                    toast.error(`"${template.name}" şablonunda etiket(tag) xətası var. Mötərizələri yoxlayın.`);
+                } else {
+                    toast.error("Sənəd yaradılmadı");
+                }
             }
+            return null;
         } finally {
-            setIsGenerating(null);
+            if (!silent) setIsGenerating(null);
         }
     };
 
@@ -1307,7 +1525,7 @@ function GenerateDocumentContent() {
                 {/* Fixed Top Header */}
                 <div className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0 z-50 shadow-sm">
                     <div className="flex items-center gap-10">
-                        <button onClick={() => router.push("/dashboard")} className="h-10 w-10 flex items-center justify-center bg-slate-50 text-slate-400 hover:text-primary rounded-xl border border-slate-100 transition-all hover:bg-white hover:shadow-md">
+                        <button onClick={() => router.push("/dashboard")} className="h-10 w-10 flex items-center justify-center bg-slate-100 text-slate-600 hover:text-primary rounded-xl border border-slate-300 transition-all hover:bg-white hover:shadow-md">
                             <ArrowLeft size={18} />
                         </button>
 
@@ -1386,12 +1604,19 @@ function GenerateDocumentContent() {
 
                                 const loadingId = toast.loading("Bütün sənədlər hazırlanır...");
                                 try {
-                                    // 1. Generate all filtered documents sequentially
+                                    const mainZip = new PizZip();
+
+                                    // 1. Generate all filtered documents silentely and add to ZIP
                                     for (const temp of filteredTemplates) {
-                                        await generateDocument(temp);
-                                        // Small delay for browser's download queue
-                                        await new Promise(r => setTimeout(r, 800));
+                                        const result = await generateDocument(temp, true) as any;
+                                        if (result && result.content) {
+                                            mainZip.file(result.fileName, result.content, { binary: true });
+                                            await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${temp.name} (Toplu) yaradıldı`, user?.email || "system");
+                                        }
                                     }
+
+                                    const zipContent = mainZip.generate({ type: "blob", mimeType: "application/zip" });
+                                    saveAs(zipContent, `${customer.fullName.replace(/\s+/g, '_')}_BUTUN_SENEDLER.zip`);
 
                                     // 2. Update status to COMPLETED
                                     await updateCustomer(customer.id, {
@@ -1399,17 +1624,18 @@ function GenerateDocumentContent() {
                                         process_status: 'COMPLETED'
                                     }, user?.email);
 
-                                    toast.success("Bütün sənədlər yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
+                                    toast.success("Bütün sənədlər ZIP olaraq yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
 
                                     // Refresh local customer state
                                     setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED' } : null);
                                 } catch (err) {
+                                    console.error("Batch generation error:", err);
                                     toast.error("Sənədləri yaradarkən xəta baş verdi", { id: loadingId });
                                 }
                             }}
                             className="bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-emerald-700 transition-all shadow-xl active:scale-95 flex items-center gap-3"
                         >
-                            <Printer size={18} /> ÜMUMİ ÇAP (HAMISI)
+                            <Printer size={18} /> ÜMUMİ ÇAP
                         </button>
 
                         <button
@@ -1418,39 +1644,34 @@ function GenerateDocumentContent() {
                             className="bg-slate-900 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl active:scale-95 disabled:opacity-50 flex items-center gap-3"
                         >
                             {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                            SİSTEMİ YADDA SAXLA
+                            YADDA SAXLA
                         </button>
                     </div>
                 </div>
 
                 <div className="flex flex-1 overflow-hidden h-full">
                     {/* LEFT PANEL - Editor */}
-                    <div className="w-[400px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)]">
-                        <div className="p-5 border-b border-slate-100 bg-slate-50/30">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="h-6 w-1.5 bg-primary rounded-full shadow-sm" />
-                                <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.2em]">Məlumat Redaktoru</h3>
-                            </div>
-
-                            <div className="bg-primary/[0.03] p-4 rounded-2xl border border-primary/10 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-3 opacity-10"><Database size={32} /></div>
+                    <div className="w-[480px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)]">
+                        <div className="p-3 border-b border-slate-100 bg-slate-50/30">
+                            <div className="bg-primary/[0.03] p-3 rounded-2xl border border-primary/10 relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 p-3 opacity-10"><File size={24} /></div>
                                 <div className="relative space-y-0.5">
-                                    <p className="text-[9px] font-black text-primary uppercase tracking-widest italic opacity-60">Görünən Sənəd</p>
-                                    <h4 className="text-[13px] font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-2">
+                                    <p className="text-[8px] font-black text-primary uppercase tracking-widest italic opacity-60">Görünən Sənəd</p>
+                                    <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-2">
                                         {activeTemplateName.replace(".docx", "")}
                                     </h4>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="p-5 space-y-6 flex-1">
+                        <div className="p-4 space-y-4 flex-1">
                             {/* Executor Info */}
-                            <div className="bg-slate-50/50 p-3.5 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:bg-white group">
-                                <div className="flex items-center gap-3 mb-2.5">
-                                    <div className="h-7 w-7 rounded-lg bg-white text-primary flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-primary/20 transition-all">
-                                        <Edit3 size={14} className="stroke-[2.5px]" />
+                            <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:bg-white group">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="h-6 w-6 rounded-lg bg-white text-primary flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-primary/20 transition-all">
+                                        <Edit3 size={12} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">İcraçı</h4>
+                                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">İcraçı</h4>
                                 </div>
                                 <CustomerField
                                     label=""
@@ -1464,13 +1685,13 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Warning Section */}
-                            <div className="bg-amber-50/30 p-3.5 rounded-xl border border-amber-200/40 shadow-sm transition-all hover:bg-amber-50/50">
+                            <div className="bg-amber-50/30 p-2.5 rounded-xl border border-amber-200/40 shadow-sm transition-all hover:bg-amber-50/50">
                                 <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
-                                            <AlertTriangle size={14} className="stroke-[2.5px]" />
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-6 w-6 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
+                                            <AlertTriangle size={12} className="stroke-[2.5px]" />
                                         </div>
-                                        <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">Xəbərdarlıq</h4>
+                                        <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">Xəbərdarlıq</h4>
                                     </div>
                                     <label className="relative inline-flex items-center cursor-pointer group">
                                         <input
@@ -1509,14 +1730,14 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Personal Information */}
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
-                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
-                                        <User size={14} className="stroke-[2.5px]" />
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 border-b border-primary/10 pb-1.5">
+                                    <div className="h-6 w-6 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                        <User size={12} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Şəxsi Məlumatlar</h4>
+                                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em]">Şəxsi Məlumatlar</h4>
                                 </div>
-                                <div className="space-y-4">
+                                <div className="space-y-3">
                                     <CustomerField label="SOYAD AD ATA ADI" icon={User} value={customer.fullName} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("fullName", v)} />
                                     <div className="grid grid-cols-2 gap-4">
                                         <CustomerField
@@ -1560,32 +1781,32 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Address Information */}
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
-                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
-                                        <MapPin size={14} className="stroke-[2.5px]" />
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 border-b border-primary/10 pb-1.5">
+                                    <div className="h-6 w-6 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                        <MapPin size={12} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Ünvan Məlumatları</h4>
+                                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em]">Ünvan Məlumatları</h4>
                                 </div>
-                                <div className="space-y-4">
-                                    <div className="space-y-2">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
+                                <div className="space-y-3">
+                                    <div className="space-y-1">
+                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
                                         <textarea
                                             value={customer.details?.address || ""}
                                             onFocus={() => setFocusedField("Qeydiyyat Ünvanı")}
                                             onBlur={() => setFocusedField(null)}
                                             onChange={(e) => handleFieldChange("details.address", e.target.value)}
-                                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:border-primary/20 transition-all font-medium text-xs text-slate-600 shadow-sm min-h-[70px] resize-none"
+                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-primary/20 transition-all font-medium text-[12px] text-slate-600 shadow-sm min-h-[50px] resize-none"
                                         />
                                     </div>
-                                    <div className="space-y-2">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
+                                    <div className="space-y-1">
+                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
                                         <textarea
                                             value={customer.details?.actualAddress || ""}
                                             onFocus={() => setFocusedField("Faktiki Yaşayış")}
                                             onBlur={() => setFocusedField(null)}
                                             onChange={(e) => handleFieldChange("details.actualAddress", e.target.value)}
-                                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:border-primary/20 transition-all font-medium text-xs text-slate-600 shadow-sm min-h-[70px] resize-none"
+                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-primary/20 transition-all font-medium text-[12px] text-slate-600 shadow-sm min-h-[50px] resize-none"
                                         />
                                     </div>
                                 </div>
@@ -1610,93 +1831,98 @@ function GenerateDocumentContent() {
 
                                 <div className="space-y-8">
                                     {(customer.details?.invoices || []).map((inv, idx) => (
-                                        <div key={inv.id} className="bg-slate-50/50 p-6 rounded-[2.5rem] border border-slate-200/60 space-y-6 relative group/inv">
+                                        <div key={inv.id} className="bg-slate-50/50 p-4 rounded-xl border border-slate-200/60 space-y-4 relative group/inv">
                                             {/* Invoice Header */}
-                                            <div className="flex items-center justify-between gap-4">
-                                                <div className="flex items-center gap-4 flex-1">
-                                                    <div className="h-10 w-10 rounded-2xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-400 text-xs shadow-sm">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="flex items-center gap-3 flex-1">
+                                                    <div className="h-8 w-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-400 text-[10px] shadow-sm">
                                                         {idx + 1}
                                                     </div>
                                                     <input
                                                         value={inv.invoiceNumber}
                                                         onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
-                                                        className="flex-1 bg-white border border-slate-200 px-4 py-2.5 rounded-xl font-bold text-xs outline-none focus:border-primary/30 transition-all shadow-sm"
+                                                        className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/30 transition-all shadow-sm"
                                                         placeholder="Faktura Nömrəsi"
                                                     />
                                                 </div>
                                                 <button
                                                     onClick={() => removeInvoice(inv.id)}
-                                                    className="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all border border-transparent hover:border-red-100"
+                                                    className="h-8 w-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100"
                                                 >
-                                                    <Trash2 size={16} />
+                                                    <Trash2 size={14} />
                                                 </button>
                                             </div>
 
                                             {/* Orders List */}
-                                            <div className="space-y-4">
+                                            <div className="space-y-3">
                                                 {(inv.orders || []).map((ord) => (
-                                                    <div key={ord.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4 group/ord">
-                                                        <div className="flex items-center justify-between gap-4">
+                                                    <div key={ord.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-3 group/ord">
+                                                        <div className="flex items-center justify-between gap-3">
                                                             <div className="flex-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Məhsul Adı (İMEİ)</label>
+                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-0.5 block">MƏHSUL ADI</label>
                                                                 <input
                                                                     value={ord.productDescription}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 px-4 py-2.5 rounded-xl font-bold text-xs outline-none focus:border-primary/20 transition-all"
+                                                                    className="w-full bg-slate-50 border border-slate-100 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/20 transition-all"
                                                                     placeholder="Məs: iPhone 13 (IMEI: ...)"
                                                                 />
                                                             </div>
                                                             <button
                                                                 onClick={() => removeOrder(inv.id, ord.id)}
-                                                                className="h-9 w-9 flex items-center justify-center text-slate-200 hover:text-red-400 transition-all"
+                                                                className="h-7 w-7 flex items-center justify-center text-slate-200 hover:text-red-400 transition-all"
                                                             >
-                                                                <Minus size={14} />
+                                                                <Minus size={12} />
                                                             </button>
                                                         </div>
 
-                                                        <div className="grid grid-cols-4 gap-3">
+                                                        <div className="grid grid-cols-4 gap-2">
                                                             <div className="space-y-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Müddət</label>
+                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Müddət</label>
                                                                 <input
                                                                     value={ord.paymentPeriod}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Sayı</label>
-                                                                <input
-                                                                    value={ord.phoneCount}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'phoneCount', parseInt(e.target.value) || 1)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">Aylıq</label>
-                                                                <input
-                                                                    value={ord.monthlyPayment}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center block">İlkin</label>
+                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">İlkin</label>
                                                                 <input
                                                                     value={ord.initialPayment}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-2 rounded-lg font-bold text-xs text-center outline-none"
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Aylıq</label>
+                                                                <input
+                                                                    value={ord.monthlyPayment}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Ödənilən</label>
+                                                                <input
+                                                                    value={ord.paidAmount}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
+                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                         </div>
 
-                                                        <div className="pt-3 border-t border-slate-50 flex items-center justify-between">
-                                                            <span className="text-[10px] font-bold text-primary tracking-tight">Cəmi: {ord.totalPrice} AZN</span>
+                                                        <div className="pt-2 border-t border-slate-50 flex items-center justify-between">
+                                                            <span className="text-[9px] font-bold text-primary tracking-tight">Cəm: {ord.totalPrice} ₼</span>
                                                             <div className="flex items-center gap-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest px-2">Tarix</label>
+                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest px-1">Tarix</label>
                                                                 <input
                                                                     value={ord.contractDate}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', e.target.value)}
-                                                                    className="w-24 bg-slate-50 border border-slate-100 py-1.5 rounded-lg font-bold text-[10px] text-center outline-none"
+                                                                    onChange={(e) => {
+                                                                        let val = e.target.value.replace(/\D/g, "").slice(0, 8);
+                                                                        if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
+                                                                        else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
+                                                                        updateOrder(inv.id, ord.id, 'contractDate', val);
+                                                                    }}
+                                                                    className="w-20 bg-slate-50 border border-slate-100 py-1 rounded-md font-bold text-[10px] text-center outline-none"
                                                                     placeholder="GG.AA.İİİİ"
                                                                 />
                                                             </div>
@@ -1705,9 +1931,9 @@ function GenerateDocumentContent() {
                                                 ))}
                                                 <button
                                                     onClick={() => addOrder(inv.id)}
-                                                    className="w-full py-3 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
+                                                    className="w-full py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 text-[9px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
                                                 >
-                                                    <Plus size={14} /> Məhsul Əlavə Et
+                                                    <Plus size={12} /> Məhsul Əlavə Et
                                                 </button>
                                             </div>
                                         </div>
@@ -1725,27 +1951,27 @@ function GenerateDocumentContent() {
                                 </div>
                                 <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Cəmi Qiymət" info="Fakturalardakı bütün məhsulların (Qiymət * Müddət + İlkin) cəmi." value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
-                                        <CustomerField label="Ödənilən" info="Müştərinin indiyədək ödədiyi cəmi məbləğ." value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
+                                        <CustomerField label="Alqı-satqı qiyməti" info="Fakturalardakı bütün məhsulların (Qiymət * Müddət + İlkin) cəmi." value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
+                                        <CustomerField label="Əsas borca ödənilmiş məbləğ" info="Müştərinin indiyədək ödədiyi cəmi məbləğ." value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
                                     </div>
                                     <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm">
-                                        <CustomerField label="Ödənilməmiş Hissə" info="Cəmi Qiymət - Ödənilən (minimum 0)." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
+                                        <CustomerField label="Əsas borca ödənilməmiş məbləğ" info="Alqı-satqı qiyməti - Əsas borca ödənilmiş məbləğ." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
-                                        <CustomerField label="İDM Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 47.20)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
+                                        <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 47.20)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
                                         <CustomerField label="Dövlət Rüsumu" info="Məhkəmə dövlət rüsumu məbləği." value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Dəbbə Pulu" info="Ödənilməmiş Hissə * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
+                                        <CustomerField label="Cərimə" info="Əsas borca ödənilməmiş məbləğ * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
                                         <CustomerField label="Penya Faizi" info="Müqavilə üzrə günlük gecikmə faizi." value={customer.details?.penaltyPercent} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penaltyPercent", v)} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Güzəşt Məbləği" info="Müştəriyə güzəşt olunan cərimə məbləği (Dəbbə puluna bərabər)." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
+                                        <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
                                     <div className="pt-2 border-t border-primary/10">
                                         <CustomerField
-                                            label="Yekun Borc (AZN)"
-                                            info="Ödənilməmiş Hissə + İDM Rüsumu + Dəbbə Pulu."
+                                            label="Ümumilikdə ödənilməmiş məbləğ"
+                                            info="Əsas borca ödənilməmiş məbləğ + İLM Rüsumu + Cərimə."
                                             icon={DollarSign}
                                             value={customer.details?.totalUnpaid}
                                             onFocus={setFocusedField}

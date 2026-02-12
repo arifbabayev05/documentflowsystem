@@ -25,11 +25,11 @@ const EMPTY_ROW: EntryRow = {
 };
 
 const COLUMNS: { key: keyof EntryRow; label: string; width: string; uppercase?: boolean; maxLen?: number }[] = [
-    { key: "customer_code", label: "Müştəri Kodu", width: "120px" },
-    { key: "full_name", label: "Müştəri (Soyad, Ad, Ata adı)", width: "0.9fr", uppercase: true },
-    { key: "fin", label: "FİN", width: "120px", uppercase: true, maxLen: 7 },
-    { key: "serial_number", label: "Seriya", width: "125px", uppercase: true },
-    { key: "total_debt", label: "Borc (AZN)", width: "130px" },
+    { key: "customer_code", label: "Müştəri Kodu", width: "180px" },
+    { key: "full_name", label: "Müştəri (Soyad, Ad, Ata adı)", width: "0.98fr", uppercase: true },
+    { key: "fin", label: "FİN", width: "180px", uppercase: true, maxLen: 7 },
+    { key: "serial_number", label: "Seriya", width: "180px", uppercase: true },
+    { key: "total_debt", label: "Borc (AZN)", width: "180px" },
 ];
 
 /* ── Custom Date Picker Component ── */
@@ -315,22 +315,48 @@ export default function InspectorPage() {
     const handlePaste = (e: React.ClipboardEvent) => {
         const text = e.clipboardData.getData("text");
         if (!text) return;
+
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length === 0) return;
+
+        // If it's a single line AND doesn't have tabs, it's a normal paste into a focused field
+        if (lines.length === 1 && !text.includes("\t")) {
+            return;
+        }
+
         e.preventDefault();
 
         const parsed: EntryRow[] = lines.map(line => {
-            const p = line.split("\t");
-            // If the name is spread across p[1], p[2], p[3], join them. 
-            // If it's just one field, it will take p[1].
-            const possibleFullName = [p[1], p[2], p[3]].filter(Boolean).map(x => x.trim()).join(" ");
-            return {
-                customer_code: p[0]?.trim() || "",
-                full_name: possibleFullName || "",
-                total_debt: p[4]?.trim() || "",
-                fin: p[5]?.trim() || "",
-                serial_number: p[6]?.trim() || "",
-            };
+            const p = line.split("\t").map(x => x.trim());
+
+            if (p.length >= 7) {
+                // Layout: Code | Soyad | Ad | Ata Adı | FIN | Seriya | Borc
+                return {
+                    customer_code: p[0] || "",
+                    full_name: [p[1], p[2], p[3]].filter(Boolean).join(" "),
+                    fin: p[4] || "",
+                    serial_number: p[5] || "",
+                    total_debt: p[6] || "",
+                };
+            } else if (p.length === 6) {
+                // Layout from screenshot: Code | Name | (Blank) | FIN | Seriya | Borc
+                return {
+                    customer_code: p[0] || "",
+                    full_name: p[1] || "",
+                    fin: p[3] || "",
+                    serial_number: p[4] || "",
+                    total_debt: p[5] || "",
+                };
+            } else {
+                // Standard Layout: Code | Name | FIN | Seriya | Borc
+                return {
+                    customer_code: p[0] || "",
+                    full_name: p[1] || "",
+                    fin: p[2] || "",
+                    serial_number: p[3] || "",
+                    total_debt: p[4] || "",
+                };
+            }
         }).filter(r => r.customer_code || r.full_name || r.fin);
 
         if (parsed.length > 0) {
@@ -574,7 +600,7 @@ export default function InspectorPage() {
                         {/* header - Borc moved after Seriya */}
                         <div
                             className="grid bg-[#fcfdfe] border-b border-slate-200"
-                            style={{ gridTemplateColumns: "60px 160px 120px 1fr 110px 110px 110px 150px" }}
+                            style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px" }}
                         >
                             {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Status"].map(h => (
                                 <div key={h} className="px-4 py-4.5 text-[13px] font-black text-slate-600 uppercase tracking-widest">
@@ -593,7 +619,7 @@ export default function InspectorPage() {
                                 <div
                                     key={row.id || idx}
                                     className="grid border-b border-slate-50 last:border-b-0 hover:bg-slate-50 transition-colors items-center"
-                                    style={{ gridTemplateColumns: "60px 160px 120px 1fr 110px 110px 110px 150px" }}
+                                    style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px" }}
                                 >
                                     <div className="px-5 py-4 text-[13px] font-black text-slate-400 flex items-center">{filteredHistory.length - idx}</div>
                                     {(() => {
@@ -616,7 +642,7 @@ export default function InspectorPage() {
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
-                                    <div className="px-4 py-4">
+                                    <div className="px-4 py-4 w-100">
                                         <span
                                             className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
                                                 } ${STATUS_LABELS[row.process_status as ProcessStatus]?.color || "text-slate-500"
