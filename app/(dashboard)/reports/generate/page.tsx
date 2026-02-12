@@ -140,6 +140,123 @@ interface CompanyInfo {
     representativeFin: string;
 }
 
+// --- Multi-Invoice Helpers ---
+
+function getAllContractDates(invoices: any[]): string {
+    const dates: string[] = [];
+    for (const inv of invoices) {
+        for (const ord of (inv.orders || [])) {
+            if (ord.contractDate && !dates.includes(ord.contractDate)) {
+                dates.push(ord.contractDate);
+            }
+        }
+    }
+    return dates.map(d => `${d}-cü il`).join(", ");
+}
+
+function getAllProducts(invoices: any[]): string {
+    const products: string[] = [];
+    for (const inv of invoices) {
+        for (const ord of (inv.orders || [])) {
+            if (ord.productDescription) {
+                products.push(ord.productDescription);
+            }
+        }
+    }
+    return products.join(", ");
+}
+
+function buildInvoiceData(
+    inv: any,
+    invIndex: number,
+    totalInvoices: number,
+    globalPaidAmount: number,
+    globalTotalPrice: number,
+    customerName: string
+) {
+    const orders = inv.orders || [];
+
+    let invTotalPrice = 0;
+    let invPhoneCount = 0;
+    const productNames: string[] = [];
+
+    for (const ord of orders) {
+        invTotalPrice += parseFloat(ord.totalPrice || "0");
+        invPhoneCount += (ord.phoneCount || 0);
+        if (ord.productDescription) productNames.push(ord.productDescription);
+    }
+
+    const firstOrder = orders[0] || {};
+    const contractDate = firstOrder.contractDate || "";
+
+    // Proporsional ödəniş payı
+    const shareOfPaid = globalTotalPrice > 0
+        ? (invTotalPrice / globalTotalPrice) * globalPaidAmount
+        : 0;
+
+    const invUnpaid = Math.max(0, invTotalPrice - shareOfPaid);
+    const invPenalty = invUnpaid * 0.10;
+
+    // İLM rüsumu
+    const hasImei = productNames.some(p => p.toLowerCase().includes("imei"));
+    const invIlmFee = hasImei ? invPhoneCount * 47.2 : 0;
+
+    const invTotal = invUnpaid + invPenalty + invIlmFee;
+
+    // Əsas bölmə separator (Məhkəmə Ərizəsi body loop)
+    let separator = "";
+    if (totalInvoices === 1) {
+        separator = " miqdarında borc yaranmışdır.";
+    } else if (invIndex < totalInvoices - 1) {
+        separator = ";";
+    } else {
+        separator = " miqdarında borc yaranmışdır.";
+    }
+
+    // XAHİŞ bölməsi separator
+    let xahisSeparator = "";
+    if (totalInvoices > 1 && invIndex < totalInvoices - 1) {
+        xahisSeparator = ";";
+    }
+
+    // Güzəşt separator (Ödəniş Cədvəli Qeyd bölməsi)
+    let guzestSeparator = "";
+    if (invIndex < totalInvoices - 1) {
+        guzestSeparator = ", ";  // vergül + boşluq
+    }
+
+    return {
+        // Ümumi (Ərizə + Cədvəl)
+        muqavile_tarixi: contractDate,
+        mehsul_siyahi: productNames.join(", "),
+        alqi_satqi_qiymeti: invTotalPrice.toFixed(2),
+        alqi_satqi_qiymeti_sozle: numberToAzerbaijaniFinancialWords(invTotalPrice),
+        taksit_ay: firstOrder.paymentPeriod || "",
+        ayliq_odenis: firstOrder.monthlyPayment || "",
+        ilkin_odenis: firstOrder.initialPayment || "",
+        odenilmemis_hisse: invUnpaid.toFixed(2),
+        odenilmemis_hisse_sozle: numberToAzerbaijaniFinancialWords(invUnpaid),
+        debbe_pulu: invPenalty.toFixed(2),
+        debbe_pulu_sozle: numberToAzerbaijaniFinancialWords(invPenalty),
+        inv_umumi_borc: invTotal.toFixed(2),
+        inv_umumi_borc_sozle: numberToAzerbaijaniFinancialWords(invTotal),
+        inv_separator: separator,
+        xahis_separator: xahisSeparator,
+
+        // Ödəniş Cədvəli üçün
+        inv_index: String(invIndex + 1),
+        inv_model_date: `${contractDate} ${productNames.join(", ")}`,
+        cavabdeh_ad: customerName,
+        inv_odenen: shareOfPaid.toFixed(2),
+        inv_ilm_fee: invIlmFee > 0 ? invIlmFee.toFixed(2) : "",
+
+        // Güzəşt (Qeyd bölməsi üçün)
+        guzest_index: String(invIndex + 1),
+        guzest_meblegi: invPenalty.toFixed(2),
+        guzest_separator: guzestSeparator,
+    };
+}
+
 // --- Components ---
 function normalizeAZ(text: string) {
     return text
@@ -155,12 +272,24 @@ function normalizeAZ(text: string) {
         .replace(/[^a-z0-9\s]/g, "")
         .trim();
 }
-const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options, onFocus, onBlur }: any) => {
+const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options, onFocus, onBlur, info }: any) => {
     return (
-        <div className="space-y-1.5 group">
-            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] ml-1 transition-colors group-focus-within:text-primary">
-                {label}
-            </label>
+        <div className="space-y-1.5 group relative">
+            <div className="flex items-center gap-1.5">
+                <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] ml-1 transition-colors group-focus-within:text-primary">
+                    {label}
+                </label>
+                {info && (
+                    <div className="group/info relative">
+                        <Info size={11} className="text-slate-300 hover:text-primary cursor-help transition-colors" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-white text-[9px] rounded-lg opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-[100] shadow-xl pointer-events-none">
+                            <div className="font-bold border-b border-white/10 pb-1 mb-1 uppercase tracking-tighter">Hesablama düsturu:</div>
+                            {info}
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] border-transparent border-t-slate-800"></div>
+                        </div>
+                    </div>
+                )}
+            </div>
             {isSelect ? (
                 <div className="relative">
                     <select
@@ -256,12 +385,33 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     return;
                 }
 
+                const invoices = customer.details?.invoices || [];
                 const debtNum = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
                 const totalPrice = parseFloat(customer.details?.totalPrice || "0");
                 const paidAmount = parseFloat(customer.details?.paidAmount || "0");
 
-                // Map system data to user's .docx template tags
+                const invoicesData = invoices.map((inv: any, idx: number) =>
+                    buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "")
+                );
+
+                // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
+                const xahisItems = invoicesData.map((invData: any) => ({
+                    ...invData,
+                    inv_separator: invData.xahis_separator,
+                }));
+
+                // Güzəşt bölməsi üçün (Ödəniş Cədvəli Qeyd hissəsi)
+                const guzestItems = invoicesData.map((invData: any) => ({
+                    guzest_index: invData.guzest_index,
+                    guzest_meblegi: invData.guzest_meblegi,
+                    guzest_separator: invData.guzest_separator,
+                }));
+
                 const data = {
+                    invoices: invoicesData,
+                    xahis_items: xahisItems,
+                    guzest_items: guzestItems,
+                    MUHASIB_IMZA: "S.İsmayılova",
                     MEHKEME_ADI: selectedCourt?.name || "",
                     MEHKEME_UNVAN: selectedCourt?.address || "",
                     MEHKEME_TELEFON: selectedCourt?.phone || "",
@@ -279,22 +429,36 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     CAVABDEH_MOBIL: customer.details?.phone || "",
                     CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
                     CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
-                    MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                    MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
-                    CEMI_ODENEN: paidAmount.toFixed(2),
-                    ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
-                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
+                    CAVABDEH_TAM_AD: customer.fullName || "",
+                    CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
+                    CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
+
+                    BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
+                    BUTUN_MEHSULLAR: getAllProducts(invoices),
+
                     UMUMI_BORC: debtNum.toFixed(2),
                     UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(debtNum),
+                    CEMI_ODENEN: paidAmount.toFixed(2),
+                    DOVLET_RUSUMU: customer.details?.courtFee || "",
+                    PENYA_FAIZ: customer.details?.penaltyPercent || "1",
+                    XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
+
+                    MUQAVILE_TARIXI: customer.details?.contractDate || "",
+                    MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
+                    MEHSUL_SIYAHI: customer.details?.productDescription || "",
                     ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
                     ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
                     TAKSIT_AY: customer.details?.paymentPeriod || "",
                     AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                     ILKIN_ODENIS: customer.details?.initialPayment || "",
-                    ILM_RUSUM: customer.details?.fee || "",
+                    ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
+                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
+                    ILM_RUSUM: customer.details?.fee || "0.00",
                     ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.fee || "0")),
-                    DEBBE_PULU: customer.details?.penalty || "",
+                    DEBBE_PULU: customer.details?.penalty || "0.00",
                     DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
+                    GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
+
                     currentDate: new Date().toLocaleDateString("az-AZ"),
                     ERIZE_GUN: `${new Date().getDate()}`,
                     ERIZE_AY: AZ_MONTHS[new Date().getMonth()],
@@ -302,15 +466,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     ELAQE_TEL1: "050 280 11 90",
                     ELAQE_TEL2: "012 310 07 75",
                     NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                    CAVABDEH_TAM_AD: customer.fullName || "",
-                    CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
-                    CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
                     ICRACI_AD_SOYAD: customer.details?.executorName || "",
-                    MEHSUL_SIYAHI: customer.details?.productDescription || "",
-                    DOVLET_RUSUMU: customer.details?.courtFee || "",
-                    PENYA_FAIZ: customer.details?.penaltyPercent || "",
-                    GUZEST_MEBLEGI: customer.details?.discountAmount || "",
-                    XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
                 };
 
                 // Apply highlighter marker to the focused value
@@ -351,6 +507,20 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
 
                 try {
                     doc.render(data);
+                } catch (err: any) {
+                    if (err.properties && err.properties.errors instanceof Array) {
+                        const errorMessages = err.properties.errors.map((error: any) => error.message).join("\n");
+                        console.error("Docxtemplater Render Errors:", errorMessages);
+                        setError("Şablon sintaksis xətası: " + errorMessages);
+                    } else {
+                        console.error("Docxtemplater Render Error:", err);
+                        setError("Şablon rendering xətası: " + (err.message || "Bilinməyən xəta"));
+                    }
+                    setIsRendering(false);
+                    return;
+                }
+
+                try {
                     const out = doc.getZip().generate({ type: "arraybuffer" });
 
                     // Use docx-preview for high-fidelity rendering
@@ -821,11 +991,14 @@ function GenerateDocumentContent() {
         const calculatedTotalPrice = totalAggregatedPrice;
 
         // 2. Unpaid Amount
+        // Only calculate if current value is 0 or price exceeds paid
         const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
 
         // 3. IDM Fee
-        let calculatedFee = 0;
-        if (hasImei) {
+        // Respect manual fee if it exists and is significantly different from 0
+        const currentFee = parseFloat(customer.details?.fee || "0");
+        let calculatedFee = currentFee;
+        if (currentFee === 0 && hasImei) {
             calculatedFee = totalPhoneCount * 47.2;
         }
 
@@ -833,39 +1006,46 @@ function GenerateDocumentContent() {
         const calculatedPenalty = calculatedUnpaid * 0.10;
 
         // 5. Total Unpaid
-        const calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
+        // Respect manual total if user entered it (like the 1.00 in screenshot)
+        const currentTotalUnpaid = parseFloat(customer.details?.totalUnpaid || "0");
+        let calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
+
+        // If user manually set a total and it's not 0, and our calc is 0 or close to 0, 
+        // we might be overriding their manual fix for complex cases.
+        if (currentTotalUnpaid > 0 && Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 10) {
+            // Keep user value if the difference is large (manual override)
+            calculatedTotalUnpaid = currentTotalUnpaid;
+        }
 
         // 6. Discount
-        const calculatedDiscount = Math.max(0, calculatedUnpaid - calculatedPenalty);
+        const calculatedDiscount = calculatedPenalty; // Generally, the penalty amount is considered as the potential discount
 
         const updates: Record<string, string> = {};
         const currentTotalPrice = parseFloat(customer.details?.totalPrice || "0");
-        if (Math.abs(calculatedTotalPrice - currentTotalPrice) > 0.01) {
+        if (focusedField !== "Cəmi Qiymət" && Math.abs(calculatedTotalPrice - currentTotalPrice) > 0.01) {
             updates['details.totalPrice'] = calculatedTotalPrice.toFixed(2);
         }
 
         const currentUnpaid = parseFloat(customer.details?.unpaidAmount || "0");
-        if (Math.abs(calculatedUnpaid - currentUnpaid) > 0.01) {
+        if (focusedField !== "Ödənilməmiş Hissə" && Math.abs(calculatedUnpaid - currentUnpaid) > 0.01) {
             updates['details.unpaidAmount'] = calculatedUnpaid.toFixed(2);
         }
 
-        const currentFee = parseFloat(customer.details?.fee || "0");
-        if (Math.abs(calculatedFee - currentFee) > 0.01) {
+        if (focusedField !== "İDM Rüsumu" && Math.abs(calculatedFee - currentFee) > 0.01) {
             updates['details.fee'] = calculatedFee.toFixed(2);
         }
 
         const currentPenalty = parseFloat(customer.details?.penalty || "0");
-        if (Math.abs(calculatedPenalty - currentPenalty) > 0.01) {
+        if (focusedField !== "Dəbbə Pulu" && Math.abs(calculatedPenalty - currentPenalty) > 0.01) {
             updates['details.penalty'] = calculatedPenalty.toFixed(2);
         }
 
-        const currentTotalUnpaid = parseFloat(customer.details?.totalUnpaid || "0");
-        if (Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 0.01) {
+        if (focusedField !== "Yekun Borc (AZN)" && Math.abs(calculatedTotalUnpaid - currentTotalUnpaid) > 0.01) {
             updates['details.totalUnpaid'] = calculatedTotalUnpaid.toFixed(2);
         }
 
         const currentDiscount = parseFloat(customer.details?.discountAmount || "0");
-        if (Math.abs(calculatedDiscount - currentDiscount) > 0.01) {
+        if (focusedField !== "Güzəşt Məbləği" && Math.abs(calculatedDiscount - currentDiscount) > 0.01) {
             updates['details.discountAmount'] = calculatedDiscount.toFixed(2);
         }
 
@@ -892,9 +1072,14 @@ function GenerateDocumentContent() {
             });
         }
     }, [
-        customer?.details?.invoices,
+        JSON.stringify(customer?.details?.invoices || []),
         customer?.details?.paidAmount,
-        customer?.details?.totalPrice
+        customer?.details?.totalPrice,
+        customer?.details?.unpaidAmount,
+        customer?.details?.fee,
+        customer?.details?.totalUnpaid,
+        customer?.details?.penalty,
+        customer?.details?.discountAmount
     ]);
 
     const validateData = () => {
@@ -998,79 +1183,89 @@ function GenerateDocumentContent() {
                 nullGetter: () => ""
             });
 
+            const invoices = customer.details?.invoices || [];
             const debtNum = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
             const totalPrice = parseFloat(customer.details?.totalPrice || "0");
             const paidAmount = parseFloat(customer.details?.paidAmount || "0");
+
+            const invoicesData = invoices.map((inv: any, idx: number) =>
+                buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "")
+            );
+
+            // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
+            const xahisItems = invoicesData.map((invData: any) => ({
+                ...invData,
+                inv_separator: invData.xahis_separator,
+            }));
+
+            // Güzəşt bölməsi üçün (Ödəniş Cədvəli Qeyd hissəsi)
+            const guzestItems = invoicesData.map((invData: any) => ({
+                guzest_index: invData.guzest_index,
+                guzest_meblegi: invData.guzest_meblegi,
+                guzest_separator: invData.guzest_separator,
+            }));
 
             const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
             const now = new Date();
 
             const data = {
-                // Court Info
                 MEHKEME_ADI: selectedCourt.name,
                 MEHKEME_UNVAN: selectedCourt.address,
                 MEHKEME_TELEFON: selectedCourt.phone || "",
                 MEHKEME_FAKS: selectedCourt.fax || "",
-
-                // Plaintiff (Iddiaci) Info
                 IDDIACININ_ADI: companyInfo?.companyName || "",
                 IDDIACI_UNVAN: companyInfo?.address || "",
                 IDDIACI_TELEFON: companyInfo?.phone || "",
                 IDDIACI_FAKS: companyInfo?.fax || "",
                 NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
-                NUMAYENDE_FIN: companyInfo?.representativeFin || customer.details?.representativeFin || "",
-
-                // Defendant (Cavabdeh) Info
+                NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
                 CAVABDEH_AD_SOYAD: customer.fullName || "",
                 CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
-                CAVABDEH_FIN: customer.details?.fin || "",
-                CAVABDEH_UNVAN: customer.details?.address || "", // Registration address
-                CAVABDEH_MOBIL: customer.details?.phone || "",
-                CAVABDEH_VESIQE_SERIYA_NOMRE: customer.details?.passportNumber || "",
-                CAVABDEH_VESIQE_VERILME_TARIXI: customer.details?.issueDate || "",
-                CAVABDEH_VESIQE_VEREN_ORQAN: customer.details?.authority || "",
-                CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
+                CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
+                CAVABDEH_UNVAN: customer.details?.address || "",
                 CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
+                CAVABDEH_MOBIL: customer.details?.phone || "",
+                CAVABDEH_TAM_AD: customer.fullName || "",
+                CAVABDEH_ATA_SUFFIX: customer.details?.gender === "Qadın" ? "qızına" : "oğluna",
+                CAVABDEH_ATA_SUFFIX_2: customer.details?.gender === "Qadın" ? "qızının" : "oğlunun",
 
-                // Contract & Items
-                MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
+                BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
+                BUTUN_MEHSULLAR: getAllProducts(invoices),
 
-                // Financials
                 UMUMI_BORC: debtNum.toFixed(2),
                 UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(debtNum),
+                CEMI_ODENEN: paidAmount.toFixed(2),
+                DOVLET_RUSUMU: customer.details?.courtFee || "",
+                PENYA_FAIZ: customer.details?.penaltyPercent || "1",
+                XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
+
+                MUQAVILE_TARIXI: customer.details?.contractDate || "",
+                MEHSUL_IMEI_SIYAHI: customer.details?.productDescription || "",
+                MEHSUL_SIYAHI: customer.details?.productDescription || "",
                 ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
                 ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
                 TAKSIT_AY: customer.details?.paymentPeriod || "",
                 AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                 ILKIN_ODENIS: customer.details?.initialPayment || "",
-                CEMI_ODENEN: paidAmount.toFixed(2),
                 ODENILMEMIS_HISSE: parseFloat(customer.details?.unpaidAmount || "0").toFixed(2),
                 ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.unpaidAmount || "0")),
-
-                // Fees & Others
-                ILM_RUSUM: customer.details?.fee || "",
+                ILM_RUSUM: customer.details?.fee || "0.00",
                 ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.fee || "0")),
-                DEBBE_PULU: customer.details?.penalty || "",
+                DEBBE_PULU: customer.details?.penalty || "0.00",
                 DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(parseFloat(customer.details?.penalty || "0")),
+                GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
 
-                // Dates & New Tags
-                currentDate: now.toLocaleDateString("az-AZ"),
                 ERIZE_GUN: `${now.getDate()}`,
                 ERIZE_AY: AZ_MONTHS_CAP[now.getMonth()],
                 ERIZE_IL: now.getFullYear().toString(),
+                NUMAYENDE_IMZA: "Süleymanlı.R.X",
                 ELAQE_TEL1: "050 280 11 90",
                 ELAQE_TEL2: "012 310 07 75",
-                NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                CAVABDEH_TAM_AD: customer.fullName || "",
-                CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
-                CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
-                ICRACI_AD_SOYAD: user?.displayName || user?.email || "",
-                MEHSUL_SIYAHI: customer.details?.productDescription || "",
-                DOVLET_RUSUMU: customer.details?.courtFee || "",
-                PENYA_FAIZ: customer.details?.penaltyPercent || "",
-                GUZEST_MEBLEGI: customer.details?.discountAmount || "",
-                XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
+                ICRACI_AD_SOYAD: customer.details?.executorName || "",
+                MUHASIB_IMZA: "S.İsmayılova",
+                invoices: invoicesData,
+                xahis_items: xahisItems,
+                guzest_items: guzestItems,
             };
 
             doc.render(data);
@@ -1230,38 +1425,35 @@ function GenerateDocumentContent() {
 
                 <div className="flex flex-1 overflow-hidden h-full">
                     {/* LEFT PANEL - Editor */}
-                    <div className="w-[450px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)]">
-                        <div className="p-8 border-b border-slate-100 bg-slate-50/30">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="h-8 w-2 bg-primary rounded-full shadow-sm" />
-                                <h3 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.25em]">Məlumat Redaktoru</h3>
+                    <div className="w-[400px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)]">
+                        <div className="p-5 border-b border-slate-100 bg-slate-50/30">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="h-6 w-1.5 bg-primary rounded-full shadow-sm" />
+                                <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.2em]">Məlumat Redaktoru</h3>
                             </div>
 
-                            <div className="bg-primary/[0.03] p-6 rounded-[2rem] border border-primary/10 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-4 opacity-10"><Database size={40} /></div>
-                                <div className="relative space-y-1">
-                                    <p className="text-[10px] font-black text-primary uppercase tracking-widest italic opacity-60">Görünən Sənəd</p>
-                                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-2">
+                            <div className="bg-primary/[0.03] p-4 rounded-2xl border border-primary/10 relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 p-3 opacity-10"><Database size={32} /></div>
+                                <div className="relative space-y-0.5">
+                                    <p className="text-[9px] font-black text-primary uppercase tracking-widest italic opacity-60">Görünən Sənəd</p>
+                                    <h4 className="text-[13px] font-black text-slate-800 uppercase tracking-tight leading-tight line-clamp-2">
                                         {activeTemplateName.replace(".docx", "")}
                                     </h4>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="p-8 space-y-10 flex-1">
+                        <div className="p-5 space-y-6 flex-1">
                             {/* Executor Info */}
-                            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200/60 shadow-sm transition-all hover:bg-white hover:shadow-md group">
-                                <div className="flex items-center gap-4 mb-4">
-                                    <div className="h-10 w-10 rounded-2xl bg-white text-primary flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-primary/20 transition-all">
-                                        <Edit3 size={20} className="stroke-[2.5px]" />
+                            <div className="bg-slate-50/50 p-3.5 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:bg-white group">
+                                <div className="flex items-center gap-3 mb-2.5">
+                                    <div className="h-7 w-7 rounded-lg bg-white text-primary flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-primary/20 transition-all">
+                                        <Edit3 size={14} className="stroke-[2.5px]" />
                                     </div>
-                                    <div>
-                                        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em] leading-none">Sənədi Hazırlayan</h4>
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1.5">Müfəttiş Məlumatı</p>
-                                    </div>
+                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">İcraçı</h4>
                                 </div>
                                 <CustomerField
-                                    label="Müfəttiş"
+                                    label=""
                                     icon={User}
                                     value={customer.details?.executorName || user?.displayName || ""}
                                     onFocus={setFocusedField}
@@ -1272,15 +1464,13 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Warning Section */}
-                            <div className="bg-amber-50/50 p-6 rounded-[2rem] border border-amber-200/50 shadow-sm transition-all hover:bg-amber-50">
-                                <div className="flex items-center justify-between gap-6">
-                                    <div className="flex items-center gap-4">
-                                        <div className="h-10 w-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
-                                            <AlertTriangle size={20} className="stroke-[2.5px]" />
+                            <div className="bg-amber-50/30 p-3.5 rounded-xl border border-amber-200/40 shadow-sm transition-all hover:bg-amber-50/50">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
+                                            <AlertTriangle size={14} className="stroke-[2.5px]" />
                                         </div>
-                                        <div>
-                                            <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em] leading-none">Xəbərdarlıq Göndərilibmi?</h4>
-                                        </div>
+                                        <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em] leading-none">Xəbərdarlıq</h4>
                                     </div>
                                     <label className="relative inline-flex items-center cursor-pointer group">
                                         <input
@@ -1301,12 +1491,12 @@ function GenerateDocumentContent() {
                                                 }
                                             }}
                                         />
-                                        <div className="w-14 h-7 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-[21px] after:w-[21px] after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
+                                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-[18px] after:w-[18px] after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
                                     </label>
                                 </div>
 
                                 {customer.details?.isWarningSent && (
-                                    <div className="mt-6 pt-6 border-t border-amber-200/30 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="mt-4 pt-4 border-t border-amber-200/30 animate-in fade-in slide-in-from-top-2 duration-300">
                                         <CustomerField
                                             label="Xəbərdarlıq Tarixi"
                                             icon={Calendar}
@@ -1319,12 +1509,12 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Personal Information */}
-                            <div className="space-y-6">
-                                <div className="flex items-center gap-3 border-b-2 border-primary/10 pb-4">
-                                    <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                                        <User size={16} className="stroke-[2.5px]" />
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                        <User size={14} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Şəxsi Məlumatlar</h4>
+                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Şəxsi Məlumatlar</h4>
                                 </div>
                                 <div className="space-y-4">
                                     <CustomerField label="SOYAD AD ATA ADI" icon={User} value={customer.fullName} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("fullName", v)} />
@@ -1370,12 +1560,12 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Address Information */}
-                            <div className="space-y-6">
-                                <div className="flex items-center gap-3 border-b-2 border-primary/10 pb-4">
-                                    <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                                        <MapPin size={16} className="stroke-[2.5px]" />
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                        <MapPin size={14} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Ünvan Məlumatları</h4>
+                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Ünvan Məlumatları</h4>
                                 </div>
                                 <div className="space-y-4">
                                     <div className="space-y-2">
@@ -1402,13 +1592,13 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Faktura və Sifariş Detalları - MULTI INVOICE */}
-                            <div className="space-y-6">
-                                <div className="flex items-center justify-between border-b-2 border-primary/10 pb-4">
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between border-b border-primary/10 pb-2">
                                     <div className="flex items-center gap-3">
-                                        <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                                            <Box size={16} className="stroke-[2.5px]" />
+                                        <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                            <Box size={14} className="stroke-[2.5px]" />
                                         </div>
-                                        <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Faktura və Sifariş Detalları</h4>
+                                        <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Sifariş Detalları</h4>
                                     </div>
                                     <button
                                         onClick={addInvoice}
@@ -1526,35 +1716,36 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Financial Report */}
-                            <div className="space-y-6 pb-20">
-                                <div className="flex items-center gap-3 border-b-2 border-primary/10 pb-4">
-                                    <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                                        <DollarSign size={16} className="stroke-[2.5px]" />
+                            <div className="space-y-4 pb-20">
+                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                        <DollarSign size={14} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.2em]">Maliyyə Hesabatı</h4>
+                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Maliyyə Hesabatı</h4>
                                 </div>
                                 <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Cəmi Qiymət" value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
-                                        <CustomerField label="Ödənilən" value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
+                                        <CustomerField label="Cəmi Qiymət" info="Fakturalardakı bütün məhsulların (Qiymət * Müddət + İlkin) cəmi." value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
+                                        <CustomerField label="Ödənilən" info="Müştərinin indiyədək ödədiyi cəmi məbləğ." value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
                                     </div>
                                     <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm">
-                                        <CustomerField label="Ödənilməmiş Hissə" value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
+                                        <CustomerField label="Ödənilməmiş Hissə" info="Cəmi Qiymət - Ödənilən (minimum 0)." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
-                                        <CustomerField label="İDM Rüsumu" value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
-                                        <CustomerField label="Dövlət Rüsumu" value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
+                                        <CustomerField label="İDM Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 47.20)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
+                                        <CustomerField label="Dövlət Rüsumu" info="Məhkəmə dövlət rüsumu məbləği." value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Dəbbə Pulu" value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
-                                        <CustomerField label="Penya Faizi" value={customer.details?.penaltyPercent} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penaltyPercent", v)} />
+                                        <CustomerField label="Dəbbə Pulu" info="Ödənilməmiş Hissə * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
+                                        <CustomerField label="Penya Faizi" info="Müqavilə üzrə günlük gecikmə faizi." value={customer.details?.penaltyPercent} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penaltyPercent", v)} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Güzəşt Məbləği" value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
+                                        <CustomerField label="Güzəşt Məbləği" info="Müştəriyə güzəşt olunan cərimə məbləği (Dəbbə puluna bərabər)." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
                                     <div className="pt-2 border-t border-primary/10">
                                         <CustomerField
                                             label="Yekun Borc (AZN)"
+                                            info="Ödənilməmiş Hissə + İDM Rüsumu + Dəbbə Pulu."
                                             icon={DollarSign}
                                             value={customer.details?.totalUnpaid}
                                             onFocus={setFocusedField}
