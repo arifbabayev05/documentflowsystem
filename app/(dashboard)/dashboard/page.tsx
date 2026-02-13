@@ -43,12 +43,13 @@ import AuthGuard from "@/components/auth/AuthGuard";
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
-export type ProcessStatus = 'INSPECTOR_ENTERED' | 'ASSIGNED_BY_MANAGER' | 'FILLED_BY_ADMIN' | 'ARCHIVE_UPLOADED' | 'COMPLETED';
+export type ProcessStatus = 'INSPECTOR_ENTERED' | 'ASSIGNED_BY_MANAGER' | 'FILLED_BY_ADMIN' | 'WAITING_FOR_ARCHIVE' | 'ARCHIVE_UPLOADED' | 'COMPLETED';
 
 export const STATUS_ORDER: ProcessStatus[] = [
     'INSPECTOR_ENTERED',
     'ASSIGNED_BY_MANAGER',
     'FILLED_BY_ADMIN',
+    'WAITING_FOR_ARCHIVE',
     'ARCHIVE_UPLOADED',
     'COMPLETED'
 ];
@@ -56,8 +57,9 @@ export const STATUS_ORDER: ProcessStatus[] = [
 export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string, bg: string }> = {
     INSPECTOR_ENTERED: { label: 'Müfəttiş Daxil Etdi', color: 'text-blue-600', bg: 'bg-blue-50' },
     ASSIGNED_BY_MANAGER: { label: 'Xəbərdarlıq', color: 'text-amber-600', bg: 'bg-amber-50' },
-    FILLED_BY_ADMIN: { label: 'Arxivə göndərildi', color: 'text-purple-600', bg: 'bg-purple-50' },
-    ARCHIVE_UPLOADED: { label: 'Arxiv əlavə etdi', color: 'text-slate-600', bg: 'bg-slate-100' },
+    FILLED_BY_ADMIN: { label: 'Məfəttiş doldurdu', color: 'text-purple-600', bg: 'bg-purple-50' },
+    WAITING_FOR_ARCHIVE: { label: 'Arxivdən sənəd istənilib', color: 'text-orange-600', bg: 'bg-orange-50' },
+    ARCHIVE_UPLOADED: { label: 'Arxiv faylı əlavə olundu', color: 'text-slate-600', bg: 'bg-slate-100' },
     COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' }
 };
 
@@ -76,6 +78,31 @@ const isOverdue = (dateStr?: string) => {
     } catch (e) {
         return false;
     }
+};
+
+const KARABAKH_DISTRICTS = [
+    "Şuşa", "Xankəndi", "Ağdam", "Füzuli", "Cəbrayıl", "Xocavənd", "Xocalı", "Tərtər", "Ağdərə", "Laçın", "Kəlbəcər", "Zəngilan", "Qubadlı"
+];
+
+const normalizeAZ = (str: string | undefined) => {
+    if (!str) return "";
+    return str.toString().toLowerCase()
+        .replace(/ə/g, 'e')
+        .replace(/ı/g, 'i')
+        .replace(/i̇/g, 'i')
+        .replace(/ö/g, 'o')
+        .replace(/ü/g, 'u')
+        .replace(/ç/g, 'c')
+        .replace(/ş/g, 's')
+        .replace(/ğ/g, 'g')
+        .replace(/[^a-z0-9\s]/g, "")
+        .trim();
+};
+
+const isKarabakhAddress = (address: string | undefined) => {
+    const v = normalizeAZ(address || "");
+    if (v.includes("qarabag") || v.includes("qarabaq")) return true;
+    return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
 };
 
 interface CustomerRow {
@@ -126,6 +153,7 @@ interface CustomerRow {
             archiveUrl?: string;
             archiveBase64?: string;
             archiveName?: string;
+            archiveRequested?: boolean;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -247,6 +275,8 @@ const CustomerCard = memo(({
     const [isEditing, setIsEditing] = useState(!row.id);
     const [isExpanded, setIsExpanded] = useState(!row.id);
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
+    const [openStoreDropdownId, setOpenStoreDropdownId] = useState<string | null>(null);
+    const [storeSearch, setStoreSearch] = useState("");
 
     useEffect(() => {
         if (!isEditing) {
@@ -262,6 +292,7 @@ const CustomerCard = memo(({
                     archiveUrl: "",
                     archiveBase64: "",
                     archiveName: "",
+                    archiveRequested: false,
                     orders: [{
                         id: 'o_def',
                         productDescription: prev.details?.productDescription || "",
@@ -300,6 +331,13 @@ const CustomerCard = memo(({
                 const detailField = path.split('.')[1];
                 (details as any)[detailField] = value;
 
+                // Dynamic logic for address: If Karabakh is removed, clear actualAddress
+                if (detailField === 'address') {
+                    if (!isKarabakhAddress(value)) {
+                        details.actualAddress = "";
+                    }
+                }
+
                 // Autonomous Calculations for global fields (historical)
                 const period = parseFloat((details.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const monthly = parseFloat((details.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -319,7 +357,7 @@ const CustomerCard = memo(({
                 if (baseFields.includes(detailField)) {
                     const totalPrice = (period * monthly) + initial;
                     const unpaidAmount = Math.max(0, totalPrice - paid);
-                    let fee = hasImei ? phoneCount * 47.2 : 0;
+                    let fee = hasImei ? phoneCount * 23.6 : 0;
                     const penalty = unpaidAmount * 0.10;
                     const totalUnpaid = unpaidAmount + fee + penalty;
                     const discount = Math.max(0, unpaidAmount - penalty);
@@ -428,7 +466,7 @@ const CustomerCard = memo(({
 
                 // Recalculate global debt fields
                 const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid);
-                const fee = hasAnyImei ? totalPhoneCount * 47.2 : 0;
+                const fee = hasAnyImei ? totalPhoneCount * 23.6 : 0;
                 const penalty = unpaid * 0.10;
                 const totalDebt = unpaid + fee + penalty;
                 const discount = Math.max(0, unpaid - penalty);
@@ -463,6 +501,7 @@ const CustomerCard = memo(({
                 currentInvoices = [{
                     id: 'def',
                     invoiceNumber: prev.details?.contractNumber || "",
+                    archiveRequested: false,
                     orders: [{
                         id: 'o_def',
                         productDescription: prev.details?.productDescription || "",
@@ -480,6 +519,7 @@ const CustomerCard = memo(({
             const newInv = {
                 id: Math.random().toString(36).substring(7),
                 invoiceNumber: "",
+                archiveRequested: false,
                 orders: [{
                     id: Math.random().toString(36).substring(7),
                     productDescription: "",
@@ -492,7 +532,8 @@ const CustomerCard = memo(({
                     totalPrice: "0.00"
                 }]
             };
-            return { ...prev, details: { ...prev.details, invoices: [...currentInvoices, newInv] } };
+            toast.success("Yeni faktura üçün hissə yaradıldı");
+            return { ...prev, details: { ...prev.details, invoices: [newInv, ...currentInvoices] } };
         });
     };
 
@@ -514,7 +555,8 @@ const CustomerCard = memo(({
                 totalPrice: "0.00"
             };
 
-            invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrder] };
+            invoices[idx] = { ...invoices[idx], orders: [newOrder, ...(invoices[idx].orders || [])] };
+            toast.success("Yeni məhsul üçün hissə yaradıldı");
             return { ...prev, details: { ...prev.details, invoices } };
         });
     };
@@ -653,6 +695,43 @@ const CustomerCard = memo(({
         }
 
         router.push(`/reports/generate?id=${row.id}&template=Xəbərdarlıq Sənədi`);
+    };
+
+    const handleArchiveRequest = async (invId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+
+        const inv = localData.details?.invoices?.find(i => i.id === invId);
+        if (!inv) return;
+
+        if (!inv.invoiceNumber.trim()) {
+            toast.error("Arxivdən sənəd istəmək üçün Faktura № və Müqavilə Tarixi mütləq daxil edilməlidir.");
+            return;
+        }
+
+        const hasContractDate = inv.orders?.some(o => o.contractDate && o.contractDate.trim() !== "");
+        if (!hasContractDate) {
+            toast.error("Arxivdən sənəd istəmək üçün ən azı bir Məhsulun Müqavilə Tarixi daxil edilməlidir.");
+            return;
+        }
+
+        const updatedInvoices = [...(localData.details?.invoices || [])];
+        const idx = updatedInvoices.findIndex(i => i.id === invId);
+        updatedInvoices[idx] = { ...updatedInvoices[idx], archiveRequested: true };
+
+        const updatedData = {
+            ...localData,
+            process_status: 'WAITING_FOR_ARCHIVE' as ProcessStatus,
+            details: { ...localData.details, invoices: updatedInvoices }
+        };
+
+        setLocalData(updatedData);
+        const savePromise = onSave(updatedData);
+        toast.promise(savePromise, {
+            loading: 'Arxivə sorğu göndərilir...',
+            success: 'Arxivdən sənəd istəyi göndərildi',
+            error: 'Xəta baş verdi'
+        });
+        await savePromise;
     };
 
     const handleCancel = (e: React.MouseEvent) => {
@@ -823,22 +902,6 @@ const CustomerCard = memo(({
                                             <h3 className="text-[18px] font-black text-slate-900 tracking-tight leading-none truncate group-hover:text-primary transition-colors">
                                                 {row.fullName || "YENİ MÜŞTƏRİ"}
                                             </h3>
-
-                                            {/* Status Badge */}
-                                            {row.process_status && STATUS_LABELS[row.process_status] && (
-                                                <div className={cn(
-                                                    "px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider border",
-                                                    STATUS_LABELS[row.process_status].bg,
-                                                    STATUS_LABELS[row.process_status].color.replace('text-', 'border-').replace('600', '200'),
-                                                    STATUS_LABELS[row.process_status].color
-                                                )}>
-                                                    {STATUS_LABELS[row.process_status].label}
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="flex items-center gap-3">
-
                                             {(() => {
                                                 const invoices = row.details?.invoices || [];
                                                 const invCount = invoices.length;
@@ -859,6 +922,22 @@ const CustomerCard = memo(({
                                                     </div>
                                                 );
                                             })()}
+                                            {/* Status Badge
+                                            {row.process_status && STATUS_LABELS[row.process_status] && (
+                                                <div className={cn(
+                                                    "px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider border",
+                                                    STATUS_LABELS[row.process_status].bg,
+                                                    STATUS_LABELS[row.process_status].color.replace('text-', 'border-').replace('600', '200'),
+                                                    STATUS_LABELS[row.process_status].color
+                                                )}>
+                                                    {STATUS_LABELS[row.process_status].label}
+                                                </div>
+                                            )} */}
+                                        </div>
+
+                                        <div className="flex items-center gap-3">
+
+
                                         </div>
                                     </div>
                                 )}
@@ -960,7 +1039,9 @@ const CustomerCard = memo(({
                                             )}
                                             <button
                                                 onClick={() => {
-                                                    const sections = {
+                                                    const isKarabakh = isKarabakhAddress(localData.details?.address || "");
+
+                                                    const sections: any = {
                                                         "Şəxsi Məlumatlar": {
                                                             "Ad Soyad": localData.fullName,
                                                             "Cins": localData.details?.gender,
@@ -971,17 +1052,20 @@ const CustomerCard = memo(({
                                                         },
                                                         "Ünvan Məlumatları": {
                                                             "Qeydiyyat Ünvanı": localData.details?.address,
-                                                            "Faktiki Yaşayış": localData.details?.actualAddress
                                                         },
                                                         "Ödəniş Məlumatları": {
                                                             "Ödənilən məbləğ": localData.details?.paidAmount
                                                         }
                                                     };
 
+                                                    if (isKarabakh) {
+                                                        sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = localData.details?.actualAddress;
+                                                    }
+
                                                     const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
 
                                                     for (const [title, fields] of Object.entries(sections)) {
-                                                        for (const [fieldName, val] of Object.entries(fields)) {
+                                                        for (const [fieldName, val] of Object.entries(fields as any)) {
                                                             if (isEmpty(val)) {
                                                                 toast.error(`Əskik məlumat: [${title}] bölməsində "${fieldName}" xanasını doldurun.`);
                                                                 if (!isExpanded) setIsExpanded(true);
@@ -1093,7 +1177,9 @@ const CustomerCard = memo(({
 
                                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                             <CustomerField label="Qeydiyyat Ünvanı" path="details.address" placeholder="Şəhər, Rayon..." value={getValue("details.address")} onChange={handleFieldChange} isEditing={isEditing} />
-                                            <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Küçə, Bina, Mənzil..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} />
+                                            {isKarabakhAddress(getValue("details.address")) && (
+                                                <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Küçə, Bina, Mənzil..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} className=" rounded-xl bg-orange-50/5" />
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -1152,6 +1238,7 @@ const CustomerCard = memo(({
                                         archiveUrl: "",
                                         archiveBase64: "",
                                         archiveName: "",
+                                        archiveRequested: false,
                                         orders: [{
                                             id: 'o_def',
                                             productDescription: getValue("details.productDescription"),
@@ -1174,19 +1261,33 @@ const CustomerCard = memo(({
                                                         {idx + 1}
                                                     </div>
                                                     <div className="space-y-1.5 flex-1 xl:flex-none">
-                                                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block ml-1 mb-1.5">FAKTURA №</label>
-                                                        <input
-                                                            readOnly={!isEditing}
-                                                            value={inv.invoiceNumber || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
-                                                            className={cn(
-                                                                "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
-                                                                isEditing
-                                                                    ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100 placeholder:text-slate-300"
-                                                                    : "bg-slate-50 border border-slate-500 text-slate-900"
+                                                        <div className="flex items-center gap-2">
+                                                            <input
+                                                                readOnly={!isEditing}
+                                                                value={inv.invoiceNumber || ""}
+                                                                onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                                className={cn(
+                                                                    "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
+                                                                    isEditing
+                                                                        ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100 placeholder:text-slate-300"
+                                                                        : "bg-slate-50 border border-slate-500 text-slate-900"
+                                                                )}
+                                                                placeholder="Faktura Nömrəsi"
+                                                            />
+                                                            {!inv.archiveUrl && !inv.archiveBase64 && !inv.archiveRequested && (
+                                                                <button
+                                                                    onClick={(e) => handleArchiveRequest(inv.id, e)}
+                                                                    className="h-11 px-6 bg-orange-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-100 hover:text-red transition-all border border-orange-200/50 flex items-center gap-2"
+                                                                >
+                                                                    <FolderArchive size={14} /> Sənədi istə
+                                                                </button>
                                                             )}
-                                                            placeholder="Faktura Nömrəsi"
-                                                        />
+                                                            {inv.archiveRequested && !inv.archiveUrl && !inv.archiveBase64 && (
+                                                                <div className="h-11 px-6 bg-slate-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider border border-slate-200 flex items-center gap-2 italic">
+                                                                    Sorğu göndərilib...
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -1214,21 +1315,79 @@ const CustomerCard = memo(({
                                                     )}
 
                                                     {/* STORE */}
-                                                    <div className="relative group/store min-w-[180px]">
+                                                    <div className="relative group/store min-w-[220px]">
                                                         {isEditing ? (
                                                             <div className="relative">
-                                                                <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none z-10" />
-                                                                <select
-                                                                    value={localData.store || ""}
-                                                                    onChange={(e) => setLocalData(prev => ({ ...prev, store: e.target.value }))}
-                                                                    className="w-full h-11 pl-10 pr-8 bg-white text-[11px] font-bold text-slate-800 outline-none appearance-none cursor-pointer rounded-xl border-2 border-slate-900 hover:border-black focus:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setOpenStoreDropdownId(openStoreDropdownId === inv.id ? null : inv.id);
+                                                                    }}
+                                                                    className="w-full h-11 pl-10 pr-4 bg-white text-[11px] font-bold text-slate-800 outline-none flex items-center justify-between rounded-xl border-2 border-slate-900 hover:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
                                                                 >
-                                                                    <option value="">Mağaza Seç</option>
-                                                                    {stores.map((store: any) => (
-                                                                        <option key={store.id} value={store.name}>{store.name}</option>
-                                                                    ))}
-                                                                </select>
-                                                                <ChevronDown size={12} className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-600" />
+                                                                    <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                                                                    <span className="truncate flex-1 text-left">{localData.store || "Mağaza Seç"}</span>
+                                                                    <ChevronDown size={14} className={cn("transition-transform duration-300", openStoreDropdownId === inv.id && "rotate-180")} />
+                                                                </button>
+
+                                                                {openStoreDropdownId === inv.id && (
+                                                                    <>
+                                                                        <div
+                                                                            className="fixed inset-0 z-[90]"
+                                                                            onClick={() => setOpenStoreDropdownId(null)}
+                                                                        />
+                                                                        <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-slate-200 rounded-[1.5rem] shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                                                            <div className="p-3 border-b border-slate-100 bg-slate-50/50">
+                                                                                <div className="relative">
+                                                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
+                                                                                    <input
+                                                                                        autoFocus
+                                                                                        value={storeSearch}
+                                                                                        onClick={(e) => e.stopPropagation()}
+                                                                                        onChange={(e) => setStoreSearch(e.target.value)}
+                                                                                        placeholder="Mağaza axtar..."
+                                                                                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-slate-400 transition-all text-[11px] font-bold"
+                                                                                    />
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className="max-h-[250px] overflow-y-auto p-1.5 scrollbar-thin">
+                                                                                <button
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        setLocalData(prev => ({ ...prev, store: "" }));
+                                                                                        setOpenStoreDropdownId(null);
+                                                                                        setStoreSearch("");
+                                                                                    }}
+                                                                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 transition-all text-[11px] font-bold text-slate-500 mb-1"
+                                                                                >
+                                                                                    Seçimi təmizlə
+                                                                                </button>
+                                                                                {stores
+                                                                                    .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                                                                                    .map((s) => (
+                                                                                        <button
+                                                                                            key={s.id}
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                setLocalData(prev => ({ ...prev, store: s.name }));
+                                                                                                setOpenStoreDropdownId(null);
+                                                                                                setStoreSearch("");
+                                                                                            }}
+                                                                                            className={cn(
+                                                                                                "w-full text-left px-3 py-2 rounded-lg transition-all text-[11px] font-bold mb-0.5",
+                                                                                                localData.store === s.name ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
+                                                                                            )}
+                                                                                        >
+                                                                                            {s.name}
+                                                                                        </button>
+                                                                                    ))}
+                                                                                {stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase())).length === 0 && (
+                                                                                    <div className="py-8 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest italic">Mağaza tapılmadı</div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         ) : (
                                                             <div className={cn(
@@ -1724,7 +1883,7 @@ export default function DashboardPage() {
                                 <Tag size={14} className="text-slate-600 group-focus-within:text-slate-900 transition-colors" />
                                 <input
                                     type="text"
-                                    placeholder="SAY"
+                                    placeholder="FAKTURA SAYI"
                                     className="w-12 outline-none text-sm font-bold bg-transparent placeholder:text-slate-300 placeholder:font-normal"
                                     value={invoiceCount}
                                     onChange={(e) => {
@@ -1754,6 +1913,12 @@ export default function DashboardPage() {
                                 )}
                             </div>
                         </div>
+                        <button
+                            onClick={addRow}
+                            className="h-11 px-6 bg-slate-900 text-white rounded-xl font-bold text-[12px] uppercase tracking-wider hover:bg-slate-800 transition-all flex items-center gap-2 shadow-lg shadow-slate-900/10 shrink-0"
+                        >
+                            <Plus size={18} /> Yeni Müştəri
+                        </button>
                     </div>
                 </div>
 

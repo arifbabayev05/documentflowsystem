@@ -17,7 +17,8 @@ import {
     CreditCard,
     ChevronRight,
     ExternalLink,
-    CheckCircle2
+    CheckCircle2,
+    Calendar
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,6 +36,7 @@ interface Invoice {
     invoiceNumber: string;
     archiveUrl?: string;
     archiveName?: string;
+    archiveRequested?: boolean;
     orders?: any[];
 }
 
@@ -66,7 +68,8 @@ export default function ArchiveDocumentsPage() {
             const filtered = (data as CustomerRow[]).filter(c =>
                 c.process_status === 'COMPLETED' ||
                 c.process_status === 'ARCHIVE_UPLOADED' ||
-                (c.details?.invoices && c.details.invoices.some(inv => inv.archiveUrl))
+                c.process_status === 'WAITING_FOR_ARCHIVE' ||
+                (c.details?.invoices && c.details.invoices.some(inv => inv.archiveUrl || (inv as any).archiveRequested))
             );
             setCustomers(filtered);
         } catch (e) {
@@ -278,9 +281,7 @@ export default function ArchiveDocumentsPage() {
                                     <div>
                                         <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-2 leading-none">{selectedCustomer.fullName}</h2>
                                         <div className="flex items-center gap-3">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{selectedCustomer.customerCode}</span>
-                                            <span className="text-slate-300">/</span>
-                                            <span className="text-[10px] font-black text-red-500 uppercase tracking-[0.2em]">{selectedCustomer.debtAmount} AZN BORC</span>
+                                            <span className="text-[12px] font-black text-slate-700 uppercase tracking-[0.2em]">Müştəri Kodu: {selectedCustomer.customerCode}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -298,82 +299,94 @@ export default function ArchiveDocumentsPage() {
                                     <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Fakturalar Və Sənədlər</h3>
                                 </div>
 
-                                {(selectedCustomer.details?.invoices || []).map((inv, idx) => {
-                                    const isUploaded = !!inv.archiveUrl;
-                                    const isCurrentUploading = uploading && selectedInvoiceId === inv.id;
+                                {(selectedCustomer.details?.invoices || [])
+                                    .filter(inv => (inv as any).archiveRequested || inv.archiveUrl)
+                                    .map((inv, idx) => {
+                                        const isUploaded = !!inv.archiveUrl;
+                                        const isCurrentUploading = uploading && selectedInvoiceId === inv.id;
 
-                                    return (
-                                        <div key={inv.id} className={cn(
-                                            "bg-white rounded-3xl border p-6 transition-all relative overflow-hidden group",
-                                            isUploaded ? "border-slate-200" : "border-slate-900 shadow-xl shadow-slate-100"
-                                        )}>
-                                            <div className="flex items-center justify-between gap-8">
-                                                <div className="flex items-center gap-5 min-w-0">
-                                                    <div className={cn(
-                                                        "h-12 w-12 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors",
-                                                        isUploaded ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-900 text-white"
-                                                    )}>
-                                                        {isUploaded ? <CheckCircle2 size={20} /> : idx + 1}
-                                                    </div>
-                                                    <div className="min-w-0">
-                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Faktura №</p>
-                                                        <h4 className="text-lg font-black text-slate-900 uppercase tracking-tight truncate">
-                                                            {inv.invoiceNumber || "---"}
-                                                        </h4>
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex items-center gap-3 shrink-0">
-                                                    {isUploaded ? (
-                                                        <>
-                                                            <a
-                                                                href={inv.archiveUrl}
-                                                                target="_blank"
-                                                                className="h-11 px-6 flex items-center gap-2.5 bg-slate-50 text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-900 hover:text-white transition-all border border-slate-200"
-                                                            >
-                                                                Sənədə Bax <ExternalLink size={14} className="opacity-40" />
-                                                            </a>
-                                                            <button
-                                                                onClick={() => handleRemoveFile(selectedCustomer, inv.id)}
-                                                                className="h-11 w-11 flex items-center justify-center text-red-400 bg-white border border-slate-200 hover:bg-red-500 hover:text-white rounded-xl transition-all"
-                                                                title="Sənədi Sil"
-                                                            >
-                                                                <Trash2 size={18} />
-                                                            </button>
-                                                        </>
-                                                    ) : (
-                                                        <label className={cn(
-                                                            "h-11 px-8 flex items-center gap-3 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all shadow-md group-hover:scale-[1.02] active:scale-95",
-                                                            isCurrentUploading ? "bg-slate-200 text-slate-500 pointer-events-none" : "bg-slate-900 text-white hover:bg-black"
+                                        return (
+                                            <div key={inv.id} className={cn(
+                                                "bg-white rounded-3xl border p-6 transition-all relative overflow-hidden group",
+                                                isUploaded ? "border-slate-200" : "border-slate-900 shadow-xl shadow-slate-100"
+                                            )}>
+                                                <div className="flex items-center justify-between gap-8">
+                                                    <div className="flex items-center gap-5 min-w-0">
+                                                        <div className={cn(
+                                                            "h-12 w-12 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors",
+                                                            isUploaded ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-900 text-white"
                                                         )}>
-                                                            {isCurrentUploading ? (
-                                                                <Loader2 size={14} className="animate-spin" />
-                                                            ) : (
-                                                                <>Sənəd Yüklə <FileUp size={14} /></>
+                                                            {isUploaded ? <CheckCircle2 size={20} /> : idx + 1}
+                                                        </div>
+                                                        <div className="min-w-0">
+                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 leading-none">Faktura №</p>
+                                                            <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tight truncate mb-3 leading-none">
+                                                                {inv.invoiceNumber || "---"}
+                                                            </h4>
+                                                            {inv.orders && inv.orders.length > 0 && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="flex items-center gap-2.5 bg-slate-100 text-slate-600 px-3.5 py-1.5 rounded-xl border border-slate-200/60 shadow-sm">
+                                                                        <Calendar size={14} className="text-slate-400" />
+                                                                        <span className="text-[11px] font-black uppercase tracking-wider">
+                                                                            Müqavilə: {inv.orders[0].contractDate || "---"}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
                                                             )}
-                                                            <input
-                                                                type="file"
-                                                                className="hidden"
-                                                                accept=".pdf"
-                                                                disabled={uploading}
-                                                                onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], inv.id)}
-                                                            />
-                                                        </label>
-                                                    )}
-                                                </div>
-                                            </div>
+                                                        </div>
+                                                    </div>
 
-                                            {isUploaded && (
-                                                <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2">
-                                                    <FileText size={12} className="text-slate-300" />
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate max-w-[400px]">
-                                                        {inv.archiveName}
-                                                    </span>
+                                                    <div className="flex items-center gap-3 shrink-0">
+                                                        {isUploaded ? (
+                                                            <>
+                                                                <a
+                                                                    href={inv.archiveUrl}
+                                                                    target="_blank"
+                                                                    className="h-11 px-6 flex items-center gap-2.5 bg-slate-50 text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-900 hover:text-white transition-all border border-slate-200"
+                                                                >
+                                                                    Sənədə Bax <ExternalLink size={14} className="opacity-40" />
+                                                                </a>
+                                                                <button
+                                                                    onClick={() => handleRemoveFile(selectedCustomer, inv.id)}
+                                                                    className="h-11 w-11 flex items-center justify-center text-red-400 bg-white border border-slate-200 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                                                                    title="Sənədi Sil"
+                                                                >
+                                                                    <Trash2 size={18} />
+                                                                </button>
+                                                            </>
+                                                        ) : (
+                                                            <label className={cn(
+                                                                "h-11 px-8 flex items-center gap-3 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all shadow-md group-hover:scale-[1.02] active:scale-95",
+                                                                isCurrentUploading ? "bg-slate-200 text-slate-500 pointer-events-none" : "bg-slate-900 text-white hover:bg-black"
+                                                            )}>
+                                                                {isCurrentUploading ? (
+                                                                    <Loader2 size={14} className="animate-spin" />
+                                                                ) : (
+                                                                    <>Sənəd Yüklə <FileUp size={14} /></>
+                                                                )}
+                                                                <input
+                                                                    type="file"
+                                                                    className="hidden"
+                                                                    accept=".pdf"
+                                                                    disabled={uploading}
+                                                                    onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], inv.id)}
+                                                                />
+                                                            </label>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+
+                                                {isUploaded && (
+                                                    <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2">
+                                                        <FileText size={12} className="text-slate-300" />
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate max-w-[400px]">
+                                                            {inv.archiveName}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
 
                                 {selectedCustomer.details?.invoices?.length === 0 && (
                                     <div className="py-20 text-center border-2 border-dashed border-slate-100 rounded-3xl">

@@ -65,6 +65,31 @@ const base64ToBlob = (base64: string, type: string) => {
     return new Blob([array], { type });
 };
 
+const normalizeAZ = (str: string | undefined) => {
+    if (!str) return "";
+    return str.toString().toLowerCase()
+        .replace(/ə/g, 'e')
+        .replace(/ı/g, 'i')
+        .replace(/i̇/g, 'i')
+        .replace(/ö/g, 'o')
+        .replace(/ü/g, 'u')
+        .replace(/ç/g, 'c')
+        .replace(/ş/g, 's')
+        .replace(/ğ/g, 'g')
+        .replace(/[^a-z0-9\s]/g, "")
+        .trim();
+};
+
+const KARABAKH_DISTRICTS = [
+    "Şuşa", "Xankəndi", "Ağdam", "Füzuli", "Cəbrayıl", "Xocavənd", "Xocalı", "Tərtər", "Ağdərə", "Laçın", "Kəlbəcər", "Zəngilan", "Qubadlı"
+];
+
+const isKarabakhAddress = (address: string | undefined) => {
+    const v = normalizeAZ(address || "");
+    if (v.includes("qarabag") || v.includes("qarabaq")) return true;
+    return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
+};
+
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -117,6 +142,7 @@ interface Customer {
             archiveUrl?: string;
             archiveBase64?: string;
             archiveName?: string;
+            archiveRequested?: boolean;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -246,7 +272,7 @@ function buildInvoiceData(
 
     // İLM rüsumu
     const hasImei = productNames.some(p => p.toLowerCase().replace(/İ/g, 'i').includes("imei"));
-    const invIlmFee = hasImei ? invPhoneCount * 47.2 : 0;
+    const invIlmFee = hasImei ? invPhoneCount * 23.6 : 0;
 
     const invTotal = invUnpaid + invPenalty + invIlmFee;
 
@@ -308,20 +334,6 @@ function buildInvoiceData(
 }
 
 // --- Components ---
-function normalizeAZ(text: string) {
-    return text
-        .toLowerCase()
-        .replace(/ə/g, "e")
-        .replace(/ı/g, "i")
-        .replace(/i̇/g, "i")
-        .replace(/ö/g, "o")
-        .replace(/ü/g, "u")
-        .replace(/ç/g, "c")
-        .replace(/ş/g, "s")
-        .replace(/ğ/g, "g")
-        .replace(/[^a-z0-9\s]/g, "")
-        .trim();
-}
 const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options, onFocus, onBlur, info }: any) => {
     return (
         <div className="space-y-1.5 group relative">
@@ -485,6 +497,9 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     CAVABDEH_MOBIL: customer.details?.phone || "",
                     CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
                     CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
+                    CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress !== customer.details.address)
+                        ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
+                        : "",
                     CAVABDEH_TAM_AD: customer.fullName || "",
                     CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
                     CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
@@ -499,7 +514,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
                     CEMI_ODENEN: paidAmount.toFixed(2),
                     DOVLET_RUSUMU: customer.details?.courtFee || "",
-                    PENYA_FAIZ: customer.details?.penaltyPercent || "1",
+                    PENYA_FAIZ: "1",
                     XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
 
                     MUQAVILE_TARIXI: customer.details?.contractDate || "",
@@ -551,7 +566,6 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     "İDM Rüsumu": ["ILM_RUSUM"],
                     "Dövlət Rüsumu": ["DOVLET_RUSUMU"],
                     "Dəbbə Pulu": ["DEBBE_PULU"],
-                    "Penya Faizi": ["PENYA_FAIZ"],
                     "Güzəşt Məbləği": ["GUZEST_MEBLEGI"],
                     "Yekun Borc (AZN)": ["UMUMI_BORC", "UMUMI_BORC_SOZLE"],
                     "Müfəttiş": ["ICRACI_AD_SOYAD"],
@@ -739,6 +753,16 @@ function GenerateDocumentContent() {
     const [postageFile, setPostageFile] = useState<{ name: string; content: string } | null>(null);
     const [isModified, setIsModified] = useState(false);
 
+    const postageRequiredCourts = ["Şərur", "Şəmkir", "Şəki", "Kürdəmir", "Babək"];
+    const isPostageRequired = useMemo(() => {
+        if (!selectedCourt) return false;
+        const normalizedSelected = normalizeAZ(selectedCourt.name).toLowerCase();
+        return postageRequiredCourts.some(keyword => {
+            const normalizedKeyword = normalizeAZ(keyword).toLowerCase();
+            return normalizedSelected.includes(normalizedKeyword);
+        });
+    }, [selectedCourt]);
+
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -768,6 +792,7 @@ function GenerateDocumentContent() {
                     typedCust.details.invoices = [{
                         id: 'def',
                         invoiceNumber: typedCust.details.contractNumber || "",
+                        archiveRequested: false,
                         orders: [{
                             id: 'o_def',
                             productDescription: typedCust.details.productDescription || "",
@@ -918,19 +943,24 @@ function GenerateDocumentContent() {
         setCustomer(prev => {
             if (!prev) return null;
             const newData = { ...prev };
+            const details = { ...(newData.details || {}) };
 
-            // Handle root level fields
             if (path === 'fullName' || path === 'customerCode' || path === 'debtAmount') {
                 (newData as any)[path] = value;
             } else {
-                const details = { ...(newData.details || {}) };
                 // Support both "details.field" and direct "field" (into details)
                 if (path.includes('.')) {
                     const parts = path.split('.');
                     const fieldName = parts[parts.length - 1];
                     (details as any)[fieldName] = value;
+                    if (fieldName === 'address' && !isKarabakhAddress(value)) {
+                        details.actualAddress = "";
+                    }
                 } else {
                     (details as any)[path] = value;
+                    if (path === 'address' && !isKarabakhAddress(value)) {
+                        details.actualAddress = "";
+                    }
                 }
                 newData.details = details;
             }
@@ -939,9 +969,9 @@ function GenerateDocumentContent() {
             if (path === 'totalUnpaid' || path === 'details.totalUnpaid') {
                 newData.debtAmount = value;
             }
-            setIsModified(true);
             return newData;
         });
+        setIsModified(true);
     }, [customer]);
 
     const updateInvoice = (invId: string, field: string, value: any) => {
@@ -1274,13 +1304,13 @@ function GenerateDocumentContent() {
         const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
 
         // 3. IDM Fee (İLM Rüsumu)
-        // If there are IMEI products, the fee should be count * 47.20
+        // If there are IMEI products, the fee should be count * 23.60
         const currentFee = parseFloat((customer.details?.fee || "0").toString().replace(',', '.'));
         let calculatedFee = currentFee;
         if (totalPhoneCount > 0) {
             // Auto-calculate if it's currently 0 or if we have a mismatch in count
-            if (currentFee === 0 || Math.abs(currentFee - (totalPhoneCount * 47.2)) > 0.01) {
-                calculatedFee = totalPhoneCount * 47.2;
+            if (currentFee === 0 || Math.abs(currentFee - (totalPhoneCount * 23.6)) > 0.01) {
+                calculatedFee = totalPhoneCount * 23.6;
             }
         } else {
             calculatedFee = 0;
@@ -1359,6 +1389,7 @@ function GenerateDocumentContent() {
         customer?.details?.discountAmount
     ]);
 
+
     const validateData = (targetTemplateName?: string) => {
         if (!customer) return false;
 
@@ -1390,8 +1421,13 @@ function GenerateDocumentContent() {
         };
 
         if (!isWarning) {
-            sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = "details.actualAddress";
             sections["Maliyyə Hesabatı"] = { "Ödənilən məbləğ": "details.paidAmount" };
+        }
+
+        // Karabakh rule always applies (even for warnings) as per user request
+        const isKarabakh = isKarabakhAddress(customer.details?.address || "");
+        if (isKarabakh) {
+            sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = "details.actualAddress";
         }
 
         const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
@@ -1472,6 +1508,25 @@ function GenerateDocumentContent() {
             setIsCourtDropdownOpen(true);
             return null;
         }
+
+        if (!silent) {
+            if (!receiptFile) {
+                toast.error("Ödəniş qəbzi (Skan) sənədini yükləməlisiniz");
+                return null;
+            }
+            if (isPostageRequired && !postageFile) {
+                toast.error(`Seçilmiş məhkəmə (${selectedCourt.name}) üçün Poçt markası sənədini yükləməlisiniz`);
+                return null;
+            }
+        }
+
+        const invoices = customer.details?.invoices || [];
+        const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
+        if (invoices.length > 0 && !allArchived) {
+            if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
+            return null;
+        }
+
         if (!silent) setIsGenerating(template.id);
 
         try {
@@ -1550,7 +1605,7 @@ function GenerateDocumentContent() {
                 UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
                 CEMI_ODENEN: paidAmount.toFixed(2),
                 DOVLET_RUSUMU: customer.details?.courtFee || "",
-                PENYA_FAIZ: customer.details?.penaltyPercent || "1",
+                PENYA_FAIZ: "1",
                 XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
 
                 MUQAVILE_TARIXI: customer.details?.contractDate || "",
@@ -1597,7 +1652,7 @@ function GenerateDocumentContent() {
             const out = doc.getZip().generate({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
             saveAs(out, fileName);
             toast.success(`${template.name} yükləndi`);
-            await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${template.name} yaradıldı`, user?.email || "system");
+            await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${template.name} yaradıldı`, user?.email || "system", "DOCUMENT", { targetId: customer.id, templateName: template.name });
             return true;
         } catch (error: any) {
             console.error("Document generation error:", error);
@@ -1712,9 +1767,30 @@ function GenerateDocumentContent() {
                                     return;
                                 }
 
-                                if (!receiptFile || !postageFile) {
-                                    toast.error("Ödəniş qəbzi və Poçt markası sənədlərini yükləməlisiniz");
+                                if (!receiptFile) {
+                                    toast.error("Ödəniş qəbzi (Skan) sənədini yükləməlisiniz");
                                     return;
+                                }
+
+                                if (isPostageRequired && !postageFile) {
+                                    toast.error(`Seçilmiş məhkəmə (${selectedCourt.name}) üçün Poçt markası sənədini yükləməlisiniz`);
+                                    return;
+                                }
+
+                                const invoices = customer.details?.invoices || [];
+                                const allArchived = invoices.length > 0 && invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
+
+                                if (invoices.length > 0 && !allArchived) {
+                                    toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir ki, ümumi çap mümkün olsun.");
+                                    return;
+                                }
+
+                                // Auto-save if modified (ensures new uploads/changes are archived before print)
+                                if (isModified) {
+                                    const saveStatusId = toast.loading("Dəyişikliklər arxivə qeyd olunur...");
+                                    const saved = await handleSave(false);
+                                    toast.dismiss(saveStatusId);
+                                    if (!saved) return;
                                 }
 
                                 const loadingId = toast.loading("Bütün sənədlər hazırlanır...");
@@ -1915,24 +1991,25 @@ function GenerateDocumentContent() {
                                 </div>
                                 <div className="space-y-3">
                                     <div className="space-y-1">
-                                        <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
-                                        <textarea
+                                        <CustomerField
+                                            label="QEYDİYYAT ÜNVANI"
+                                            path="details.address"
                                             value={customer.details?.address || ""}
-                                            onFocus={() => setFocusedField("Qeydiyyat Ünvanı")}
+                                            onChange={(v: string) => handleFieldChange("details.address", v)}
+                                            onFocus={setFocusedField}
                                             onBlur={() => setFocusedField(null)}
-                                            onChange={(e) => handleFieldChange("details.address", e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-primary/20 transition-all font-medium text-[12px] text-slate-600 shadow-sm min-h-[50px] resize-none"
                                         />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
-                                        <textarea
-                                            value={customer.details?.actualAddress || ""}
-                                            onFocus={() => setFocusedField("Faktiki Yaşayış")}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(e) => handleFieldChange("details.actualAddress", e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-primary/20 transition-all font-medium text-[12px] text-slate-600 shadow-sm min-h-[50px] resize-none"
-                                        />
+                                        {isKarabakhAddress(customer.details?.address || "") && (
+                                            <CustomerField
+                                                label="FAKTİKİ YAŞAYIŞ "
+                                                path="details.actualAddress"
+                                                value={customer.details?.actualAddress || ""}
+                                                onChange={(v: string) => handleFieldChange("details.actualAddress", v)}
+                                                onFocus={setFocusedField}
+                                                onBlur={() => setFocusedField(null)}
+                                                className="ring-2 ring-orange-500/20 rounded-xl bg-orange-50/5 mt-2"
+                                            />
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -2083,14 +2160,11 @@ function GenerateDocumentContent() {
                                         <CustomerField label="Əsas borca ödənilməmiş məbləğ" info="Alqı-satqı qiyməti - Əsas borca ödənilmiş məbləğ." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
-                                        <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 47.20)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
+                                        <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 23.60)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
                                         <CustomerField label="Dövlət Rüsumu" info="Məhkəmə dövlət rüsumu məbləği." value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <CustomerField label="Cərimə" info="Əsas borca ödənilməmiş məbləğ * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
-                                        <CustomerField label="Penya Faizi" info="Müqavilə üzrə günlük gecikmə faizi." value={customer.details?.penaltyPercent} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penaltyPercent", v)} />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
                                         <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
                                     {/* File Uploads - Mandatory for Print */}
@@ -2105,7 +2179,9 @@ function GenerateDocumentContent() {
                                             {/* Receipt Upload */}
                                             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                                                 <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Ödəniş Qəbzi (Skan)</p>
+                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                                                        Ödəniş Qəbzi (Skan) <span className="text-red-500">*</span>
+                                                    </p>
                                                     {receiptFile && <CheckCircle2 size={16} className="text-emerald-500" />}
                                                 </div>
                                                 <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
@@ -2141,42 +2217,46 @@ function GenerateDocumentContent() {
                                             </div>
 
                                             {/* Postage Stamp Upload */}
-                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                                                <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Poçt Markası Sənədi</p>
-                                                    {postageFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                            {isPostageRequired && (
+                                                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                                                            Poçt Markası Sənədi <span className="text-red-500">*</span>
+                                                        </p>
+                                                        {postageFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                                    </div>
+                                                    <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
+                                                        <input
+                                                            type="file"
+                                                            className="hidden"
+                                                            accept="image/*,.pdf"
+                                                            onChange={(e) => {
+                                                                const file = e.target.files?.[0];
+                                                                if (file) {
+                                                                    const reader = new FileReader();
+                                                                    reader.onloadend = () => {
+                                                                        setPostageFile({ name: file.name, content: reader.result as string });
+                                                                        setIsModified(true);
+                                                                    };
+                                                                    reader.readAsDataURL(file);
+                                                                }
+                                                            }}
+                                                        />
+                                                        {postageFile ? (
+                                                            <div className="flex items-center gap-3 p-2">
+                                                                <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
+                                                                <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{postageFile.name}</span>
+                                                                <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <FileUp size={20} className="text-slate-300" />
+                                                                <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
+                                                            </div>
+                                                        )}
+                                                    </label>
                                                 </div>
-                                                <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
-                                                    <input
-                                                        type="file"
-                                                        className="hidden"
-                                                        accept="image/*,.pdf"
-                                                        onChange={(e) => {
-                                                            const file = e.target.files?.[0];
-                                                            if (file) {
-                                                                const reader = new FileReader();
-                                                                reader.onloadend = () => {
-                                                                    setPostageFile({ name: file.name, content: reader.result as string });
-                                                                    setIsModified(true);
-                                                                };
-                                                                reader.readAsDataURL(file);
-                                                            }
-                                                        }}
-                                                    />
-                                                    {postageFile ? (
-                                                        <div className="flex items-center gap-3 p-2">
-                                                            <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
-                                                            <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{postageFile.name}</span>
-                                                            <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex flex-col items-center gap-1">
-                                                            <FileUp size={20} className="text-slate-300" />
-                                                            <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
-                                                        </div>
-                                                    )}
-                                                </label>
-                                            </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
