@@ -326,7 +326,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
     return (
         <div className="space-y-1.5 group relative">
             <div className="flex items-center gap-1.5">
-                <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] ml-1 transition-colors group-focus-within:text-primary">
+                <label className="flex items-center gap-2 text-[10px] font-black text-slate-600 uppercase tracking-[0.1em] ml-1 transition-colors group-focus-within:text-primary">
                     {label}
                 </label>
                 {info && (
@@ -642,7 +642,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
             {isRendering && (
                 <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
                     <Loader2 className="animate-spin text-primary opacity-30" size={32} />
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sənəd Hazırlanır...</p>
+                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Sənəd Hazırlanır...</p>
                 </div>
             )}
 
@@ -1645,7 +1645,7 @@ function GenerateDocumentContent() {
                             </div>
                             <div>
                                 <h1 className="text-lg font-black text-slate-800 uppercase tracking-tight leading-none">{customer.fullName}</h1>
-                                <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1.5 flex items-center gap-2">
+                                <p className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em] mt-1.5 flex items-center gap-2">
                                     <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-500">KOD: {customer.customerCode}</span>
                                 </p>
                             </div>
@@ -1860,7 +1860,7 @@ function GenerateDocumentContent() {
                                     <div className="h-6 w-6 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
                                         <User size={12} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em]">Şəxsi Məlumatlar</h4>
+                                    <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Şəxsi Məlumatlar</h4>
                                 </div>
                                 <div className="space-y-3">
                                     <CustomerField label="SOYAD AD ATA ADI" icon={User} value={customer.fullName} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("fullName", v)} />
@@ -1911,11 +1911,11 @@ function GenerateDocumentContent() {
                                     <div className="h-6 w-6 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
                                         <MapPin size={12} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.15em]">Ünvan Məlumatları</h4>
+                                    <h4 className="text-[10px] font-black text-red-700 uppercase tracking-[0.15em]">Ünvan Məlumatları</h4>
                                 </div>
                                 <div className="space-y-3">
                                     <div className="space-y-1">
-                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
+                                        <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1">Qeydiyyat Ünvanı</label>
                                         <textarea
                                             value={customer.details?.address || ""}
                                             onFocus={() => setFocusedField("Qeydiyyat Ünvanı")}
@@ -1925,7 +1925,7 @@ function GenerateDocumentContent() {
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
+                                        <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1">Faktiki Yaşayış Ünvanı</label>
                                         <textarea
                                             value={customer.details?.actualAddress || ""}
                                             onFocus={() => setFocusedField("Faktiki Yaşayış")}
@@ -1944,7 +1944,7 @@ function GenerateDocumentContent() {
                                         <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
                                             <Box size={14} className="stroke-[2.5px]" />
                                         </div>
-                                        <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Sifariş Detalları</h4>
+                                        <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Sifariş Detalları</h4>
                                     </div>
                                     <button
                                         onClick={addInvoice}
@@ -1960,7 +1960,7 @@ function GenerateDocumentContent() {
                                             {/* Invoice Header */}
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="flex items-center gap-3 flex-1">
-                                                    <div className="h-8 w-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-400 text-[10px] shadow-sm">
+                                                    <div className="h-8 w-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-600 text-[10px] shadow-sm">
                                                         {idx + 1}
                                                     </div>
                                                     <input
@@ -1984,7 +1984,7 @@ function GenerateDocumentContent() {
                                                     <div key={ord.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-3 group/ord">
                                                         <div className="flex items-center justify-between gap-3">
                                                             <div className="flex-1">
-                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-0.5 block">MƏHSUL ADI</label>
+                                                                <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1 mb-0.5 block">MƏHSUL ADI</label>
                                                                 <input
                                                                     value={ord.productDescription}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
@@ -2002,7 +2002,7 @@ function GenerateDocumentContent() {
 
                                                         <div className="grid grid-cols-4 gap-2">
                                                             <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Müddət</label>
+                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Müddət</label>
                                                                 <input
                                                                     value={ord.paymentPeriod}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
@@ -2010,7 +2010,7 @@ function GenerateDocumentContent() {
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">İlkin</label>
+                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">İlkin</label>
                                                                 <input
                                                                     value={ord.initialPayment}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
@@ -2018,7 +2018,7 @@ function GenerateDocumentContent() {
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Aylıq</label>
+                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Aylıq</label>
                                                                 <input
                                                                     value={ord.monthlyPayment}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
@@ -2026,7 +2026,7 @@ function GenerateDocumentContent() {
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center block">Ödənilən</label>
+                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Ödənilən</label>
                                                                 <input
                                                                     value={ord.paidAmount}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
@@ -2038,7 +2038,7 @@ function GenerateDocumentContent() {
                                                         <div className="pt-2 border-t border-slate-50 flex items-center justify-between">
                                                             <span className="text-[9px] font-bold text-primary tracking-tight">Cəm: {ord.totalPrice} ₼</span>
                                                             <div className="flex items-center gap-1">
-                                                                <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest px-1">Tarix</label>
+                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest px-1">Tarix</label>
                                                                 <input
                                                                     value={ord.contractDate}
                                                                     onChange={(e) => {
@@ -2056,7 +2056,7 @@ function GenerateDocumentContent() {
                                                 ))}
                                                 <button
                                                     onClick={() => addOrder(inv.id)}
-                                                    className="w-full py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 text-[9px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
+                                                    className="w-full py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-600 text-[9px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
                                                 >
                                                     <Plus size={12} /> Məhsul Əlavə Et
                                                 </button>
@@ -2072,7 +2072,7 @@ function GenerateDocumentContent() {
                                     <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
                                         <DollarSign size={14} className="stroke-[2.5px]" />
                                     </div>
-                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Maliyyə Hesabatı</h4>
+                                    <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Maliyyə Hesabatı</h4>
                                 </div>
                                 <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
                                     <div className="grid grid-cols-2 gap-4">
@@ -2099,7 +2099,7 @@ function GenerateDocumentContent() {
                                             <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
                                                 <FileUp size={14} className="stroke-[2.5px]" />
                                             </div>
-                                            <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Məcburi Sənədlər</h4>
+                                            <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Məcburi Sənədlər</h4>
                                         </div>
                                         <div className="grid grid-cols-1 gap-4">
                                             {/* Receipt Upload */}
@@ -2128,13 +2128,13 @@ function GenerateDocumentContent() {
                                                     {receiptFile ? (
                                                         <div className="flex items-center gap-3 p-2">
                                                             <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
-                                                            <span className="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">{receiptFile.name}</span>
+                                                            <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{receiptFile.name}</span>
                                                             <button onClick={(e) => { e.preventDefault(); setReceiptFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col items-center gap-1">
                                                             <FileUp size={20} className="text-slate-300" />
-                                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fayl Seç</span>
+                                                            <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
                                                         </div>
                                                     )}
                                                 </label>
@@ -2166,13 +2166,13 @@ function GenerateDocumentContent() {
                                                     {postageFile ? (
                                                         <div className="flex items-center gap-3 p-2">
                                                             <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
-                                                            <span className="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">{postageFile.name}</span>
+                                                            <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{postageFile.name}</span>
                                                             <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col items-center gap-1">
                                                             <FileUp size={20} className="text-slate-300" />
-                                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fayl Seç</span>
+                                                            <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
                                                         </div>
                                                     )}
                                                 </label>

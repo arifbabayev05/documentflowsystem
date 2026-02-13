@@ -728,50 +728,57 @@ const CustomerCard = memo(({
 
     return (
         <div className="flex items-stretch gap-4 group/row">
-            {/* DATE ON THE LEFT OUTSIDE CARD */}
-            <div className="hidden lg:flex flex-col gap-2 shrink-0 w-[120px] transition-all opacity-90 group-hover/row:opacity-100 cursor-default">
-                {/* Creation Time Card */}
-                {row.createdAt && (() => {
-                    const { date, time } = formatDateTime(row.createdAt);
+            {/* ════ LEFT TIMELINE PANEL ════ */}
+            <div className="hidden lg:flex flex-col shrink-0 w-[130px] relative pt-2 pb-4 pr-1 opacity-60 group-hover/row:opacity-100 transition-opacity">
+                {/* Vertical Connector Line */}
+                <div className="absolute left-[21px] top-6 bottom-6 w-[1.5px] bg-slate-100 rounded-full" />
 
-                    return (
-                        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm text-center">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
-                                Daxil Edilib
-                            </span>
-                            <div className="flex flex-col items-center leading-none">
-                                <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                    {date}
-                                </span>
-                                <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                    {time}
-                                </span>
+                <div className="space-y-6 relative">
+                    {/* 1. CREATION EVENT */}
+                    {row.createdAt && (() => {
+                        const { date, time } = formatDateTime(row.createdAt);
+                        return (
+                            <div className="relative pl-9 group/item">
+                                {/* Timeline Dot/Icon */}
+                                <div className="absolute left-[13px] top-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10 transition-all group-hover/item:border-blue-400 group-hover/item:shadow-[0_0_0_4px_rgba(59,130,246,0.05)]">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-200 transition-all group-hover/item:bg-blue-400" />
+                                </div>
+
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.15em] transition-colors">
+                                        Daxil
+                                    </span>
+                                    <div className="flex flex-col leading-none gap-1 opacity-70 group-hover/item:opacity-100 transition-opacity">
+                                        <span className="text-[9px] font-bold text-slate-600 tracking-tight">{date}</span>
+                                        <span className="text-[8px] font-medium text-slate-400 tracking-tighter">{time}</span>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    );
-                })()}
+                        );
+                    })()}
 
-                {/* Assignment Time Card */}
-                {row.assignedAt && (() => {
-                    const { date, time } = formatDateTime(row.assignedAt);
+                    {/* 2. ASSIGNMENT EVENT */}
+                    {row.assignedAt && (() => {
+                        const { date, time } = formatDateTime(row.assignedAt);
+                        return (
+                            <div className="relative pl-9 group/item">
+                                <div className="absolute left-[13px] top-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10 transition-all group-hover/item:border-amber-400 group-hover/item:shadow-[0_0_0_4px_rgba(245,158,11,0.05)]">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-200 transition-all group-hover/item:bg-amber-400" />
+                                </div>
 
-                    return (
-                        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm border-l-slate-400 border-l-[3px] text-center">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
-                                Təyinat Edilib
-                            </span>
-                            <div className="flex flex-col items-center leading-none">
-                                <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                    {date}
-                                </span>
-                                <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                    {time}
-                                </span>
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.15em] transition-colors">
+                                        Təyinat
+                                    </span>
+                                    <div className="flex flex-col leading-none gap-1 opacity-70 group-hover/item:opacity-100 transition-opacity">
+                                        <span className="text-[9px] font-bold text-slate-600 tracking-tight">{date}</span>
+                                        <span className="text-[8px] font-medium text-slate-400 tracking-tighter">{time}</span>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    );
-                })()}
-
+                        );
+                    })()}
+                </div>
             </div>
 
             {/* MAIN CARD */}
@@ -810,32 +817,48 @@ const CustomerCard = memo(({
                                         placeholder="SOYAD AD ATA ADI"
                                     />
                                 ) : (
-                                    <div className="flex items-center gap-4">
-                                        <h3 className="text-[17px] font-black text-slate-900  tracking-tight leading-none truncate group-hover:text-primary transition-colors">
-                                            {row.fullName || "YENİ MÜŞTƏRİ"}
-                                        </h3>
-                                        {(() => {
-                                            const invoices = row.details?.invoices || [];
-                                            const invCount = invoices.length;
-                                            let prodCount = 0;
-                                            invoices.forEach(inv => {
-                                                inv.orders?.forEach(ord => {
-                                                    prodCount += (ord.phoneCount || 0);
-                                                });
-                                            });
+                                    <div className="flex flex-col gap-2">
+                                        <div className="flex items-center gap-3">
+                                            <h3 className="text-[18px] font-black text-slate-900 tracking-tight leading-none truncate group-hover:text-primary transition-colors">
+                                                {row.fullName || "YENİ MÜŞTƏRİ"}
+                                            </h3>
 
-                                            if (invCount === 0) return null;
-
-                                            return (
-                                                <div className="flex items-center gap-2 bg-slate-900/[0.03] text-slate-600 border border-slate-200/60 px-2.5 py-1 rounded-lg shrink-0">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-[10px] font-black uppercase tracking-wider">{invCount} Faktura</span>
-                                                        <div className="w-1 h-1 rounded-full bg-slate-300" />
-                                                        <span className="text-[10px] font-black uppercase tracking-wider">{prodCount} Məhsul</span>
-                                                    </div>
+                                            {/* Status Badge */}
+                                            {row.process_status && STATUS_LABELS[row.process_status] && (
+                                                <div className={cn(
+                                                    "px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider border",
+                                                    STATUS_LABELS[row.process_status].bg,
+                                                    STATUS_LABELS[row.process_status].color.replace('text-', 'border-').replace('600', '200'),
+                                                    STATUS_LABELS[row.process_status].color
+                                                )}>
+                                                    {STATUS_LABELS[row.process_status].label}
                                                 </div>
-                                            );
-                                        })()}
+                                            )}
+                                        </div>
+
+                                        <div className="flex items-center gap-3">
+
+                                            {(() => {
+                                                const invoices = row.details?.invoices || [];
+                                                const invCount = invoices.length;
+                                                let prodCount = 0;
+                                                invoices.forEach(inv => {
+                                                    prodCount += (inv.orders?.length || 0);
+                                                });
+
+                                                if (invCount === 0) return null;
+
+                                                return (
+                                                    <div className="flex items-center gap-2 bg-slate-900/[0.03] text-slate-600 border border-slate-200/60 px-2.5 py-1 rounded-lg shrink-0">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="text-[10px] font-black uppercase tracking-wider">{invCount} Faktura</span>
+                                                            <div className="w-1 h-1 rounded-full bg-slate-300" />
+                                                            <span className="text-[10px] font-black uppercase tracking-wider">{prodCount} Məhsul</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -1364,13 +1387,13 @@ const CustomerCard = memo(({
             </div>
 
             {/* RIGHT SIDE PANEL - Assignment, Store & status */}
-            <div className="w-[180px] shrink-0 flex flex-col gap-2 self-start" onClick={(e) => e.stopPropagation()}>
+            <div className="w-[180px] shrink-0 flex flex-col gap-2 self-start opacity-70 hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                 {/* ASSIGNMENT - Only for Manager/Admin */}
                 {can('action_assignment') && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-2">
-                        <div className="flex items-center gap-2 mb-2">
-                            <UserPlus size={12} className="text-purple-500" />
-                            <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Təyinat</span>
+                    <div className="px-2 py-1.5">
+                        <div className="flex items-center gap-2 mb-1.5 opacity-40">
+                            <UserPlus size={10} />
+                            <span className="text-[8px] font-bold uppercase tracking-wider">Təyinat</span>
                         </div>
                         <div className="relative group/sel">
                             <select
@@ -1393,25 +1416,23 @@ const CustomerCard = memo(({
                                         error: 'Xəta baş verdi'
                                     });
                                 }}
-                                className="w-full bg-slate-50 text-[11px] font-semibold text-slate-800 outline-none appearance-none cursor-pointer pr-6 pl-2 py-1.5 rounded-lg border border-slate-500 hover:border-slate-300 transition-colors"
+                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-700 outline-none appearance-none cursor-pointer pr-6 pl-2.5 py-2 rounded-lg border border-slate-200 hover:border-slate-300 transition-all shadow-sm focus:border-purple-400"
                             >
                                 <option value="">Seçilməyib</option>
                                 {appUsers.map((u: any) => (
                                     <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
                                 ))}
                             </select>
-                            <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-600" />
+                            <ChevronDown size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
                         </div>
                     </div>
                 )}
 
-
-
                 {/* STATUS */}
-                <div className="bg-white rounded-xl border border-slate-200 p-2">
-                    <div className="flex items-center gap-2 mb-2">
-                        <div className="h-2 w-2 rounded-full bg-slate-400" />
-                        <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Status</span>
+                <div className="px-2 py-1.5">
+                    <div className="flex items-center gap-1.5 mb-1.5 opacity-40">
+                        <div className="h-1 w-1 rounded-full bg-slate-400" />
+                        <span className="text-[8px] font-bold uppercase tracking-wider">Status</span>
                     </div>
                     {isEditing && can('action_status_change') ? (
                         <div className="relative group/sel">
@@ -1427,26 +1448,25 @@ const CustomerCard = memo(({
                                     }
                                     setLocalData(prev => ({ ...prev, process_status: newStatus }));
                                 }}
-                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-800 outline-none appearance-none cursor-pointer pr-5 pl-2 py-1.5 rounded-lg border border-slate-500 hover:border-slate-300 transition-colors"
+                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-700 outline-none appearance-none cursor-pointer pr-5 pl-2.5 py-2 rounded-lg border border-slate-200 hover:border-slate-300 transition-all shadow-sm"
                             >
                                 {STATUS_ORDER.map(status => (
                                     <option key={status} value={status}>{STATUS_LABELS[status].label}</option>
                                 ))}
                             </select>
-                            <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-600" />
+                            <ChevronDown size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
                         </div>
                     ) : (
                         <div className={cn(
-                            "px-2 py-1 rounded-lg border text-[9px] font-bold uppercase tracking-wider text-center",
-                            localData.process_status ? STATUS_LABELS[localData.process_status].bg : "bg-slate-50",
-                            localData.process_status ? STATUS_LABELS[localData.process_status].color : "text-slate-600",
-                            localData.process_status ? `border-current/5` : "border-slate-500"
+                            "w-full px-2.5 py-2 rounded-lg border text-[9px] font-black uppercase tracking-wider transition-all shadow-sm text-center",
+                            row.process_status && STATUS_LABELS[row.process_status]
+                                ? `${STATUS_LABELS[row.process_status].bg} ${STATUS_LABELS[row.process_status].color} ${STATUS_LABELS[row.process_status].color.replace('text-', 'border-').replace('600', '100')}`
+                                : "bg-white text-slate-400 border-slate-100"
                         )}>
-                            {localData.process_status ? STATUS_LABELS[localData.process_status].label : "Daxil Edilməyib"}
+                            {row.process_status ? STATUS_LABELS[row.process_status].label : "Daxil Edilib"}
                         </div>
                     )}
                 </div>
-
 
                 {/* ARCHIVE BUTTON - Only if COMPLETED and can archive */}
                 {row.process_status === 'COMPLETED' && can('archive_manage') && (
@@ -1466,8 +1486,6 @@ const CustomerCard = memo(({
                         <FolderArchive size={14} /> Arxivə göndər
                     </button>
                 )}
-
-
             </div>
         </div>
     );
@@ -1739,7 +1757,7 @@ export default function DashboardPage() {
                 </div>
 
                 {/* 2. CARD LIST */}
-                <div className="grid grid-cols-1 gap-3 mt-4">
+                <div className="grid grid-cols-1 gap-6 mt-6 pb-20">
                     {filteredRows.map((row, idx) => (
                         <CustomerCard
                             // Important: use a unique key if possible, but fallback to idx for stability if id is missing on new rows
