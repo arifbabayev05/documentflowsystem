@@ -59,6 +59,7 @@ export default function ParametersPage() {
     const { user, can } = useAuth();
     const [courts, setCourts] = useState<Court[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
+    const [searchTerm, setSearchTerm] = useState("");
 
     if (!user || !can("parameters_manage")) {
         return (
@@ -247,226 +248,287 @@ export default function ParametersPage() {
                         <h1 className="text-3xl lg:text-4xl font-black text-slate-800 tracking-tight">Parametrlər</h1>
                         <p className="text-slate-500 font-medium text-sm lg:text-base italic">Sistem üzrə məlumatların və şablon dəyişənlərinin tənzimlənməsi</p>
                     </div>
+
+                    {/* Global Search Bar */}
+                    <div className="relative group w-full lg:w-[400px]">
+                        <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                            <div className="h-2 w-2 rounded-full bg-primary/20 mr-3 animate-pulse" />
+                        </div>
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Mağaza və ya məhkəmə axtar..."
+                            className="w-full h-14 pl-14 pr-6 bg-white border-2 border-slate-300 rounded-2xl outline-none focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all font-bold text-sm text-slate-800 placeholder:text-slate-400 placeholder:font-medium soft-shadow"
+                        />
+                        {searchTerm && (
+                            <button
+                                onClick={() => setSearchTerm("")}
+                                className="absolute inset-y-0 right-5 flex items-center text-slate-300 hover:text-slate-500 transition-colors"
+                            >
+                                <X size={18} />
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
 
-                    {/* Stores Section */}
-                    <div className="lg:col-span-12">
-                        <div className="bg-white rounded-[2.5rem] border border-blue-50 soft-shadow overflow-hidden">
-                            <div className="p-8 lg:p-12 border-b border-blue-50 flex items-center justify-between bg-slate-50/30">
-                                <div className="flex items-center gap-4">
-                                    <div className="h-12 w-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shadow-sm border border-emerald-100">
-                                        <Store size={24} />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Mağazalar</h3>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Cəmi {stores.length} qeydiyyat</p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => handleOpenStoreModal()}
-                                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
-                                >
-                                    <Plus size={16} />
-                                    Mağaza Əlavə Et
-                                </button>
-                            </div>
+                    {/* Filtered Data Logic */}
+                    {(() => {
+                        const lowerSearch = searchTerm.toLowerCase();
+                        const filteredStores = stores.filter(s => s.name.toLowerCase().includes(lowerSearch));
+                        const filteredCourts = courts.filter(c =>
+                            c.name.toLowerCase().includes(lowerSearch) ||
+                            c.address.toLowerCase().includes(lowerSearch)
+                        );
 
-                            <div className="p-4 lg:p-8">
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                    {stores.length === 0 ? (
-                                        <div className="col-span-full py-20 text-center text-slate-400">
-                                            <p className="font-bold uppercase tracking-widest text-xs">Heç bir mağaza tapılmadı</p>
-                                        </div>
-                                    ) : (
-                                        stores.map((store) => (
-                                            <div key={store.id} className="bg-white rounded-2xl border border-slate-100 p-5 soft-shadow hover:border-emerald-200 transition-all group relative">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                        <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0">
-                                                            <Store size={18} />
-                                                        </div>
-                                                        <h4 className="font-black text-slate-800 text-sm leading-tight truncate">{store.name}</h4>
+                        return (
+                            <>
+                                {/* Stores Section (Only show if search term is empty or there are results) */}
+                                {(searchTerm === "" || filteredStores.length > 0) && (
+                                    <div className="lg:col-span-12">
+                                        <div className="bg-white rounded-[2.5rem] border border-blue-50 soft-shadow overflow-hidden">
+                                            <div className="p-8 lg:p-12 border-b border-blue-50 flex items-center justify-between bg-slate-50/30">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-12 w-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shadow-sm border border-emerald-100">
+                                                        <Store size={24} />
                                                     </div>
-                                                    <div className="flex gap-1.5 shrink-0">
-                                                        <button
-                                                            onClick={() => handleOpenStoreModal(store)}
-                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 flex items-center justify-center transition-all border border-slate-100"
-                                                        >
-                                                            <Edit2 size={12} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteStore(store.id)}
-                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-all border border-slate-100"
-                                                        >
-                                                            <Trash2 size={12} />
-                                                        </button>
+                                                    <div>
+                                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Mağazalar</h3>
+                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                                                            {searchTerm ? `Axtarış üzrə ${filteredStores.length} nəticə` : `Cəmi ${stores.length} qeydiyyat`}
+                                                        </p>
                                                     </div>
                                                 </div>
+                                                <button
+                                                    onClick={() => handleOpenStoreModal()}
+                                                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
+                                                >
+                                                    <Plus size={16} />
+                                                    Mağaza Əlavə Et
+                                                </button>
                                             </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* Courts Section */}
-                    <div className="lg:col-span-12">
-                        <div className="bg-white rounded-[2.5rem] border border-blue-50 soft-shadow overflow-hidden">
-                            <div className="p-8 lg:p-12 border-b border-blue-50 flex items-center justify-between bg-slate-50/30">
-                                <div className="flex items-center gap-4">
-                                    <div className="h-12 w-12 bg-primary/10 text-primary rounded-2xl flex items-center justify-center shadow-sm border border-primary/10">
-                                        <Scale size={24} />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Məhkəmələr</h3>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Cəmi {courts.length} qeydiyyat</p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => handleOpenCourtModal()}
-                                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
-                                >
-                                    <Plus size={16} />
-                                    Məhkəmə Əlavə Et
-                                </button>
-                            </div>
-
-                            <div className="p-4 lg:p-8">
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {courts.length === 0 ? (
-                                        <div className="col-span-full py-20 text-center text-slate-400">
-                                            <p className="font-bold uppercase tracking-widest text-xs">Heç bir məhkəmə tapılmadı</p>
-                                        </div>
-                                    ) : (
-                                        courts.map((court) => (
-                                            <div key={court.id} className="bg-white rounded-[2rem] border border-slate-100 p-6 soft-shadow hover:border-primary/20 transition-all group relative">
-                                                <div className="space-y-4">
-                                                    <h4 className="font-black text-slate-800 text-lg leading-tight uppercase tracking-tight pr-10">{court.name}</h4>
-
-                                                    <div className="space-y-3">
-                                                        <div className="flex items-start gap-2.5">
-                                                            <MapPin size={14} className="text-slate-400 mt-1 shrink-0" />
-                                                            <p className="text-[11px] font-bold text-slate-600 leading-relaxed">{court.address}</p>
+                                            <div className="p-4 lg:p-8">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                                    {filteredStores.length === 0 ? (
+                                                        <div className="col-span-full py-20 text-center text-slate-400">
+                                                            <p className="font-bold uppercase tracking-widest text-xs">Axtarışa uyğun mağaza tapılmadı</p>
                                                         </div>
-                                                        <div className="flex items-center gap-2.5">
-                                                            <Phone size={14} className="text-slate-400 shrink-0" />
-                                                            <p className="text-[11px] font-bold text-slate-600">{court.phone}</p>
-                                                        </div>
-                                                        {court.fax && (
-                                                            <div className="flex items-center gap-2.5">
-                                                                <Printer size={14} className="text-slate-400 shrink-0" />
-                                                                <p className="text-[11px] font-bold text-slate-600">{court.fax}</p>
+                                                    ) : (
+                                                        filteredStores.map((store) => (
+                                                            <div key={store.id} className="bg-white rounded-2xl border border-slate-100 p-5 soft-shadow hover:border-emerald-200 transition-all group relative">
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                                        <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0">
+                                                                            <Store size={18} />
+                                                                        </div>
+                                                                        <h4 className="font-black text-slate-800 text-sm leading-tight truncate">{store.name}</h4>
+                                                                    </div>
+                                                                    <div className="flex gap-1.5 shrink-0">
+                                                                        <button
+                                                                            onClick={() => handleOpenStoreModal(store)}
+                                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 flex items-center justify-center transition-all border border-slate-100"
+                                                                        >
+                                                                            <Edit2 size={12} />
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => handleDeleteStore(store.id)}
+                                                                            className="h-7 w-7 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-all border border-slate-100"
+                                                                        >
+                                                                            <Trash2 size={12} />
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                <div className="absolute top-6 right-6 flex flex-col gap-2">
-                                                    <button
-                                                        onClick={() => handleOpenCourtModal(court)}
-                                                        className="h-8 w-8 rounded-lg bg-slate-50 text-slate-400 hover:text-primary hover:bg-blue-50 flex items-center justify-center transition-all border border-slate-100"
-                                                    >
-                                                        <Edit2 size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteCourt(court.id)}
-                                                        className="h-8 w-8 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-all border border-slate-100"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                                        ))
+                                                    )}
                                                 </div>
                                             </div>
-                                        ))
-                                    )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Courts Section (Only show if search term is empty or there are results) */}
+                                {(searchTerm === "" || filteredCourts.length > 0) && (
+                                    <div className="lg:col-span-12">
+                                        <div className="bg-white rounded-[2.5rem] border border-blue-50 soft-shadow overflow-hidden">
+                                            <div className="p-8 lg:p-12 border-b border-blue-50 flex items-center justify-between bg-slate-50/30">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-12 w-12 bg-primary/10 text-primary rounded-2xl flex items-center justify-center shadow-sm border border-primary/10">
+                                                        <Scale size={24} />
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Məhkəmələr</h3>
+                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                                                            {searchTerm ? `Axtarış üzrə ${filteredCourts.length} nəticə` : `Cəmi ${courts.length} qeydiyyat`}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleOpenCourtModal()}
+                                                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
+                                                >
+                                                    <Plus size={16} />
+                                                    Məhkəmə Əlavə Et
+                                                </button>
+                                            </div>
+
+                                            <div className="p-4 lg:p-8">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                                    {filteredCourts.length === 0 ? (
+                                                        <div className="col-span-full py-20 text-center text-slate-400">
+                                                            <p className="font-bold uppercase tracking-widest text-xs">Axtarışa uyğun məhkəmə tapılmadı</p>
+                                                        </div>
+                                                    ) : (
+                                                        filteredCourts.map((court) => (
+                                                            <div key={court.id} className="bg-white rounded-[2rem] border border-slate-100 p-6 soft-shadow hover:border-primary/20 transition-all group relative">
+                                                                <div className="space-y-4">
+                                                                    <h4 className="font-black text-slate-800 text-lg leading-tight uppercase tracking-tight pr-10">{court.name}</h4>
+
+                                                                    <div className="space-y-3">
+                                                                        <div className="flex items-start gap-2.5">
+                                                                            <MapPin size={14} className="text-slate-400 mt-1 shrink-0" />
+                                                                            <p className="text-[11px] font-bold text-slate-600 leading-relaxed">{court.address}</p>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2.5">
+                                                                            <Phone size={14} className="text-slate-400 shrink-0" />
+                                                                            <p className="text-[11px] font-bold text-slate-600">{court.phone}</p>
+                                                                        </div>
+                                                                        {court.fax && (
+                                                                            <div className="flex items-center gap-2.5">
+                                                                                <Printer size={14} className="text-slate-400 shrink-0" />
+                                                                                <p className="text-[11px] font-bold text-slate-600">{court.fax}</p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="absolute top-6 right-6 flex flex-col gap-2">
+                                                                    <button
+                                                                        onClick={() => handleOpenCourtModal(court)}
+                                                                        className="h-8 w-8 rounded-lg bg-slate-50 text-slate-400 hover:text-primary hover:bg-blue-50 flex items-center justify-center transition-all border border-slate-100"
+                                                                    >
+                                                                        <Edit2 size={14} />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteCourt(court.id)}
+                                                                        className="h-8 w-8 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-all border border-slate-100"
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Global "No Results" Message */}
+                                {searchTerm !== "" && filteredStores.length === 0 && filteredCourts.length === 0 && (
+                                    <div className="lg:col-span-12 py-20 bg-white rounded-[2.5rem] border border-blue-50 text-center soft-shadow">
+                                        <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                                            <X size={32} />
+                                        </div>
+                                        <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">Nəticə Tapılmadı</h4>
+                                        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] mt-2">
+                                            "{searchTerm}" axtarışına uyğun heç bir məlumat tapılmadı
+                                        </p>
+                                    </div>
+                                )}
+                            </>
+                        )
+                    })()}
+
+
+                    {/* Company Info Section (Show only if search is empty) */}
+                    {searchTerm === "" && (
+                        <div className="lg:col-span-12">
+                            <div className="bg-white rounded-[2.5rem] border border-blue-50 p-8 lg:p-12 soft-shadow relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-12 opacity-[0.02] pointer-events-none">
+                                    <Building2 size={240} />
+                                </div>
+
+                                <div className="flex items-center justify-between mb-10 relative z-10">
+                                    <div className="flex items-center gap-4">
+                                        <div className="h-12 w-12 bg-blue-50 text-primary rounded-2xl flex items-center justify-center shadow-sm border border-blue-50">
+                                            <Building2 size={24} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Şirkət Məlumatları</h3>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Sənədlərdə İddiaçı hissəsi üçün</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={handleSaveSettings}
+                                        disabled={isSavingSettings}
+                                        className="flex items-center gap-2 px-8 py-4 bg-primary hover:bg-primary/95 text-white rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                                    >
+                                        {isSavingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                                        Yadda Saxla
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 relative z-10">
+                                    <div className="space-y-2 md:col-span-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">İddiaçının Tam Adı</label>
+                                        <input
+                                            value={companyInfo.companyName || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, companyName: e.target.value })}
+                                            placeholder="Məs: 'ABC TELECOM' Məhdud Məsuliyyətli Cəmiyyəti"
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndə</label>
+                                        <input
+                                            value={companyInfo.representative || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, representative: e.target.value })}
+                                            placeholder="Məs: Süleymanlı Rauf Xudayar oğlu..."
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndənin FİN Kodu</label>
+                                        <input
+                                            value={companyInfo.representativeFin || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, representativeFin: e.target.value })}
+                                            placeholder="Məs: 0WY0TVF"
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-2 md:col-span-3">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Hüquqi Ünvan</label>
+                                        <input
+                                            value={companyInfo.address || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, address: e.target.value })}
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Telefon</label>
+                                        <input
+                                            value={companyInfo.phone || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })}
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Faks</label>
+                                        <input
+                                            value={companyInfo.fax || ""}
+                                            onChange={(e) => setCompanyInfo({ ...companyInfo, fax: e.target.value })}
+                                            className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    {/* Company Info Section */}
-                    <div className="lg:col-span-12">
-                        <div className="bg-white rounded-[2.5rem] border border-blue-50 p-8 lg:p-12 soft-shadow relative overflow-hidden">
-                            <div className="absolute top-0 right-0 p-12 opacity-[0.02] pointer-events-none">
-                                <Building2 size={240} />
-                            </div>
-
-                            <div className="flex items-center justify-between mb-10 relative z-10">
-                                <div className="flex items-center gap-4">
-                                    <div className="h-12 w-12 bg-blue-50 text-primary rounded-2xl flex items-center justify-center shadow-sm border border-blue-50">
-                                        <Building2 size={24} />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Şirkət Məlumatları</h3>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Sənədlərdə İddiaçı hissəsi üçün</p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleSaveSettings}
-                                    disabled={isSavingSettings}
-                                    className="flex items-center gap-2 px-8 py-4 bg-primary hover:bg-primary/95 text-white rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
-                                >
-                                    {isSavingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                                    Yadda Saxla
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 relative z-10">
-                                <div className="space-y-2 md:col-span-2">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">İddiaçının Tam Adı</label>
-                                    <input
-                                        value={companyInfo.companyName || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, companyName: e.target.value })}
-                                        placeholder="Məs: 'ABC TELECOM' Məhdud Məsuliyyətli Cəmiyyəti"
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndə</label>
-                                    <input
-                                        value={companyInfo.representative || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, representative: e.target.value })}
-                                        placeholder="Məs: Süleymanlı Rauf Xudayar oğlu..."
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Nümayəndənin FİN Kodu</label>
-                                    <input
-                                        value={companyInfo.representativeFin || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, representativeFin: e.target.value })}
-                                        placeholder="Məs: 0WY0TVF"
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2 md:col-span-3">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Hüquqi Ünvan</label>
-                                    <input
-                                        value={companyInfo.address || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, address: e.target.value })}
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Telefon</label>
-                                    <input
-                                        value={companyInfo.phone || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })}
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Faks</label>
-                                    <input
-                                        value={companyInfo.fax || ""}
-                                        onChange={(e) => setCompanyInfo({ ...companyInfo, fax: e.target.value })}
-                                        className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    )}
 
                 </div>
 

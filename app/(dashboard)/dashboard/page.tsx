@@ -729,28 +729,28 @@ const CustomerCard = memo(({
     return (
         <div className="flex items-stretch gap-4 group/row">
             {/* ════ LEFT TIMELINE PANEL ════ */}
-            <div className="hidden lg:flex flex-col shrink-0 w-[130px] relative pt-2 pb-4 pr-1 opacity-60 group-hover/row:opacity-100 transition-opacity">
+            <div className="hidden lg:flex flex-col shrink-0 w-[125px] relative pt-3 pb-4 pr-1 transition-all">
                 {/* Vertical Connector Line */}
-                <div className="absolute left-[21px] top-6 bottom-6 w-[1.5px] bg-slate-100 rounded-full" />
+                <div className="absolute left-[20px] top-7 bottom-8 w-[2px] bg-slate-200 rounded-full" />
 
-                <div className="space-y-6 relative">
+                <div className="space-y-7 relative">
                     {/* 1. CREATION EVENT */}
                     {row.createdAt && (() => {
                         const { date, time } = formatDateTime(row.createdAt);
                         return (
-                            <div className="relative pl-9 group/item">
+                            <div className="relative pl-8 group/item">
                                 {/* Timeline Dot/Icon */}
-                                <div className="absolute left-[13px] top-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10 transition-all group-hover/item:border-blue-400 group-hover/item:shadow-[0_0_0_4px_rgba(59,130,246,0.05)]">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-200 transition-all group-hover/item:bg-blue-400" />
+                                <div className="absolute left-[12px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center z-10 transition-all group-hover/item:border-blue-500 group-hover/item:shadow-[0_0_0_4px_rgba(59,130,246,0.1)]">
+                                    <div className="w-1 h-1 rounded-full bg-slate-300 transition-all group-hover/item:bg-blue-500" />
                                 </div>
 
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.15em] transition-colors">
-                                        Daxil
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest group-hover/item:text-blue-600 transition-colors">
+                                        DAXİL EDİLİB
                                     </span>
-                                    <div className="flex flex-col leading-none gap-1 opacity-70 group-hover/item:opacity-100 transition-opacity">
-                                        <span className="text-[9px] font-bold text-slate-600 tracking-tight">{date}</span>
-                                        <span className="text-[8px] font-medium text-slate-400 tracking-tighter">{time}</span>
+                                    <div className="flex flex-col leading-[1.3] text-slate-700">
+                                        <span className="text-[10px] font-bold tracking-tight">{date}</span>
+                                        <span className="text-[9px] font-medium text-slate-500">{time}</span>
                                     </div>
                                 </div>
                             </div>
@@ -761,18 +761,19 @@ const CustomerCard = memo(({
                     {row.assignedAt && (() => {
                         const { date, time } = formatDateTime(row.assignedAt);
                         return (
-                            <div className="relative pl-9 group/item">
-                                <div className="absolute left-[13px] top-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10 transition-all group-hover/item:border-amber-400 group-hover/item:shadow-[0_0_0_4px_rgba(245,158,11,0.05)]">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-200 transition-all group-hover/item:bg-amber-400" />
+                            <div className="relative pl-8 group/item">
+                                {/* Timeline Dot/Icon */}
+                                <div className="absolute left-[12px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center z-10 transition-all group-hover/item:border-purple-500 group-hover/item:shadow-[0_0_0_4px_rgba(168,85,247,0.1)]">
+                                    <div className="w-1 h-1 rounded-full bg-slate-300 transition-all group-hover/item:bg-purple-500" />
                                 </div>
 
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.15em] transition-colors">
-                                        Təyinat
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest group-hover/item:text-purple-600 transition-colors">
+                                        TƏYİNAT
                                     </span>
-                                    <div className="flex flex-col leading-none gap-1 opacity-70 group-hover/item:opacity-100 transition-opacity">
-                                        <span className="text-[9px] font-bold text-slate-600 tracking-tight">{date}</span>
-                                        <span className="text-[8px] font-medium text-slate-400 tracking-tighter">{time}</span>
+                                    <div className="flex flex-col leading-[1.3] text-slate-700">
+                                        <span className="text-[10px] font-bold tracking-tight">{date}</span>
+                                        <span className="text-[9px] font-medium text-slate-500">{time}</span>
                                     </div>
                                 </div>
                             </div>
@@ -1299,7 +1300,7 @@ const CustomerCard = memo(({
                                                                     />
                                                                 </div>
                                                                 <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">İlkin</label>
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">İlkin Ödəniş</label>
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.initialPayment || ""}
@@ -1308,7 +1309,7 @@ const CustomerCard = memo(({
                                                                     />
                                                                 </div>
                                                                 <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Aylıq</label>
+                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Aylıq Ödəniş</label>
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.monthlyPayment || ""}
@@ -1391,7 +1392,7 @@ const CustomerCard = memo(({
                 {/* ASSIGNMENT - Only for Manager/Admin */}
                 {can('action_assignment') && (
                     <div className="px-2 py-1.5">
-                        <div className="flex items-center gap-2 mb-1.5 opacity-40">
+                        <div className="flex items-center gap-2 mb-1.5 opacity-70">
                             <UserPlus size={10} />
                             <span className="text-[8px] font-bold uppercase tracking-wider">Təyinat</span>
                         </div>
@@ -1430,7 +1431,7 @@ const CustomerCard = memo(({
 
                 {/* STATUS */}
                 <div className="px-2 py-1.5">
-                    <div className="flex items-center gap-1.5 mb-1.5 opacity-40">
+                    <div className="flex items-center gap-1.5 mb-1.5 opacity-70">
                         <div className="h-1 w-1 rounded-full bg-slate-400" />
                         <span className="text-[8px] font-bold uppercase tracking-wider">Status</span>
                     </div>
