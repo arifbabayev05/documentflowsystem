@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { bulkAddCustomers, getInspectorCustomers } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
@@ -258,7 +259,22 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
 }
 
 export default function InspectorPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
+    const router = useRouter();
+
+    if (!user || !can("inspector_manage")) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <Shield size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Müfəttiş icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
     const [rows, setRows] = useState<EntryRow[]>([{ ...EMPTY_ROW }]);
     const [history, setHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);

@@ -1,7 +1,7 @@
 export type PermissionID =
     | "customers_read" | "customers_create" | "customers_update" | "customers_delete"
-    | "reports_read" | "reports_audit"
-    | "users_manage" | "inspector_manage" | "archive_manage"
+    | "reports_read" | "reports_audit" | "reports_generate"
+    | "users_manage" | "inspector_manage" | "archive_manage" | "parameters_manage"
     | "action_assignment" | "action_warning" | "action_status_change"
     | "fields_personal" | "fields_address" | "fields_order" | "fields_invoice";
 
@@ -22,6 +22,8 @@ export const AVAILABLE_PERMISSIONS: Permission[] = [
     { id: "reports_read", label: "Hesabatlar (Baxış)", group: "SƏHİFƏ İCAZƏLƏRİ" },
     { id: "reports_audit", label: "Audit Loqları", group: "SƏHİFƏ İCAZƏLƏRİ" },
     { id: "users_manage", label: "İstifadəçi İdarəetməsi", group: "SƏHİFƏ İCAZƏLƏRİ" },
+    { id: "parameters_manage", label: "Parametrlər və Tənzimləmələr", group: "SƏHİFƏ İCAZƏLƏRİ" },
+    { id: "reports_generate", label: "Hesabat Hazırlama", group: "SƏHİFƏ İCAZƏLƏRİ" },
 
     // DASHBOARD FUNKSİYALARI
     { id: "action_assignment", label: "Təyinat Etmə", group: "FUNKSİONAL İCAZƏLƏR" },
@@ -45,6 +47,8 @@ export const PATH_TO_PERMISSION_MAP: Record<string, PermissionID[]> = {
     "/archive": ["archive_manage"],
     "/customers/archived": ["archive_manage"],
     "/reports": ["reports_read"],
+    "/reports/generate": ["reports_generate"],
     "/audit-logs": ["reports_audit"],
-    "/settings": ["users_manage"]
+    "/settings": ["users_manage"],
+    "/parameters": ["parameters_manage"]
 };

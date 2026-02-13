@@ -36,9 +36,33 @@ interface UserDoc {
     permissions?: string[];
 }
 
+const ROLE_LABELS: Record<UserDoc["role"], string> = {
+    SUPERADMIN: "Super Admin",
+    ADMIN: "Admin",
+    MANAGER: "Menecer",
+    INSPECTOR: "Müfəttiş",
+    ARCHIVIST: "Arxivist",
+    ARCHIVER: "Arxivçi",
+    USER: "İstifadəçi"
+};
+
 export default function UsersPage() {
-    const { user: currentUser, isSuperAdmin, isLoading } = useAuth();
+    const { user: currentUser, can, isLoading } = useAuth();
     const [users, setUsers] = useState<UserDoc[]>([]);
+
+    if (!isLoading && (!currentUser || !can("users_manage"))) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <Lock size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün İstifadəçi İdarəetməsi icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
     const [loadingUsers, setLoadingUsers] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [roleFilter, setRoleFilter] = useState("all");
@@ -92,8 +116,11 @@ export default function UsersPage() {
         try {
             await updateUserRole(editingUser.id, selectedRole, selectedPermissions);
             toast.success("Məlumatlar yadda saxlanıldı");
-            fetchUsers();
             setIsModalOpen(false);
+            // Refresh to apply new permissions immediately in session
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
         } catch (e) {
             toast.error("Xəta baş verdi");
         }
@@ -176,7 +203,7 @@ export default function UsersPage() {
                                     >
                                         <option value="all">Bütün rollar</option>
                                         <option value="SUPERADMIN">Super Admin</option>
-                                        <option value="ADMIN">Admin</option>
+                                        <option value="ADMIN">İnzibatçı</option>
                                         <option value="MANAGER">Bölmə Rəhbəri</option>
                                         <option value="INSPECTOR">Müfəttiş</option>
                                         <option value="ARCHIVIST">Arxivist</option>
@@ -231,7 +258,7 @@ export default function UsersPage() {
                                                 u.role === "ADMIN" ? "bg-gray-100 text-text-main" :
                                                     "bg-gray-50 text-text-soft border border-border-soft"
                                         )}>
-                                            {u.role === "SUPERADMIN" ? "Super Admin" : u.role}
+                                            {ROLE_LABELS[u.role] || u.role}
                                         </span>
                                     </td>
                                     <td className="px-8 py-4">
@@ -315,17 +342,16 @@ export default function UsersPage() {
                                     <label className="text-[11px] font-black text-text-main uppercase tracking-widest pl-1">Sistem Rolu</label>
                                     <div className="relative">
                                         <select
-                                            className="w-full appearance-none pl-4 pr-10 py-3.5 bg-white border-2 border-primary rounded-2xl text-sm font-bold text-text-main outline-none focus:ring-4 focus:ring-primary/5 transition-all cursor-pointer"
                                             value={selectedRole}
-                                            onChange={(e) => setSelectedRole(e.target.value as any)}
+                                            onChange={(e) => {
+                                                const newRole = e.target.value as UserDoc["role"];
+                                                setSelectedRole(newRole);
+                                            }}
+                                            className="w-full pl-5 pr-12 py-4 bg-gray-50 border border-border-soft rounded-2xl text-sm font-bold text-text-main outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer"
                                         >
-                                            <option value="SUPERADMIN">Super Admin</option>
-                                            <option value="ADMIN">Admin</option>
-                                            <option value="MANAGER">Bölmə Rəhbəri</option>
-                                            <option value="INSPECTOR">Müfəttiş</option>
-                                            <option value="ARCHIVIST">Arxivist</option>
-                                            <option value="ARCHIVER">Arxivçi</option>
-                                            <option value="USER">İstifadəçi</option>
+                                            {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                                                <option key={key} value={key}>{label}</option>
+                                            ))}
                                         </select>
                                         <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-text-main pointer-events-none" size={18} />
                                     </div>

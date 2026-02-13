@@ -49,8 +49,22 @@ const ACTION_CONFIG: Record<string, { label: string, icon: any, color: string, b
 };
 
 export default function AuditLogsPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
     const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+    if (!user || !can("reports_audit")) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <ShieldCheck size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Audit Loqları icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
     const [loadingLogs, setLoadingLogs] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedAction, setSelectedAction] = useState<string>("all");

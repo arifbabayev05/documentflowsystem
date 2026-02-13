@@ -35,6 +35,8 @@ import {
     ChevronRight,
     Store,
     File,
+    FileUp,
+    X,
 } from "lucide-react";
 import {
     getCustomer,
@@ -51,6 +53,17 @@ import { saveAs } from "file-saver";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
 import { numberToAzerbaijaniFinancialWords } from "@/lib/format";
+import { storage } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
+const base64ToBlob = (base64: string, type: string) => {
+    const bin = atob(base64.split(',')[1] || base64);
+    const array = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+        array[i] = bin.charCodeAt(i);
+    }
+    return new Blob([array], { type });
+};
 
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
@@ -317,7 +330,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     {label}
                 </label>
                 {info && (
-                    <div className="group/info relative">
+                    <div className="group/info relative z-100">
                         <Info size={11} className="text-slate-300 hover:text-primary cursor-help transition-colors" />
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-white text-[9px] rounded-lg opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-[100] shadow-xl pointer-events-none">
                             <div className="font-bold border-b border-white/10 pb-1 mb-1 uppercase tracking-tighter">Hesablama düsturu:</div>
@@ -511,6 +524,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     ERIZE_GUN: `${new Date().getDate()}`,
                     ERIZE_AY: AZ_MONTHS[new Date().getMonth()],
                     ERIZE_IL: new Date().getFullYear().toString(),
+                    TARIX: `${new Date().getDate()}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
                     ELAQE_TEL1: "050 280 11 90",
                     ELAQE_TEL2: "012 310 07 75",
                     NUMAYENDE_IMZA: "Süleymanlı.R.X",
@@ -685,7 +699,25 @@ function GenerateDocumentContent() {
     const searchParams = useSearchParams();
     const id = searchParams.get('id');
     const router = useRouter();
-    const { user } = useAuth();
+    const { user, can } = useAuth();
+
+    if (!user || !can("reports_generate")) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 bg-slate-50/20 w-full">
+                <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                    <File size={32} className="text-red-400" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Hesabat Hazırlama icazəniz olmalıdır.</p>
+                <button
+                    onClick={() => router.push("/dashboard")}
+                    className="mt-6 px-8 py-3 bg-slate-900 text-white rounded-xl text-sm font-black transition-all hover:bg-slate-800"
+                >
+                    Geri qayıt
+                </button>
+            </div>
+        );
+    }
 
     const [customer, setCustomer] = useState<Customer | null>(null);
     const [allTemplates, setAllTemplates] = useState<Template[]>([]);
@@ -701,6 +733,11 @@ function GenerateDocumentContent() {
     const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
     const [courtSearch, setCourtSearch] = useState("");
     const [isCourtDropdownOpen, setIsCourtDropdownOpen] = useState(false);
+
+    // Mandatory File Uploads
+    const [receiptFile, setReceiptFile] = useState<{ name: string; content: string } | null>(null);
+    const [postageFile, setPostageFile] = useState<{ name: string; content: string } | null>(null);
+    const [isModified, setIsModified] = useState(false);
 
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -749,6 +786,15 @@ function GenerateDocumentContent() {
                 setAllTemplates(tempData as Template[]);
                 setCourts(courtsData as Court[]);
                 setCompanyInfo(settingsData as CompanyInfo);
+
+                if ((typedCust.details as any)?.receiptUrl) {
+                    setReceiptFile({ name: "Qəbz (Yüklənib)", content: (typedCust.details as any).receiptUrl });
+                }
+                if ((typedCust.details as any)?.postageUrl) {
+                    setPostageFile({ name: "Marka (Yüklənib)", content: (typedCust.details as any).postageUrl });
+                }
+
+                setIsModified(false);
 
                 if (tempData.length > 0) {
                     const requestedTemplate = searchParams.get('template');
@@ -812,7 +858,7 @@ function GenerateDocumentContent() {
             return allTemplates.filter(t => t.name.includes(requestedTemplate));
         }
 
-        return allTemplates.filter(t => {
+        const sorted = allTemplates.filter(t => {
             const nameLower = t.name.toLowerCase();
 
             // 1. Hide 'Arayış' templates if NO IMEI found in any invoice
@@ -831,13 +877,23 @@ function GenerateDocumentContent() {
             }
 
             return true;
-        }).sort((a, b) => {
-            const getNum = (s: string) => {
-                const m = s.match(/^(\d+)/);
-                return m ? parseInt(m[1]) : 999;
-            };
-            return getNum(a.name) - getNum(b.name);
         });
+
+        // 3. APPLY PRIORITY SORTING
+        // Sequence: Məhkəmə Sənədi, Arayış Sənədi, Ödəniş Cədvəli, Xəbərdarlıq, Etibarnamə Sənədi, Vergi Çıxarış Sənədi, Əmək Müqaviləsi
+        const priorityScore = (name: string) => {
+            const nl = name.toLowerCase();
+            if (nl.includes("məhkəmə")) return 1;
+            if (nl.includes("arayış")) return 2;
+            if (nl.includes("cədvəli")) return 3;
+            if (nl.includes("xəbərdarlıq")) return 4;
+            if (nl.includes("etibarnamə")) return 5;
+            if (nl.includes("vergi")) return 6;
+            if (nl.includes("müqaviləsi")) return 7;
+            return 99;
+        };
+
+        return sorted.sort((a, b) => priorityScore(a.name) - priorityScore(b.name));
     }, [allTemplates, customer, searchParams]);
 
     const handleScroll = useCallback(() => {
@@ -883,6 +939,7 @@ function GenerateDocumentContent() {
             if (path === 'totalUnpaid' || path === 'details.totalUnpaid') {
                 newData.debtAmount = value;
             }
+            setIsModified(true);
             return newData;
         });
     }, [customer]);
@@ -899,6 +956,7 @@ function GenerateDocumentContent() {
             if (idx === 0 && field === 'invoiceNumber' && newData.details) {
                 newData.details.contractNumber = value;
             }
+            setIsModified(true);
             return newData;
         });
     };
@@ -966,6 +1024,7 @@ function GenerateDocumentContent() {
                     newData.details.totalPrice = ord.totalPrice;
                 }
             }
+            setIsModified(true);
             return newData;
         });
     };
@@ -1010,6 +1069,7 @@ function GenerateDocumentContent() {
                     totalPrice: "0.00"
                 }]
             };
+            setIsModified(true);
             return { ...prev, details: { ...prev.details, invoices: [...currentInvoices, newInv] } };
         });
     };
@@ -1033,6 +1093,7 @@ function GenerateDocumentContent() {
                 totalPrice: "0.00"
             };
             invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrd] };
+            setIsModified(true);
             return { ...prev, details: { ...prev.details, invoices } };
         });
     };
@@ -1041,6 +1102,7 @@ function GenerateDocumentContent() {
         setCustomer(prev => {
             if (!prev) return null;
             const invoices = (prev.details?.invoices || []).filter(i => i.id !== id);
+            setIsModified(true);
             return { ...prev, details: { ...prev.details, invoices } };
         });
     };
@@ -1052,23 +1114,66 @@ function GenerateDocumentContent() {
             const idx = invoices.findIndex(i => i.id === invId);
             if (idx === -1) return prev;
             invoices[idx] = { ...invoices[idx], orders: (invoices[idx].orders || []).filter(o => o.id !== orderId) };
+            setIsModified(true);
             return { ...prev, details: { ...prev.details, invoices } };
         });
     };
 
-    const handleSave = async () => {
+    const handleSave = async (showToast: any = true) => {
         if (!customer) return;
         setIsSaving(true);
         try {
+            const details = { ...(customer.details || {}) };
+
+            // 1. Upload Mandatory Scanned Images if new/modified (not already a URL)
+            if (receiptFile && !receiptFile.content.startsWith('http')) {
+                const blob = base64ToBlob(receiptFile.content, "image/jpeg");
+                const storageRef = ref(storage, `Customers/${customer.id}/receipt_${Date.now()}.jpg`);
+                await uploadBytes(storageRef, blob);
+                const url = await getDownloadURL(storageRef);
+                (details as any).receiptUrl = url;
+            }
+            if (postageFile && !postageFile.content.startsWith('http')) {
+                const blob = base64ToBlob(postageFile.content, "image/jpeg");
+                const storageRef = ref(storage, `Customers/${customer.id}/postage_${Date.now()}.jpg`);
+                await uploadBytes(storageRef, blob);
+                const url = await getDownloadURL(storageRef);
+                (details as any).postageUrl = url;
+            }
+
+            // 2. Generate and Upload ALL Word Documents as permanent evidence
+            const docUploads = filteredTemplates.map(async (temp) => {
+                const result = await generateDocument(temp, true) as any;
+                if (result && result.content) {
+                    const storageRef = ref(storage, `Customers/${customer.id}/GeneratedDocs/${result.fileName}`);
+                    await uploadBytes(storageRef, result.content);
+                    const url = await getDownloadURL(storageRef);
+                    return { name: result.fileName, url, createdAt: new Date().toISOString() };
+                }
+                return null;
+            });
+
+            const uploadedDocs = (await Promise.all(docUploads)).filter(d => d !== null);
+            (details as any).generatedDocs = uploadedDocs;
+
             await updateCustomer(customer.id, {
                 fullName: customer.fullName,
-                debtAmount: customer.details?.totalUnpaid || customer.debtAmount,
-                details: customer.details,
+                debtAmount: (details as any).totalUnpaid || customer.debtAmount,
+                details,
                 fullData: true
             }, user?.email);
-            toast.success("Bütün məlumatlar yadda saxlanıldı");
+
+            // Sync local files state with URLs to avoid re-upload
+            if ((details as any).receiptUrl) setReceiptFile(prev => prev ? { ...prev, content: (details as any).receiptUrl } : null);
+            if ((details as any).postageUrl) setPostageFile(prev => prev ? { ...prev, content: (details as any).postageUrl } : null);
+
+            setIsModified(false);
+            if (showToast !== false) toast.success("Bütün məlumatlar və sənədlər müştərinin arxivinə yadda saxlanıldı.");
+            return true;
         } catch (error) {
-            toast.error("Yadda saxlayarkən xəta");
+            console.error("Save error:", error);
+            if (showToast !== false) toast.error("Yadda saxlayarkən xəta baş verdi");
+            return false;
         } finally {
             setIsSaving(false);
         }
@@ -1357,6 +1462,10 @@ function GenerateDocumentContent() {
 
     const generateDocument = async (template: Template, silent: boolean = false) => {
         if (!customer) return null;
+        if (!silent && isModified) {
+            toast.error("Zəhmət olmasa sənədi yükləməzdən əvvəl 'YADDA SAXLA' düyməsinə basaraq bütün dəyişiklikləri arxivə yazın.");
+            return null;
+        }
         if (!validateData(template.name)) return null;
         if (!selectedCourt) {
             toast.error("Zəhmət olmasa məhkəmə seçin");
@@ -1464,6 +1573,7 @@ function GenerateDocumentContent() {
                 ERIZE_GUN: `${now.getDate()}`,
                 ERIZE_AY: AZ_MONTHS_CAP[now.getMonth()],
                 ERIZE_IL: now.getFullYear().toString(),
+                TARIX: `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`,
                 NUMAYENDE_IMZA: "Süleymanlı.R.X",
                 ELAQE_TEL1: "050 280 11 90",
                 ELAQE_TEL2: "012 310 07 75",
@@ -1475,7 +1585,7 @@ function GenerateDocumentContent() {
             };
 
             doc.render(data);
-            const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}`;
+            const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}.docx`;
 
             if (silent) {
                 return {
@@ -1602,6 +1712,11 @@ function GenerateDocumentContent() {
                                     return;
                                 }
 
+                                if (!receiptFile || !postageFile) {
+                                    toast.error("Ödəniş qəbzi və Poçt markası sənədlərini yükləməlisiniz");
+                                    return;
+                                }
+
                                 const loadingId = toast.loading("Bütün sənədlər hazırlanır...");
                                 try {
                                     const mainZip = new PizZip();
@@ -1613,6 +1728,16 @@ function GenerateDocumentContent() {
                                             mainZip.file(result.fileName, result.content, { binary: true });
                                             await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${temp.name} (Toplu) yaradıldı`, user?.email || "system");
                                         }
+                                    }
+
+                                    // 3. Add mandatory images to ZIP
+                                    if (receiptFile) {
+                                        const rContent = receiptFile.content.split(',')[1] || receiptFile.content;
+                                        mainZip.file("1_Odenis_Qebzi_" + receiptFile.name, rContent, { base64: true });
+                                    }
+                                    if (postageFile) {
+                                        const pContent = postageFile.content.split(',')[1] || postageFile.content;
+                                        mainZip.file("2_Poct_Markasi_" + postageFile.name, pContent, { base64: true });
                                     }
 
                                     const zipContent = mainZip.generate({ type: "blob", mimeType: "application/zip" });
@@ -1639,7 +1764,7 @@ function GenerateDocumentContent() {
                         </button>
 
                         <button
-                            onClick={handleSave}
+                            onClick={() => handleSave()}
                             disabled={isSaving}
                             className="bg-slate-900 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl active:scale-95 disabled:opacity-50 flex items-center gap-3"
                         >
@@ -1968,20 +2093,95 @@ function GenerateDocumentContent() {
                                     <div className="grid grid-cols-2 gap-4">
                                         <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
-                                    <div className="pt-2 border-t border-primary/10">
-                                        <CustomerField
-                                            label="Ümumilikdə ödənilməmiş məbləğ"
-                                            info="Əsas borca ödənilməmiş məbləğ + İLM Rüsumu + Cərimə."
-                                            icon={DollarSign}
-                                            value={customer.details?.totalUnpaid}
-                                            onFocus={setFocusedField}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(v: string) => handleFieldChange("details.totalUnpaid", v)}
-                                            isPrice={true}
-                                        />
+                                    {/* File Uploads - Mandatory for Print */}
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                            <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+                                                <FileUp size={14} className="stroke-[2.5px]" />
+                                            </div>
+                                            <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.15em]">Məcburi Sənədlər</h4>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-4">
+                                            {/* Receipt Upload */}
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Ödəniş Qəbzi (Skan)</p>
+                                                    {receiptFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                                </div>
+                                                <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
+                                                    <input
+                                                        type="file"
+                                                        className="hidden"
+                                                        accept="image/*,.pdf"
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0];
+                                                            if (file) {
+                                                                const reader = new FileReader();
+                                                                reader.onloadend = () => {
+                                                                    setReceiptFile({ name: file.name, content: reader.result as string });
+                                                                    setIsModified(true);
+                                                                };
+                                                                reader.readAsDataURL(file);
+                                                            }
+                                                        }}
+                                                    />
+                                                    {receiptFile ? (
+                                                        <div className="flex items-center gap-3 p-2">
+                                                            <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
+                                                            <span className="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">{receiptFile.name}</span>
+                                                            <button onClick={(e) => { e.preventDefault(); setReceiptFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col items-center gap-1">
+                                                            <FileUp size={20} className="text-slate-300" />
+                                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fayl Seç</span>
+                                                        </div>
+                                                    )}
+                                                </label>
+                                            </div>
+
+                                            {/* Postage Stamp Upload */}
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Poçt Markası Sənədi</p>
+                                                    {postageFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                                </div>
+                                                <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
+                                                    <input
+                                                        type="file"
+                                                        className="hidden"
+                                                        accept="image/*,.pdf"
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0];
+                                                            if (file) {
+                                                                const reader = new FileReader();
+                                                                reader.onloadend = () => {
+                                                                    setPostageFile({ name: file.name, content: reader.result as string });
+                                                                    setIsModified(true);
+                                                                };
+                                                                reader.readAsDataURL(file);
+                                                            }
+                                                        }}
+                                                    />
+                                                    {postageFile ? (
+                                                        <div className="flex items-center gap-3 p-2">
+                                                            <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
+                                                            <span className="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">{postageFile.name}</span>
+                                                            <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col items-center gap-1">
+                                                            <FileUp size={20} className="text-slate-300" />
+                                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fayl Seç</span>
+                                                        </div>
+                                                    )}
+                                                </label>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+
                         </div>
                     </div>
 
@@ -2005,6 +2205,25 @@ function GenerateDocumentContent() {
                                     focusedField={focusedField}
                                 />
                             ))}
+
+                            {/* MANDATORY FILES PREVIEW */}
+                            {receiptFile && (
+                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
+                                    <p className="text-[12px] font-black text-slate-300 uppercase tracking-[0.4em] mb-8">1. ÖDƏNİŞ QƏBZİ</p>
+                                    <div className="w-full flex-1 flex items-center justify-center border-4 border-dashed border-slate-100 rounded-[2rem] overflow-hidden">
+                                        <img src={receiptFile.content} alt="Receipt" className="max-w-full max-h-full object-contain" />
+                                    </div>
+                                </div>
+                            )}
+
+                            {postageFile && (
+                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
+                                    <p className="text-[12px] font-black text-slate-300 uppercase tracking-[0.4em] mb-8">2. POÇT MARKASI</p>
+                                    <div className="w-full flex-1 flex items-center justify-center border-4 border-dashed border-slate-100 rounded-[2rem] overflow-hidden">
+                                        <img src={postageFile.content} alt="Postage" className="max-w-full max-h-full object-contain" />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

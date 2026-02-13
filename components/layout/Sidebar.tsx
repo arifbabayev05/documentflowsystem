@@ -22,8 +22,8 @@ import { useAuth } from "@/hooks/useAuth";
 const menuItems = [
     { icon: LayoutDashboard, label: "Müştəri bazası", href: "/dashboard" },
     { icon: Briefcase, label: "Müfəttiş Paneli", href: "/inspector" },
-    { icon: FolderArchive, label: "Arxivli Müştərilər", href: "/customers/archived" },
-    { icon: FileText, label: "Arxiv Sənədləri", href: "/archive" },
+    { icon: FolderArchive, label: "Arxiv Müştərilər", href: "/customers/archived" },
+    { icon: FileText, label: "Arxivçi", href: "/archive" },
     { icon: History, label: "Audit Loqları", href: "/audit-logs" },
     { icon: Settings, label: "Parametrlər", href: "/parameters" },
     { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" },

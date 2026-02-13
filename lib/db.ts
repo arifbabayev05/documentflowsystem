@@ -16,6 +16,7 @@ import {
     orderBy,
     increment
 } from "firebase/firestore";
+import { AVAILABLE_PERMISSIONS } from "./permissions";
 
 const USERS_COLLECTION = "Users";
 const PERMISSIONS_COLLECTION = "Permissions";
@@ -38,11 +39,12 @@ export async function getRolePermissions(role: string) {
         console.error("getRolePermissions error:", e);
     }
 
-    if (role === "SUPERADMIN") return ["customers_read", "customers_create", "customers_update", "customers_delete", "reports_read", "reports_audit", "users_manage", "inspector_manage"];
-    if (role === "MANAGER") return ["customers_read", "customers_create", "customers_update", "reports_read", "inspector_manage"];
-    if (role === "ADMIN") return ["customers_read", "customers_update", "reports_read"];
-    if (role === "INSPECTOR") return ["customers_read", "customers_create", "customers_update", "inspector_manage"];
-    if (role === "ARCHIVIST") return ["customers_read", "customers_update"];
+    if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
+    if (role === "MANAGER") return ["customers_read", "customers_create", "customers_update", "reports_read", "reports_audit", "reports_generate", "inspector_manage", "action_assignment", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
+    if (role === "ADMIN") return ["customers_read", "customers_update", "reports_read", "reports_audit", "reports_generate", "action_warning", "action_status_change", "fields_personal", "fields_address"];
+    if (role === "INSPECTOR") return ["customers_read", "customers_create", "customers_update", "inspector_manage", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
+    if (role === "ARCHIVIST") return ["customers_read", "customers_update", "archive_manage"];
+    if (role === "ARCHIVER") return ["customers_read", "archive_manage"];
     return ["customers_read"];
 }
 

@@ -459,7 +459,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
 CustomerCard.displayName = "CustomerCard";
 
 export default function ArchivedCustomersPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
     const [rows, setRows] = useState<CustomerRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -510,7 +510,7 @@ export default function ArchivedCustomersPage() {
         });
     }, [rows, searchTerm]);
 
-    if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ARCHIVIST' && user.role !== 'ARCHIVER')) {
+    if (!user || !can('archive_manage')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

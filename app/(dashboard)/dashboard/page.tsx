@@ -227,7 +227,8 @@ const CustomerCard = memo(({
     appUsers,
     stores,
     onSave,
-    onDelete
+    onDelete,
+    can
 }: {
     row: CustomerRow;
     index: number;
@@ -238,6 +239,7 @@ const CustomerCard = memo(({
     stores: any[];
     onSave: (data: CustomerRow) => Promise<void>;
     onDelete: (index: number) => void;
+    can: (permission: any) => boolean;
 }) => {
     const router = useRouter();
     const { user } = useAuth();
@@ -808,10 +810,32 @@ const CustomerCard = memo(({
                                         placeholder="SOYAD AD ATA ADI"
                                     />
                                 ) : (
-                                    <div className="flex items-center gap-3">
-                                        <h3 className="text-[17px] font-black text-slate-900 uppercase tracking-tight leading-none truncate group-hover:text-primary transition-colors">
+                                    <div className="flex items-center gap-4">
+                                        <h3 className="text-[17px] font-black text-slate-900  tracking-tight leading-none truncate group-hover:text-primary transition-colors">
                                             {row.fullName || "YENİ MÜŞTƏRİ"}
                                         </h3>
+                                        {(() => {
+                                            const invoices = row.details?.invoices || [];
+                                            const invCount = invoices.length;
+                                            let prodCount = 0;
+                                            invoices.forEach(inv => {
+                                                inv.orders?.forEach(ord => {
+                                                    prodCount += (ord.phoneCount || 0);
+                                                });
+                                            });
+
+                                            if (invCount === 0) return null;
+
+                                            return (
+                                                <div className="flex items-center gap-2 bg-slate-900/[0.03] text-slate-600 border border-slate-200/60 px-2.5 py-1 rounded-lg shrink-0">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[10px] font-black uppercase tracking-wider">{invCount} Faktura</span>
+                                                        <div className="w-1 h-1 rounded-full bg-slate-300" />
+                                                        <span className="text-[10px] font-black uppercase tracking-wider">{prodCount} Məhsul</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 )}
                             </div>
@@ -1075,7 +1099,7 @@ const CustomerCard = memo(({
                         </div>
 
                         {/* BOTTOM: INVOICES (SIFARIS DETALLARI) */}
-                        {(user?.role === 'SUPERADMIN' || user?.permissions?.includes('fields_invoice')) ? (
+                        {can('fields_invoice') ? (
                             <div className="bg-white p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -1342,7 +1366,7 @@ const CustomerCard = memo(({
             {/* RIGHT SIDE PANEL - Assignment, Store & status */}
             <div className="w-[180px] shrink-0 flex flex-col gap-2 self-start" onClick={(e) => e.stopPropagation()}>
                 {/* ASSIGNMENT - Only for Manager/Admin */}
-                {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
+                {can('action_assignment') && (
                     <div className="bg-white rounded-xl border border-slate-200 p-2">
                         <div className="flex items-center gap-2 mb-2">
                             <UserPlus size={12} className="text-purple-500" />
@@ -1389,7 +1413,7 @@ const CustomerCard = memo(({
                         <div className="h-2 w-2 rounded-full bg-slate-400" />
                         <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Status</span>
                     </div>
-                    {isEditing ? (
+                    {isEditing && can('action_status_change') ? (
                         <div className="relative group/sel">
                             <select
                                 value={localData.process_status || "INSPECTOR_ENTERED"}
@@ -1424,8 +1448,8 @@ const CustomerCard = memo(({
                 </div>
 
 
-                {/* ARCHIVE BUTTON - Only if COMPLETED */}
-                {row.process_status === 'COMPLETED' && (
+                {/* ARCHIVE BUTTON - Only if COMPLETED and can archive */}
+                {row.process_status === 'COMPLETED' && can('archive_manage') && (
                     <button
                         onClick={async (e) => {
                             e.stopPropagation();
@@ -1454,6 +1478,7 @@ CustomerCard.displayName = "CustomerCard";
  * DASHBOARD PAGE COMPONENT
  */
 export default function DashboardPage() {
+    const router = useRouter();
     const { user, can } = useAuth();
     const [rows, setRows] = useState<CustomerRow[]>([]);
     const [appUsers, setAppUsers] = useState<any[]>([]);
@@ -1463,6 +1488,8 @@ export default function DashboardPage() {
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
     const [warningFilter, setWarningFilter] = useState<"all" | "sent" | "overdue" | "unsent">("all");
+    const [invoiceCount, setInvoiceCount] = useState<string>("");
+    const [invoiceMode, setInvoiceMode] = useState<"exact" | "min" | "max" | "all">("all");
 
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({
         isOpen: false,
@@ -1608,9 +1635,20 @@ export default function DashboardPage() {
             else if (warningFilter === "overdue") matchesWarning = isSent && overdue;
             else if (warningFilter === "unsent") matchesWarning = !isSent;
 
-            return matchesSearch && matchesWarning;
+            let matchesInvoiceCount = true;
+            if (invoiceMode !== "all" && invoiceCount !== "") {
+                const count = c.details?.invoices?.length || 0;
+                const target = parseInt(invoiceCount);
+                if (!isNaN(target)) {
+                    if (invoiceMode === "exact") matchesInvoiceCount = count === target;
+                    else if (invoiceMode === "min") matchesInvoiceCount = count >= target;
+                    else if (invoiceMode === "max") matchesInvoiceCount = count <= target;
+                }
+            }
+
+            return matchesSearch && matchesWarning && matchesInvoiceCount;
         });
-    }, [rows, searchTerm, warningFilter, user?.email, user?.role]);
+    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, user?.email, user?.role]);
 
     if (loadingData && rows.length === 0) {
         return (
@@ -1662,9 +1700,41 @@ export default function DashboardPage() {
                                 </select>
                                 <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
                             </div>
-                        </div>
 
-                        {/* REMOVED ADD CUSTOMER FROM DASHBOARD - NOW IN INSPECTOR ONLY */}
+                            <div className="flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-4 py-2 transition-all focus-within:border-slate-400 shadow-sm group">
+                                <Tag size={14} className="text-slate-600 group-focus-within:text-slate-900 transition-colors" />
+                                <input
+                                    type="text"
+                                    placeholder="SAY"
+                                    className="w-12 outline-none text-sm font-bold bg-transparent placeholder:text-slate-300 placeholder:font-normal"
+                                    value={invoiceCount}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "" || /^\d+$/.test(val)) setInvoiceCount(val);
+                                        if (invoiceMode === "all") setInvoiceMode("exact");
+                                    }}
+                                />
+                                <div className="h-4 w-[1px] bg-slate-200 mx-1" />
+                                <select
+                                    value={invoiceMode}
+                                    onChange={(e) => setInvoiceMode(e.target.value as any)}
+                                    className="bg-transparent outline-none text-[10px] font-black uppercase tracking-widest cursor-pointer text-slate-500 hover:text-slate-900 transition-colors"
+                                >
+                                    <option value="all">HAMISI</option>
+                                    <option value="exact">=</option>
+                                    <option value="min">+</option>
+                                    <option value="max">-</option>
+                                </select>
+                                {invoiceCount && (
+                                    <button
+                                        onClick={() => { setInvoiceCount(""); setInvoiceMode("all"); }}
+                                        className="ml-2 text-slate-300 hover:text-red-500 transition-colors"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1678,11 +1748,12 @@ export default function DashboardPage() {
                             index={idx}
                             totalRows={rows.length}
                             canUpdate={can("customers_update")}
-                            canDelete={user?.role === 'SUPERADMIN'}
+                            canDelete={user?.role === 'SUPERADMIN' || can("customers_delete")}
                             appUsers={appUsers}
                             stores={stores}
                             onSave={handleSave}
                             onDelete={onDelete}
+                            can={can}
                         />
                     ))}
 
@@ -1727,6 +1798,6 @@ export default function DashboardPage() {
                     </div>
                 )}
             </div>
-        </AuthGuard>
+        </AuthGuard >
     );
 }

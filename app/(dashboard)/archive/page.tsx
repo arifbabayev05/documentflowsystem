@@ -80,8 +80,8 @@ export default function ArchiveDocumentsPage() {
         fetchCustomers();
     }, [fetchCustomers]);
 
-    const handleUpload = async (file: File) => {
-        if (!selectedCustomer || !selectedInvoiceId) return;
+    const handleUpload = async (file: File, invoiceId: string) => {
+        if (!selectedCustomer) return;
         if (!file.name.endsWith(".pdf")) {
             toast.error("Yalnız PDF faylları yüklənə bilər");
             return;
@@ -89,13 +89,14 @@ export default function ArchiveDocumentsPage() {
 
         try {
             setUploading(true);
-            const storagePath = `UploadedPDFs/${selectedCustomer.id}/${selectedInvoiceId}.pdf`;
+            setSelectedInvoiceId(invoiceId); // Track which one is uploading
+            const storagePath = `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`;
             const storageRef = ref(storage, storagePath);
             const snapshot = await uploadBytes(storageRef, file);
             const downloadURL = await getDownloadURL(snapshot.ref);
 
             const updatedInvoices = [...(selectedCustomer.details?.invoices || [])];
-            const invIdx = updatedInvoices.findIndex(i => i.id === selectedInvoiceId);
+            const invIdx = updatedInvoices.findIndex(i => i.id === invoiceId);
 
             if (invIdx !== -1) {
                 updatedInvoices[invIdx] = {
@@ -120,6 +121,7 @@ export default function ArchiveDocumentsPage() {
             toast.error("Xəta baş verdi");
         } finally {
             setUploading(false);
+            setSelectedInvoiceId(null);
         }
     };
 
@@ -163,16 +165,6 @@ export default function ArchiveDocumentsPage() {
         );
     }, [customers, searchTerm]);
 
-    const activeInvoice = useMemo(() => {
-        if (!selectedCustomer || !selectedInvoiceId) return null;
-        return selectedCustomer.details?.invoices?.find(i => i.id === selectedInvoiceId);
-    }, [selectedCustomer, selectedInvoiceId]);
-
-    const uploadedDocuments = useMemo(() => {
-        if (!selectedCustomer) return [];
-        return (selectedCustomer.details?.invoices || []).filter(inv => inv.archiveUrl);
-    }, [selectedCustomer]);
-
     if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ARCHIVIST' && user.role !== 'ARCHIVER')) {
         return (
             <AuthGuard>
@@ -191,33 +183,33 @@ export default function ArchiveDocumentsPage() {
             <div className="flex bg-[#fcfdfe] h-[calc(100vh-64px)] overflow-hidden">
 
                 {/* ═══ SİDEBAR ═══ */}
-                <div className="w-[380px] border-r border-slate-200 bg-white flex flex-col shrink-0 shadow-sm relative z-10">
-                    <div className="p-8 pb-4 shrink-0">
+                <div className="w-[340px] border-r border-slate-200 bg-white flex flex-col shrink-0 relative z-10 transition-all">
+                    <div className="p-6 pb-4 shrink-0">
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] leading-none">Arxiv Portfeli</h2>
-                            <div className="h-6 px-2 bg-slate-900 text-white rounded-md flex items-center justify-center text-[10px] font-black">
+                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Müştəri Siyahısı</h2>
+                            <div className="h-5 px-2 bg-slate-100 text-slate-500 rounded-lg flex items-center justify-center text-[9px] font-black border border-slate-200">
                                 {filteredCustomers.length}
                             </div>
                         </div>
                         <div className="relative group">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={18} />
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={16} />
                             <input
                                 type="text"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                placeholder="Axtar..."
-                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-[14px] font-bold text-slate-900 outline-none focus:bg-white focus:border-slate-900 transition-all shadow-sm"
+                                placeholder="Ad, Soyad və ya Kod..."
+                                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-900 outline-none focus:bg-white focus:border-slate-400 transition-all"
                             />
                         </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 scrollbar-thin scrollbar-thumb-slate-300">
+                    <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-1 scrollbar-thin scrollbar-thumb-slate-200">
                         {loading ? (
-                            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-200" size={24} /></div>
+                            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-300" size={24} /></div>
                         ) : filteredCustomers.length === 0 ? (
-                            <div className="text-center py-20">
-                                <SearchX size={32} className="mx-auto text-slate-200 mb-2" />
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Məlumat yoxdur</p>
+                            <div className="text-center py-20 opacity-40">
+                                <SearchX size={24} className="mx-auto text-slate-300 mb-2" />
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Nəticə yoxdur</p>
                             </div>
                         ) : (
                             filteredCustomers.map(c => {
@@ -231,32 +223,32 @@ export default function ArchiveDocumentsPage() {
                                             setSelectedInvoiceId(null);
                                         }}
                                         className={cn(
-                                            "w-full p-5 rounded-2xl text-left transition-all relative border outline-none group",
+                                            "w-full p-4 rounded-xl text-left transition-all relative group outline-none border",
                                             isSelected
-                                                ? "bg-slate-900 border-slate-900 shadow-xl shadow-slate-200"
-                                                : "bg-white border-slate-200 hover:border-slate-400"
+                                                ? "bg-slate-900 border-slate-900 shadow-lg shadow-slate-200"
+                                                : "bg-white border-slate-400 hover:bg-slate-50"
                                         )}
                                     >
-                                        <div className="flex items-center justify-between gap-4">
+                                        <div className="flex items-center justify-between gap-3">
                                             <div className="min-w-0 flex-1">
                                                 <p className={cn(
-                                                    "text-[15px] font-black uppercase leading-tight truncate mb-1",
-                                                    isSelected ? "text-white" : "text-slate-900"
+                                                    "text-[13px] font-black uppercase leading-tight truncate mb-0.5",
+                                                    isSelected ? "text-white" : "text-slate-900 group-hover:text-primary"
                                                 )}>
                                                     {c.fullName}
                                                 </p>
                                                 <div className="flex items-center gap-2">
-                                                    <span className={cn("text-[10px] font-bold", isSelected ? "text-slate-400" : "text-slate-500")}>#{c.customerCode || "---"}</span>
-                                                    <div className={cn("w-1 h-1 rounded-full", isSelected ? "bg-slate-700" : "bg-slate-300")} />
-                                                    <span className={cn("text-[10px] font-black", isSelected ? "text-white/60" : "text-red-500")}>{c.debtAmount} AZN</span>
+                                                    <span className={cn("text-[9px] font-bold tracking-wider", isSelected ? "text-slate-500" : "text-slate-400")}>#{c.customerCode || "---"}</span>
+                                                    <div className={cn("w-0.5 h-0.5 rounded-full", isSelected ? "bg-slate-700" : "bg-slate-300")} />
+                                                    <span className={cn("text-[9px] font-black tracking-wider", isSelected ? "text-white/40" : "text-red-500/70")}>{c.debtAmount} AZN</span>
                                                 </div>
                                             </div>
                                             {hasFiles && (
                                                 <div className={cn(
-                                                    "h-8 w-8 rounded-xl flex items-center justify-center transition-all",
-                                                    isSelected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                                    "h-7 w-7 rounded-lg flex items-center justify-center transition-all",
+                                                    isSelected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-600"
                                                 )}>
-                                                    <FileArchive size={14} />
+                                                    <FileArchive size={12} />
                                                 </div>
                                             )}
                                         </div>
@@ -268,160 +260,126 @@ export default function ArchiveDocumentsPage() {
                 </div>
 
                 {/* ═══ WORKSPACE ═══ */}
-                <div className="flex-1 overflow-y-auto bg-slate-50/20 scrollbar-thin scrollbar-thumb-slate-300">
+                <div className="flex-1 overflow-y-auto bg-white scrollbar-thin scrollbar-thumb-slate-200">
                     {!selectedCustomer ? (
-                        <div className="h-full flex flex-col items-center justify-center opacity-30">
-                            <Box size={60} strokeWidth={1} className="text-slate-300 mb-6" />
-                            <p className="font-black text-[14px] uppercase tracking-[0.4em] text-slate-400 italic">Məlumat Portfeli</p>
+                        <div className="h-full flex flex-col items-center justify-center opacity-20">
+                            <Box size={48} strokeWidth={1.5} className="text-slate-400 mb-4" />
+                            <p className="text-[10px] font-black tracking-[0.5em] text-slate-500 uppercase italic">Müştəri Seçin</p>
                         </div>
                     ) : (
-                        <div className="max-w-5xl mx-auto py-16 px-10 space-y-12 animate-in fade-in slide-in-from-bottom-3 duration-500">
+                        <div className="max-w-[1000px] mx-auto py-12 px-8 animate-in fade-in duration-500">
 
-                            {/* Profile Header */}
-                            <div className="bg-white rounded-[2rem] border border-slate-300 p-8 flex items-center justify-between shadow-xl shadow-slate-200/50">
-                                <div className="flex items-center gap-8">
-                                    <div className="h-20 w-20 rounded-3xl bg-slate-900 flex items-center justify-center text-white shadow-lg">
-                                        <User size={36} />
+                            {/* Simple Header */}
+                            <div className="flex items-center justify-between mb-12 border-b border-slate-100 pb-8">
+                                <div className="flex items-center gap-6">
+                                    <div className="h-16 w-16 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-xl shadow-slate-200">
+                                        <User size={28} />
                                     </div>
                                     <div>
-                                        <div className="flex items-center gap-3 mb-2">
-                                            <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none">{selectedCustomer.fullName}</h2>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <div className="flex items-center gap-2 text-xs font-black text-slate-400 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-                                                <span>KOD:</span>
-                                                <span className="text-slate-900 font-black">{selectedCustomer.customerCode}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 text-xs font-black text-red-500 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
-                                                <span>BORC:</span>
-                                                <span className="text-red-700 font-black">{selectedCustomer.debtAmount} AZN</span>
-                                            </div>
+                                        <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-2 leading-none">{selectedCustomer.fullName}</h2>
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{selectedCustomer.customerCode}</span>
+                                            <span className="text-slate-300">/</span>
+                                            <span className="text-[10px] font-black text-red-500 uppercase tracking-[0.2em]">{selectedCustomer.debtAmount} AZN BORC</span>
                                         </div>
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => { setSelectedCustomer(null); setSelectedInvoiceId(null); }}
-                                    className="h-12 w-12 flex items-center justify-center bg-slate-50 border border-slate-200 text-slate-400 hover:bg-red-500 hover:text-white rounded-2xl transition-all shadow-sm"
+                                    onClick={() => setSelectedCustomer(null)}
+                                    className="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                                 >
                                     <X size={20} />
                                 </button>
                             </div>
 
-                            <div className="grid grid-cols-12 gap-10">
-                                {/* Invoices List */}
-                                <div className="col-span-12 lg:col-span-5 space-y-6">
-                                    <div className="flex items-center gap-3 px-2 border-l-4 border-slate-900 py-1">
-                                        <CreditCard size={18} className="text-slate-900" />
-                                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest leading-none">FAKTURA SEÇİMİ</h3>
-                                    </div>
-                                    <div className="grid gap-3">
-                                        {(selectedCustomer.details?.invoices || []).map((inv, idx) => {
-                                            const isSelected = selectedInvoiceId === inv.id;
-                                            const isUploaded = !!inv.archiveUrl;
-                                            return (
-                                                <button
-                                                    key={inv.id}
-                                                    onClick={() => setSelectedInvoiceId(inv.id)}
-                                                    className={cn(
-                                                        "w-full px-6 py-8 rounded-3xl border transition-all text-left relative group outline-none",
-                                                        isSelected
-                                                            ? "bg-slate-900 border-slate-900 shadow-2xl shadow-slate-400 text-white"
-                                                            : "bg-white border-slate-300 hover:border-slate-900 shadow-sm"
-                                                    )}
-                                                >
-                                                    <div className="flex items-center justify-between mb-3">
-                                                        <span className={cn(
-                                                            "text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg",
-                                                            isSelected ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
-                                                        )}>
-                                                            Faktura #{idx + 1}
-                                                        </span>
-                                                        {isUploaded && (
-                                                            <CheckCircle2 size={18} className={isSelected ? "text-emerald-400" : "text-emerald-600"} />
-                                                        )}
-                                                    </div>
-                                                    <p className={cn(
-                                                        "text-[20px] font-black uppercase tracking-tighter leading-tight truncate",
-                                                        isSelected ? "text-white" : "text-slate-900"
-                                                    )}>
-                                                        {inv.invoiceNumber || "Faktura..."}
-                                                    </p>
-                                                    {!isUploaded && isSelected && (
-                                                        <p className="text-[10px] font-bold text-white/40 uppercase mt-2 tracking-widest">Seçilib</p>
-                                                    )}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                            {/* Invoices: The Single Column Stream */}
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Fakturalar Və Sənədlər</h3>
                                 </div>
 
-                                {/* Upload & Status */}
-                                <div className="col-span-12 lg:col-span-7 space-y-8">
-                                    {!selectedInvoiceId ? (
-                                        <div className="h-full min-h-[400px] border border-slate-300 rounded-[2.5rem] flex flex-col items-center justify-center text-slate-300 bg-white shadow-inner">
-                                            <FileUp size={48} strokeWidth={1} className="mb-4 opacity-50" />
-                                            <p className="text-sm font-black uppercase tracking-widest opacity-50">Sənəd İdarəsi Üçün Faktura Seçin</p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-8 animate-in slide-in-from-right-4 duration-500">
-                                            {/* Upload Zone */}
-                                            <div className="bg-white border-2 border-slate-900 shadow-2xl shadow-slate-200 rounded-[3rem] p-12 flex flex-col items-center text-center relative overflow-hidden">
-                                                <div className="h-24 w-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-900 mb-8 border border-slate-200">
-                                                    {uploading ? <Loader2 size={40} className="animate-spin" /> : <FileUp size={40} />}
-                                                </div>
-                                                <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-2">{activeInvoice?.invoiceNumber}</h4>
-                                                <p className="text-sm font-bold text-slate-400 mb-10 max-w-[280px]">Faktura üçün PDF arxiv sənədini təmin edin</p>
+                                {(selectedCustomer.details?.invoices || []).map((inv, idx) => {
+                                    const isUploaded = !!inv.archiveUrl;
+                                    const isCurrentUploading = uploading && selectedInvoiceId === inv.id;
 
-                                                <label className="w-full h-20 bg-slate-900 text-white rounded-[1.5rem] flex items-center justify-center gap-4 text-[13px] font-black uppercase tracking-[0.25em] cursor-pointer hover:bg-slate-800 transition-all shadow-xl shadow-slate-300 active:scale-95">
-                                                    {uploading ? "Hazırlanır..." : "Sənəd Seçin"}
-                                                    {!uploading && <ArrowRight size={20} />}
-                                                    <input
-                                                        type="file"
-                                                        className="hidden"
-                                                        accept=".pdf"
-                                                        disabled={uploading}
-                                                        onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
-                                                    />
-                                                </label>
-                                            </div>
-
-                                            {/* Files associated with this invoice */}
-                                            {activeInvoice?.archiveUrl && (
-                                                <div className="space-y-4">
-                                                    <div className="flex items-center gap-2 px-4 py-1 border-l-4 border-emerald-500">
-                                                        <h3 className="text-[10px] font-black text-emerald-700 uppercase tracking-[0.2em]">YÜKLƏNMİŞ ARXIV SƏNƏDİ</h3>
+                                    return (
+                                        <div key={inv.id} className={cn(
+                                            "bg-white rounded-3xl border p-6 transition-all relative overflow-hidden group",
+                                            isUploaded ? "border-slate-200" : "border-slate-900 shadow-xl shadow-slate-100"
+                                        )}>
+                                            <div className="flex items-center justify-between gap-8">
+                                                <div className="flex items-center gap-5 min-w-0">
+                                                    <div className={cn(
+                                                        "h-12 w-12 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors",
+                                                        isUploaded ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-900 text-white"
+                                                    )}>
+                                                        {isUploaded ? <CheckCircle2 size={20} /> : idx + 1}
                                                     </div>
-                                                    <div className="bg-white border border-slate-300 p-6 rounded-3xl flex items-center justify-between group shadow-lg shadow-slate-100">
-                                                        <div className="flex items-center gap-5">
-                                                            <div className="h-14 w-14 bg-emerald-50 text-emerald-700 rounded-2xl flex items-center justify-center border border-emerald-100 shadow-sm transition-transform group-hover:scale-105">
-                                                                <FileText size={24} />
-                                                            </div>
-                                                            <div className="min-w-0">
-                                                                <p className="text-base font-black text-slate-900 truncate max-w-[200px] uppercase tracking-tighter">{activeInvoice.archiveName || "PDF Sənəd"}</p>
-                                                                <p className="text-[10px] text-emerald-600 font-black uppercase mt-1 tracking-widest">Sistemdə Mövcuddur</p>
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex items-center gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Faktura №</p>
+                                                        <h4 className="text-lg font-black text-slate-900 uppercase tracking-tight truncate">
+                                                            {inv.invoiceNumber || "---"}
+                                                        </h4>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-3 shrink-0">
+                                                    {isUploaded ? (
+                                                        <>
                                                             <a
-                                                                href={activeInvoice.archiveUrl}
+                                                                href={inv.archiveUrl}
                                                                 target="_blank"
-                                                                className="h-12 px-8 flex items-center justify-center bg-slate-100 text-slate-900 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-900 hover:text-white transition-all border border-slate-200 shadow-sm"
+                                                                className="h-11 px-6 flex items-center gap-2.5 bg-slate-50 text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-900 hover:text-white transition-all border border-slate-200"
                                                             >
-                                                                Bax <ExternalLink size={14} className="ml-3 opacity-40 group-hover:opacity-100" />
+                                                                Sənədə Bax <ExternalLink size={14} className="opacity-40" />
                                                             </a>
                                                             <button
-                                                                onClick={() => handleRemoveFile(selectedCustomer, activeInvoice.id)}
-                                                                className="h-12 w-12 flex items-center justify-center text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-2xl transition-all border border-red-100 shadow-sm"
+                                                                onClick={() => handleRemoveFile(selectedCustomer, inv.id)}
+                                                                className="h-11 w-11 flex items-center justify-center text-red-400 bg-white border border-slate-200 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                                                                title="Sənədi Sil"
                                                             >
-                                                                <Trash2 size={20} />
+                                                                <Trash2 size={18} />
                                                             </button>
-                                                        </div>
-                                                    </div>
+                                                        </>
+                                                    ) : (
+                                                        <label className={cn(
+                                                            "h-11 px-8 flex items-center gap-3 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all shadow-md group-hover:scale-[1.02] active:scale-95",
+                                                            isCurrentUploading ? "bg-slate-200 text-slate-500 pointer-events-none" : "bg-slate-900 text-white hover:bg-black"
+                                                        )}>
+                                                            {isCurrentUploading ? (
+                                                                <Loader2 size={14} className="animate-spin" />
+                                                            ) : (
+                                                                <>Sənəd Yüklə <FileUp size={14} /></>
+                                                            )}
+                                                            <input
+                                                                type="file"
+                                                                className="hidden"
+                                                                accept=".pdf"
+                                                                disabled={uploading}
+                                                                onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], inv.id)}
+                                                            />
+                                                        </label>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {isUploaded && (
+                                                <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2">
+                                                    <FileText size={12} className="text-slate-300" />
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate max-w-[400px]">
+                                                        {inv.archiveName}
+                                                    </span>
                                                 </div>
                                             )}
                                         </div>
-                                    )}
-                                </div>
+                                    );
+                                })}
+
+                                {selectedCustomer.details?.invoices?.length === 0 && (
+                                    <div className="py-20 text-center border-2 border-dashed border-slate-100 rounded-3xl">
+                                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic">Heç bir faktura tapılmadı</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

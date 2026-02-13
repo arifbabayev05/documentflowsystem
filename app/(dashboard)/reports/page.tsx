@@ -31,8 +31,22 @@ interface Template {
 }
 
 export default function ReportsPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
     const router = useRouter();
+
+    if (!user || !can("reports_read")) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <FileText size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Hesabatlar icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
     const [activeTab, setActiveTab] = useState<"customers" | "templates">("customers");
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [templates, setTemplates] = useState<Template[]>([]);

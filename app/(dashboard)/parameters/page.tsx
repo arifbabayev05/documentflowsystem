@@ -56,9 +56,23 @@ interface CompanyInfo {
 }
 
 export default function ParametersPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
     const [courts, setCourts] = useState<Court[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
+
+    if (!user || !can("parameters_manage")) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <Settings size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Parametrlər icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo>({
         companyName: "",
         address: "",
