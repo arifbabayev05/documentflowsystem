@@ -103,6 +103,7 @@ interface Customer {
     fullData?: boolean;
     process_status?: string;
     store?: string;
+    courtName?: string;
     details?: {
         address?: string;
         actualAddress?: string;
@@ -377,8 +378,7 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     onBlur={onBlur}
                     onChange={(e) => {
                         let val = e.target.value;
-                        const dateFields = ["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"];
-                        if (dateFields.includes(label) || placeholder === "GG.AA.İİİİ" || placeholder === "DD.MM.YYYY") {
+                        if (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label)) {
                             val = val.replace(/\D/g, "").slice(0, 8);
                             if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
                             else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
@@ -390,8 +390,8 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     }}
                     placeholder={placeholder || (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label) ? "GG.AA.İİİİ" : "-")}
                     className={cn(
-                        "w-full px-3 py-1.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm",
-                        "focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 placeholder:text-slate-300 placeholder:font-medium",
+                        "w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm",
+                        "focus:border-primary focus:ring-2 focus:ring-primary/5 focus:shadow-md hover:border-slate-300",
                         isFin ? "uppercase tracking-widest" : "",
                         isPrice ? "text-primary font-black bg-primary/5 border-primary/10" : ""
                     )}
@@ -1151,6 +1151,12 @@ function GenerateDocumentContent() {
 
     const handleSave = async (showToast: any = true) => {
         if (!customer) return;
+
+        // 0. Perform validation before any other action
+        if (!validateData()) {
+            return false;
+        }
+
         setIsSaving(true);
         try {
             const details = { ...(customer.details || {}) };
@@ -1190,8 +1196,12 @@ function GenerateDocumentContent() {
                 fullName: customer.fullName,
                 debtAmount: (details as any).totalUnpaid || customer.debtAmount,
                 details,
-                fullData: true
+                fullData: true,
+                courtName: selectedCourt?.name || ""
             }, user?.email);
+
+            // Sync local customer state
+            setCustomer(prev => prev ? { ...prev, courtName: selectedCourt?.name || "" } : null);
 
             // Sync local files state with URLs to avoid re-upload
             if ((details as any).receiptUrl) setReceiptFile(prev => prev ? { ...prev, content: (details as any).receiptUrl } : null);
@@ -1798,12 +1808,22 @@ function GenerateDocumentContent() {
                                     const mainZip = new PizZip();
 
                                     // 1. Generate all filtered documents silentely and add to ZIP
+                                    let hasError = false;
                                     for (const temp of filteredTemplates) {
                                         const result = await generateDocument(temp, true) as any;
                                         if (result && result.content) {
                                             mainZip.file(result.fileName, result.content, { binary: true });
                                             await addAuditLog("GENERATE_DOC", `${customer.fullName} üçün ${temp.name} (Toplu) yaradıldı`, user?.email || "system");
+                                        } else {
+                                            // generateDocument handles toast calling validateData
+                                            hasError = true;
+                                            break;
                                         }
+                                    }
+
+                                    if (hasError) {
+                                        toast.dismiss(loadingId);
+                                        return;
                                     }
 
                                     // 3. Add mandatory images to ZIP
@@ -1819,16 +1839,17 @@ function GenerateDocumentContent() {
                                     const zipContent = mainZip.generate({ type: "blob", mimeType: "application/zip" });
                                     saveAs(zipContent, `${customer.fullName.replace(/\s+/g, '_')}_BUTUN_SENEDLER.zip`);
 
-                                    // 2. Update status to COMPLETED
+                                    // 2. Update status to COMPLETED and save Court Name
                                     await updateCustomer(customer.id, {
                                         ...customer,
-                                        process_status: 'COMPLETED'
+                                        process_status: 'COMPLETED',
+                                        courtName: selectedCourt.name
                                     }, user?.email);
 
                                     toast.success("Bütün sənədlər ZIP olaraq yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
 
                                     // Refresh local customer state
-                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED' } : null);
+                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt.name } : null);
                                 } catch (err) {
                                     console.error("Batch generation error:", err);
                                     toast.error("Sənədləri yaradarkən xəta baş verdi", { id: loadingId });
@@ -2058,23 +2079,26 @@ function GenerateDocumentContent() {
                                             {/* Orders List */}
                                             <div className="space-y-3">
                                                 {(inv.orders || []).map((ord) => (
-                                                    <div key={ord.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-3 group/ord">
+                                                    <div key={ord.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm space-y-4 group/ord">
                                                         <div className="flex items-center justify-between gap-3">
                                                             <div className="flex-1">
-                                                                <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1 mb-0.5 block">MƏHSUL ADI</label>
-                                                                <input
+                                                                <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-1 mb-1.5 block">MƏHSUL ADI</label>
+                                                                <textarea
+                                                                    rows={2}
                                                                     value={ord.productDescription}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/20 transition-all"
-                                                                    placeholder="Məs: iPhone 13 (IMEI: ...)"
+                                                                    className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2.5 rounded-xl font-bold text-[12px] outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/5 transition-all resize-none scrollbar-none"
+                                                                    placeholder="Məs: iPhone 13 (IMEI: ...), Kabro, Adapter"
                                                                 />
                                                             </div>
-                                                            <button
-                                                                onClick={() => removeOrder(inv.id, ord.id)}
-                                                                className="h-7 w-7 flex items-center justify-center text-slate-200 hover:text-red-400 transition-all"
-                                                            >
-                                                                <Minus size={12} />
-                                                            </button>
+                                                            {inv.orders.length > 1 && (
+                                                                <button
+                                                                    onClick={() => removeOrder(inv.id, ord.id)}
+                                                                    className="h-7 w-7 flex items-center justify-center text-slate-200 hover:text-red-400 transition-all mt-6"
+                                                                >
+                                                                    <Minus size={12} />
+                                                                </button>
+                                                            )}
                                                         </div>
 
                                                         <div className="grid grid-cols-4 gap-2">
@@ -2083,7 +2107,7 @@ function GenerateDocumentContent() {
                                                                 <input
                                                                     value={ord.paymentPeriod}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
@@ -2091,7 +2115,7 @@ function GenerateDocumentContent() {
                                                                 <input
                                                                     value={ord.initialPayment}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
@@ -2099,7 +2123,7 @@ function GenerateDocumentContent() {
                                                                 <input
                                                                     value={ord.monthlyPayment}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
@@ -2107,7 +2131,7 @@ function GenerateDocumentContent() {
                                                                 <input
                                                                     value={ord.paidAmount}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
-                                                                    className="w-full bg-slate-50 border border-slate-100 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
                                                                 />
                                                             </div>
                                                         </div>
@@ -2124,19 +2148,13 @@ function GenerateDocumentContent() {
                                                                         else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
                                                                         updateOrder(inv.id, ord.id, 'contractDate', val);
                                                                     }}
-                                                                    className="w-20 bg-slate-50 border border-slate-100 py-1 rounded-md font-bold text-[10px] text-center outline-none"
+                                                                    className="w-20 bg-slate-100/50 border border-slate-200 py-1 rounded-md font-bold text-[10px] text-center outline-none"
                                                                     placeholder="GG.AA.İİİİ"
                                                                 />
                                                             </div>
                                                         </div>
                                                     </div>
                                                 ))}
-                                                <button
-                                                    onClick={() => addOrder(inv.id)}
-                                                    className="w-full py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-600 text-[9px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
-                                                >
-                                                    <Plus size={12} /> Məhsul Əlavə Et
-                                                </button>
                                             </div>
                                         </div>
                                     ))}

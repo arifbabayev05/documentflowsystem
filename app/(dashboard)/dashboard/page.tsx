@@ -177,11 +177,27 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
     const handleValueChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         let val = e.target.value;
         const datePaths = ['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'];
+        const numericPaths = [
+            'details.totalPrice', 'details.paidAmount', 'details.unpaidAmount',
+            'details.fee', 'details.penalty', 'details.discountAmount',
+            'details.totalUnpaid', 'details.paymentPeriod', 'details.monthlyPayment',
+            'details.initialPayment'
+        ];
+
         if (datePaths.includes(path)) {
             val = val.replace(/\D/g, '').slice(0, 8);
             if (val.length >= 4) val = val.slice(0, 2) + '.' + val.slice(2, 4) + '.' + val.slice(4);
             else if (val.length >= 2) val = val.slice(0, 2) + '.' + val.slice(2);
+        } else if (numericPaths.includes(path)) {
+            // Allow only digits, dots, and commas
+            val = val.replace(/[^0-9.,]/g, "");
+            // Convert comma to dot
+            val = val.replace(/,/g, ".");
+            // Allow only one dot
+            const parts = val.split(".");
+            if (parts.length > 2) val = parts[0] + "." + parts.slice(1).join("");
         }
+
         if (isFin) {
             val = val.toUpperCase();
         }
@@ -1176,9 +1192,17 @@ const CustomerCard = memo(({
                                     <div className="pt-2 grid grid-cols-1 gap-4">
 
                                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                            <CustomerField label="Qeydiyyat Ünvanı" path="details.address" placeholder="Şəhər, Rayon..." value={getValue("details.address")} onChange={handleFieldChange} isEditing={isEditing} />
+                                            <CustomerField
+                                                label="Qeydiyyat Ünvanı"
+                                                path="details.address"
+                                                placeholder="Şəhər, Rayon..."
+                                                value={getValue("details.address")}
+                                                onChange={handleFieldChange}
+                                                isEditing={isEditing}
+                                                className={!isKarabakhAddress(getValue("details.address")) ? "lg:col-span-2" : ""}
+                                            />
                                             {isKarabakhAddress(getValue("details.address")) && (
-                                                <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Küçə, Bina, Mənzil..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} className=" rounded-xl bg-orange-50/5" />
+                                                <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Şəhər, Rayon..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} className=" rounded-xl bg-orange-50/5" />
                                             )}
                                         </div>
                                     </div>
@@ -1454,7 +1478,12 @@ const CustomerCard = memo(({
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.paymentPeriod || ""}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            const parts = v.split(".");
+                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                            updateOrder(inv.id, ord.id, 'paymentPeriod', v);
+                                                                        }}
                                                                         className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
@@ -1463,7 +1492,12 @@ const CustomerCard = memo(({
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.initialPayment || ""}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            const parts = v.split(".");
+                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                            updateOrder(inv.id, ord.id, 'initialPayment', v);
+                                                                        }}
                                                                         className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
@@ -1472,7 +1506,12 @@ const CustomerCard = memo(({
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.monthlyPayment || ""}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            const parts = v.split(".");
+                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                            updateOrder(inv.id, ord.id, 'monthlyPayment', v);
+                                                                        }}
                                                                         className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
@@ -1481,7 +1520,16 @@ const CustomerCard = memo(({
                                                                     <input
                                                                         readOnly={!isEditing}
                                                                         value={ord.paidAmount || ""}
-                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value;
+                                                                            // Strict numeric validation for inner order fields
+                                                                            // The field name is 'paidAmount'
+                                                                            v = v.replace(/[^0-9.,]/g, "");
+                                                                            v = v.replace(/,/g, ".");
+                                                                            const parts = v.split(".");
+                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                            updateOrder(inv.id, ord.id, 'paidAmount', v);
+                                                                        }}
                                                                         className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                     />
                                                                 </div>
@@ -1518,7 +1566,7 @@ const CustomerCard = memo(({
                                                     </div>
                                                 ))}
                                             </div>
-                                            {/* ADD PRODUCT */}
+                                            {/* ADD PRODUCT
                                             {isEditing && (
                                                 <div className="flex justify-end mt-4">
                                                     <button
@@ -1531,7 +1579,7 @@ const CustomerCard = memo(({
                                                         <Plus size={14} /> <span className="hidden sm:inline">Məhsul</span>
                                                     </button>
                                                 </div>
-                                            )}
+                                            )} */}
                                         </div>
                                     ))}
                                 </div>
@@ -1641,7 +1689,7 @@ const CustomerCard = memo(({
                                 error: 'Xəta baş verdi'
                             });
                         }}
-                        className="mt-2 w-full h-10 flex items-center justify-center gap-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 hover:text-slate-900 transition-all font-bold text-[10px] uppercase tracking-wider border border-slate-200"
+                        className="mt-2 w-full h-10 flex items-center justify-center gap-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 hover:text-slate-900 transition-all font-bold text-[10px] uppercase tracking-wider border border-slate-300"
                     >
                         <FolderArchive size={14} /> Arxivə göndər
                     </button>

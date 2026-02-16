@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { bulkAddCustomers, getInspectorCustomers } from "@/lib/db";
+import { bulkAddCustomers, getInspectorCustomers, getCustomer } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
@@ -280,7 +280,44 @@ export default function InspectorPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [dateRange, setDateRange] = useState({ start: "", end: "" });
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        message: string;
+        onConfirm: () => void;
+        onCancel: () => void;
+    } | null>(null);
+
     const tableRef = useRef<HTMLDivElement>(null);
+
+    const formatAZDate = (val: any) => {
+        if (!val) return "naməlum";
+        let d: Date;
+        if (val && typeof val.toDate === 'function') d = val.toDate();
+        else d = new Date(val);
+
+        if (isNaN(d.getTime())) return "naməlum";
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}.${month}.${year}`;
+    };
+
+    const askConfirmation = (message: string) => {
+        return new Promise<boolean>((resolve) => {
+            setConfirmModal({
+                isOpen: true,
+                message,
+                onConfirm: () => {
+                    setConfirmModal(null);
+                    resolve(true);
+                },
+                onCancel: () => {
+                    setConfirmModal(null);
+                    resolve(false);
+                }
+            });
+        });
+    };
 
     /* ── fetch history ── */
     const fetchHistory = useCallback(async () => {
@@ -403,32 +440,53 @@ export default function InspectorPage() {
 
     /* ── save ── */
     const saveAll = async () => {
-        const valid = rows.filter(r => r.customer_code && r.full_name);
-        if (valid.length === 0) {
+        const validRows = rows.filter(r => r.customer_code && r.full_name);
+        if (validRows.length === 0) {
             toast.error("Ən azı 1 tam sətir daxil edin");
             return;
         }
         try {
             setSaving(true);
-            const payload = valid.map(r => ({
-                customerCode: r.customer_code,
-                fullName: r.full_name,
-                debtAmount: r.total_debt,
-                process_status: "INSPECTOR_ENTERED" as ProcessStatus,
-                createdBy: user?.email,
-                createdAt: new Date().toISOString(),
-                details: {
-                    fin: r.fin,
-                    passportSeries: r.serial_number,
-                    executorName: user?.displayName || "",
-                    isWarningSent: false,
-                },
-            }));
-            await bulkAddCustomers(payload, user?.email);
-            toast.success(`${payload.length} müştəri yadda saxlanıldı`);
+            const finalPayload = [];
+
+            for (const r of validRows) {
+                // Check for duplicates in DB
+                const existing = await getCustomer(r.customer_code) as any;
+                if (existing) {
+                    const dateStr = formatAZDate(existing.createdAt);
+                    const confirmed = await askConfirmation(
+                        `Müştəri ${r.customer_code} (${r.full_name}) artıq ${dateStr} tarixində sistemə qeyd edilib.\nYenidən daxil etmək istəyirsiniz?`
+                    );
+                    if (!confirmed) continue;
+                }
+
+                finalPayload.push({
+                    customerCode: r.customer_code,
+                    fullName: r.full_name,
+                    debtAmount: r.total_debt,
+                    process_status: "INSPECTOR_ENTERED" as ProcessStatus,
+                    createdBy: user?.email,
+                    createdAt: new Date().toISOString(),
+                    details: {
+                        fin: r.fin,
+                        passportSeries: r.serial_number,
+                        executorName: user?.displayName || "",
+                        isWarningSent: false,
+                    },
+                });
+            }
+
+            if (finalPayload.length === 0) {
+                setSaving(false);
+                return;
+            }
+
+            await bulkAddCustomers(finalPayload, user?.email);
+            toast.success(`${finalPayload.length} müştəri yadda saxlanıldı`);
             setRows([{ ...EMPTY_ROW }]);
             fetchHistory();
-        } catch {
+        } catch (err) {
+            console.error(err);
             toast.error("Xəta baş verdi");
         } finally {
             setSaving(false);
@@ -526,6 +584,18 @@ export default function InspectorPage() {
                                             onChange={e => {
                                                 let v = e.target.value;
                                                 if (col.uppercase) v = v.toUpperCase();
+
+                                                // Handle numeric restriction for debt field
+                                                if (col.key === "total_debt") {
+                                                    // Allow only digits, dots, and commas
+                                                    v = v.replace(/[^0-9.,]/g, "");
+                                                    // Convert comma to dot
+                                                    v = v.replace(/,/g, ".");
+                                                    // Allow only one dot
+                                                    const parts = v.split(".");
+                                                    if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                }
+
                                                 updateCell(ri, col.key, v);
                                             }}
                                             onKeyDown={e => handleKeyDown(e, ri, ci)}
@@ -673,6 +743,48 @@ export default function InspectorPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Duplicate Confirm Modal */}
+            <DuplicateConfirmModal
+                isOpen={confirmModal?.isOpen || false}
+                message={confirmModal?.message || ""}
+                onConfirm={confirmModal?.onConfirm || (() => { })}
+                onCancel={confirmModal?.onCancel || (() => { })}
+            />
         </AuthGuard>
+    );
+}
+
+function DuplicateConfirmModal({ isOpen, message, onConfirm, onCancel }: { isOpen: boolean, message: string, onConfirm: () => void, onCancel: () => void }) {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onCancel} />
+            <div className="relative bg-white rounded-[2.5rem] p-10 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="h-20 w-20 rounded-3xl bg-amber-50 flex items-center justify-center mx-auto mb-8">
+                    <AlertTriangle size={40} className="text-amber-500" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 text-center mb-4 uppercase tracking-tighter">Məlumat mövcuddur</h3>
+                <p className="text-slate-600 text-center mb-10 font-medium leading-relaxed">
+                    {message.split('\n').map((line, i) => (
+                        <span key={i} className="block">{line}</span>
+                    ))}
+                </p>
+                <div className="flex gap-4">
+                    <button
+                        onClick={onCancel}
+                        className="flex-1 h-14 rounded-2xl border border-slate-200 text-slate-500 font-bold hover:bg-slate-50 transition-all font-black uppercase text-[12px] tracking-widest"
+                    >
+                        Xeyr
+                    </button>
+                    <button
+                        onClick={onConfirm}
+                        className="flex-1 h-14 rounded-2xl bg-amber-500 text-white font-bold hover:bg-amber-600 shadow-lg shadow-amber-500/20 transition-all font-black uppercase text-[12px] tracking-widest"
+                    >
+                        Bəli, əlavə et
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }

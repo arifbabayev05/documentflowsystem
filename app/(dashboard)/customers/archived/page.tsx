@@ -53,13 +53,14 @@ interface CustomerRow {
     isArchived?: boolean;
     store?: string;
     statusHistory?: Array<{
-        status: ProcessStatus;
-        updatedAt: string;
-        updatedBy: string;
-        comment?: string;
+        label: string;
+        action: string;
+        timestamp: string;
+        user: string;
     }>;
     archivedAt?: string;
     createdBy?: string;
+    updatedAt?: string;
     details?: {
         // ...
         address?: string;
@@ -163,6 +164,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     const [isExpanded, setIsExpanded] = useState(false);
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
     const [uploading, setUploading] = useState<string | null>(null);
+    const [isTimelineOpen, setIsTimelineOpen] = useState(false);
 
     useEffect(() => {
         if (!isEditing) setLocalData(JSON.parse(JSON.stringify(row)));
@@ -214,7 +216,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                 };
             }
             const updatedData = { ...localData, process_status: 'ARCHIVE_UPLOADED' as ProcessStatus, details: { ...localData.details, invoices: updatedInvoices } };
-            await onSave(updatedData);
+            await onSave(updatedData, user?.email);
             setLocalData(updatedData);
             toast.success("Sənəd uğurla yükləndi!");
         } catch (err) {
@@ -237,7 +239,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                 updatedInvoices[invIdx] = { ...updatedInvoices[invIdx], archiveUrl: "", archiveName: "" };
             }
             const updatedData = { ...localData, details: { ...localData.details, invoices: updatedInvoices } };
-            await onSave(updatedData);
+            await onSave(updatedData, user?.email);
             setLocalData(updatedData);
             toast.success("Sənəd silindi");
         } catch (err) {
@@ -248,36 +250,77 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     const handleRestore = async (e: React.MouseEvent) => {
         e.stopPropagation();
         const updated = { ...localData, isArchived: false };
-        toast.promise(onSave(updated), {
+        toast.promise(onSave(updated, user?.email), {
             loading: 'Bərpa edilir...',
             success: 'Müştəri Dashboard-a qaytarıldı',
             error: 'Xəta baş verdi'
         });
     };
 
-    const timeline = useMemo(() => {
-        const entries = [];
-        if (row.createdAt) entries.push({ label: "Müştəri qeydə alındı", date: row.createdAt, icon: <Plus size={14} />, color: "bg-blue-500", user: row.createdBy });
-        if (row.assignedAt) entries.push({ label: "Müfəttiş təyin edildi", date: row.assignedAt, icon: <UserPlus size={14} />, color: "bg-purple-500", user: "Manager" });
+    const { timeline, durationText } = useMemo(() => {
+        const entries: any[] = [];
 
-        // If we have status history, use it
-        if (row.statusHistory) {
+        // Legacy fallback for creation
+        if (row.createdAt && (!row.statusHistory || !row.statusHistory.some((h: any) => h.action === 'CREATE'))) {
+            entries.push({
+                label: "Müştəri qeydə alındı",
+                date: row.createdAt,
+                icon: <Plus size={14} />,
+                color: "bg-blue-500",
+                user: row.createdBy || "Sistem"
+            });
+        }
+
+        // Use status history if available
+        if (row.statusHistory && row.statusHistory.length > 0) {
             row.statusHistory.forEach((h: any) => {
-                const label = (STATUS_LABELS as any)[h.status]?.label || h.status;
+                let icon = <Check size={14} />;
+                let color = "bg-emerald-500";
+
+                if (h.action === 'CREATE') { icon = <Plus size={14} />; color = "bg-blue-500"; }
+                else if (h.action === 'ASSIGN') { icon = <UserPlus size={14} />; color = "bg-purple-500"; }
+                else if (h.action === 'FILE_UPLOAD') { icon = <FileUp size={14} />; color = "bg-indigo-400"; }
+                else if (h.action === 'ARCHIVE' || h.action === 'ARCHIVE_REQUEST') { icon = <FolderArchive size={14} />; color = "bg-slate-800"; }
+                else if (h.action === 'RESTORE') { icon = <RefreshCw size={14} />; color = "bg-amber-500"; }
+                else if (h.action === 'STATUS_CHANGE') { icon = <Check size={14} />; color = "bg-emerald-500"; }
+
                 entries.push({
-                    label,
-                    date: h.updatedAt,
-                    icon: <Check size={14} />,
-                    color: "bg-emerald-500",
-                    user: h.updatedBy
+                    label: h.label,
+                    date: h.timestamp,
+                    icon,
+                    color,
+                    user: h.user
                 });
             });
         }
 
-        if (row.archivedAt) entries.push({ label: "Arxivə göndərildi", date: row.archivedAt, icon: <FolderArchive size={14} />, color: "bg-slate-900", user: "Sistem" });
-        else if (row.isArchived && row.updatedAt) entries.push({ label: "Arxivə göndərildi", date: row.updatedAt, icon: <FolderArchive size={14} />, color: "bg-slate-900", user: "Sistem" });
+        const sorted = entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        return entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        // Deduplicate
+        const unique = sorted.filter((val, index, self) =>
+            index === self.findIndex((t) => (
+                t.label === val.label &&
+                Math.floor(new Date(t.date).getTime() / 60000) === Math.floor(new Date(val.date).getTime() / 60000)
+            ))
+        );
+
+        let duration = "";
+        if (unique.length >= 2) {
+            const start = new Date(unique[0].date).getTime();
+            const end = new Date(unique[unique.length - 1].date).getTime();
+            const diff = Math.max(0, end - start);
+            const hours = Math.floor(diff / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const days = Math.floor(hours / 24);
+
+            if (days < 1) {
+                duration = `${hours} saat ${minutes} dəq`;
+            } else {
+                duration = `${days} gün ${hours % 24} saat`;
+            }
+        }
+
+        return { timeline: unique, durationText: duration };
     }, [row]);
 
     return (
@@ -313,15 +356,26 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                                 </div>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
-                                <RefreshCw size={14} /> Bərpa Et
-                            </button>
-                            {canDelete && (
-                                <button onClick={(e) => { e.stopPropagation(); onDelete(index); }} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100">
-                                    <Trash2 size={16} />
-                                </button>
+                        <div className="flex items-center gap-6">
+                            {durationText && (
+                                <div className="hidden sm:flex flex-col items-end">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.15em] leading-none mb-1.5 opacity-60">Proses Müddəti</span>
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100/50 rounded-lg border border-slate-200 transition-all group-hover:bg-white">
+                                        <Clock size={12} className="text-indigo-500" />
+                                        <span className="text-[11px] font-black text-slate-700 tracking-tight">{durationText}</span>
+                                    </div>
+                                </div>
                             )}
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
+                                    <RefreshCw size={14} /> Bərpa Et
+                                </button>
+                                {canDelete && (
+                                    <button onClick={(e) => { e.stopPropagation(); onDelete(index); }} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100">
+                                        <Trash2 size={16} />
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -367,37 +421,150 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                             </div>
                         </div>
 
-                        {/* TIMELINE SECTION */}
-                        <div className="mb-10 p-6 bg-slate-50 rounded-[2rem] border border-slate-200/60 relative overflow-hidden">
-                            <div className="absolute top-0 right-0 p-8 opacity-[0.03] rotate-12">
-                                <History size={120} />
-                            </div>
-                            <h4 className="flex items-center gap-2 text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-8 relative z-10">
-                                <History size={16} className="text-slate-900" /> Əməliyyat Tarixçəsi (Timeline)
-                            </h4>
-                            <div className="relative pl-8 space-y-8 relative z-10">
-                                <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-slate-200" />
-                                {timeline.map((item, i) => (
-                                    <div key={i} className="relative group/step">
-                                        <div className={cn("absolute -left-8 top-1 h-8 w-8 rounded-full border-4 border-slate-50 flex items-center justify-center text-white shadow-sm transition-transform group-hover/step:scale-110", item.color)}>
-                                            {item.icon}
+                        {/* COMPACT TIMELINE PREVIEW */}
+                        <div className="mb-10 p-5 bg-slate-50 rounded-[1.5rem] border border-slate-200/60 relative overflow-hidden group/timeline cursor-pointer hover:bg-slate-100 transition-all" onClick={() => setIsTimelineOpen(true)}>
+                            <div className="flex items-center justify-between relative z-10">
+                                <div className="flex items-center gap-4">
+                                    <div className="h-10 w-10 bg-white rounded-xl border border-slate-200 flex items-center justify-center shadow-sm group-hover/timeline:border-slate-400 group-hover/timeline:scale-110 transition-all">
+                                        <History size={18} className="text-slate-900" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.15em] leading-none mb-1.5">Əməliyyat Tarixçəsi</h4>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{timeline.length} Əməliyyat qeydə alınıb</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-6">
+                                    {durationText && (
+                                        <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg shadow-sm">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em]">Ümumi Proses:</span>
+                                            <span className="text-[11px] font-black text-slate-900">{durationText}</span>
                                         </div>
-                                        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm inline-block min-w-[300px] group-hover/step:border-slate-400 transition-all">
-                                            <div className="flex items-center justify-between gap-4 mb-1">
-                                                <span className="text-[12px] font-black text-slate-900 uppercase tracking-tight">{item.label}</span>
-                                                <span className="text-[10px] font-bold text-slate-400">{new Date(item.date).toLocaleDateString('az-AZ')} | {new Date(item.date).toLocaleTimeString('az-AZ', { hour: '2-digit', minute: '2-digit' })}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-50">
-                                                <div className="h-5 w-5 bg-slate-100 rounded-md flex items-center justify-center text-[9px] font-black text-slate-500 uppercase">
-                                                    {(item.user || "System")[0]}
-                                                </div>
-                                                <span className="text-[10px] font-bold text-slate-500">{item.user || "Sistem tərəfindən"}</span>
+                                    )}
+                                    <div className="h-8 pr-4 pl-5 flex items-center gap-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase tracking-[0.15em] hover:bg-black transition-all shadow-lg hover:shadow-slate-200">
+                                        Bax <ArrowRight size={12} className="group-hover/timeline:translate-x-1 transition-transform" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* PREMIUM STEPPER PREVIEW */}
+                            <div className="mt-8 flex items-start w-[98%] max-w-[1200px] mx-auto overflow-visible px-4">
+                                {timeline.slice(0, 6).map((item, i) => (
+                                    <div key={i} className="flex-1 flex flex-col items-center relative group/point">
+                                        {/* Progressive Line */}
+                                        {i < Math.min(timeline.length, 6) - 1 && (
+                                            <div className="absolute left-1/2 top-[7px] w-full h-[2px] bg-slate-100 group-hover/point:bg-slate-200 transition-colors" />
+                                        )}
+
+                                        {/* Styled Node */}
+                                        <div className="relative z-10 flex flex-col items-center">
+                                            <div className={cn(
+                                                "h-3.5 w-3.5 rounded-full border-2 border-white shadow-md ring-4 ring-slate-50 transition-all group-hover/point:scale-125 group-hover/point:ring-white",
+                                                item.color
+                                            )} />
+                                        </div>
+
+                                        {/* Label & Date */}
+                                        <div className="mt-4 text-center px-1 group-hover/point:translate-y-[-2px] transition-transform duration-300">
+                                            <p className="text-[8px] font-black text-slate-600 uppercase tracking-[0.05em] leading-[1.2] mb-1 group-hover/point:text-slate-900 truncate max-w-[120px]">
+                                                {item.label}
+                                            </p>
+                                            <div className="flex items-center justify-center gap-1 opacity-60">
+                                                <Calendar size={8} className="text-slate-400" />
+                                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                    {new Date(item.date).toLocaleDateString('az-AZ', { day: '2-digit', month: '2-digit' })}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
                                 ))}
+                                {timeline.length > 6 && (
+                                    <div className="flex flex-col items-center justify-center h-14 pl-2">
+                                        <div className="h-6 w-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-[9px] font-black text-slate-400 shadow-sm">
+                                            +{timeline.length - 6}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
+
+                        {/* FULL TIMELINE MODAL */}
+                        {isTimelineOpen && (
+                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setIsTimelineOpen(false)}>
+                                <div className="bg-white rounded-[2.5rem] w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200 flex flex-col" onClick={e => e.stopPropagation()}>
+                                    {/* Modal Header */}
+                                    <div className="p-8 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/50">
+                                        <div className="flex items-center gap-5">
+                                            <div className="h-14 w-14 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-xl shadow-slate-200">
+                                                <History size={24} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight leading-none mb-1.5">Tarixçə Detalları</h3>
+                                                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{row.fullName} | {row.customerCode}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => setIsTimelineOpen(false)} className="h-12 w-12 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all shadow-sm">
+                                            <X size={20} />
+                                        </button>
+                                    </div>
+
+                                    {/* Modal Content */}
+                                    <div className="flex-1 overflow-y-auto p-8 bg-white scrollbar-thin scrollbar-thumb-slate-200">
+                                        {durationText && (
+                                            <div className="mb-8 p-6 bg-slate-900 rounded-3xl text-white flex items-center justify-between shadow-xl shadow-slate-200">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center">
+                                                        <Clock size={20} className="text-indigo-300" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Ümumi Proses Vaxtı</p>
+                                                        <p className="text-lg font-black tracking-tight leading-none">{durationText}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="h-10 px-4 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl flex items-center gap-2 font-bold text-[10px] uppercase tracking-wider">
+                                                    <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                    TAMAMLANIB
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="relative pl-10 space-y-10">
+                                            <div className="absolute left-[19px] top-4 bottom-4 w-0.5 bg-slate-100" />
+                                            {timeline.map((item, i) => (
+                                                <div key={i} className="relative group/step anim-step" style={{ animationDelay: `${i * 100}ms` }}>
+                                                    <div className={cn("absolute -left-10 top-0 h-10 w-10 rounded-2xl border-4 border-white flex items-center justify-center text-white shadow-lg transition-all scale-100 group-hover/step:scale-110", item.color)}>
+                                                        {item.icon}
+                                                    </div>
+                                                    <div className="bg-slate-50/70 border border-slate-100 rounded-2xl p-5 group-hover/step:bg-white group-hover/step:border-slate-300 group-hover/step:shadow-md transition-all">
+                                                        <div className="flex items-center justify-between gap-4 mb-2">
+                                                            <span className="text-[14px] font-black text-slate-900 uppercase tracking-tight leading-none">{item.label}</span>
+                                                            <div className="px-3 py-1 bg-white rounded-lg border border-slate-100 text-[10px] font-bold text-slate-500 shadow-sm">
+                                                                {new Date(item.date).toLocaleTimeString('az-AZ', { hour: '2-digit', minute: '2-digit' })}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <div className="h-7 w-7 bg-white rounded-lg border border-slate-200 flex items-center justify-center text-[10px] font-black text-indigo-500 uppercase shadow-sm">
+                                                                    <User size={14} />
+                                                                </div>
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">İcraçı</span>
+                                                                    <span className="text-[11px] font-black text-slate-900 truncate max-w-[240px] uppercase tracking-tight">{item.user || "Sistem"}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 text-slate-400 font-bold text-[10px] uppercase tracking-widest">
+                                                                <Calendar size={12} />
+                                                                {new Date(item.date).toLocaleDateString('az-AZ')}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* INVOICES SECTION WITH UPLOAD */}
                         <div className="space-y-4">
@@ -484,9 +651,9 @@ export default function ArchivedCustomersPage() {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const handleSave = async (data: CustomerRow) => {
+    const handleSave = async (data: CustomerRow, email?: string) => {
         if (!data.id) return;
-        await updateCustomer(data.id, data);
+        await updateCustomer(data.id, data, email || user?.email);
         setRows(prev => prev.map(r => r.id === data.id ? data : r));
     };
 
@@ -494,7 +661,7 @@ export default function ArchivedCustomersPage() {
         if (deleteModal.index !== null) {
             const customer = filteredRows[deleteModal.index];
             if (customer.id) {
-                await deleteCustomer(customer.id);
+                await deleteCustomer(customer.id, user?.email);
                 setRows(prev => prev.filter(r => r.id !== customer.id));
                 toast.success("Müştəri silindi");
             }

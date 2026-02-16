@@ -50,6 +50,7 @@ interface CustomerRow {
         invoices?: Invoice[];
     };
     updatedAt?: any;
+    statusHistory?: any[];
 }
 
 export default function ArchiveDocumentsPage() {
@@ -60,6 +61,7 @@ export default function ArchiveDocumentsPage() {
     const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
     const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
+    const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
 
     const fetchCustomers = useCallback(async () => {
         try {
@@ -92,7 +94,7 @@ export default function ArchiveDocumentsPage() {
 
         try {
             setUploading(true);
-            setSelectedInvoiceId(invoiceId); // Track which one is uploading
+            setSelectedInvoiceId(invoiceId);
             const storagePath = `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`;
             const storageRef = ref(storage, storagePath);
             const snapshot = await uploadBytes(storageRef, file);
@@ -162,11 +164,39 @@ export default function ArchiveDocumentsPage() {
 
     const filteredCustomers = useMemo(() => {
         const s = searchTerm.toLowerCase();
-        return customers.filter(c =>
-            c.fullName.toLowerCase().includes(s) ||
-            (c.customerCode || "").toLowerCase().includes(s)
-        );
-    }, [customers, searchTerm]);
+        return customers
+            .filter(c => {
+                const hasFiles = c.details?.invoices?.some(inv => !!inv.archiveUrl);
+                const isRequested = c.process_status === 'WAITING_FOR_ARCHIVE' ||
+                    c.details?.invoices?.some(inv => (inv as any).archiveRequested);
+
+                if (activeTab === 'pending') return !hasFiles && isRequested;
+                return hasFiles;
+            })
+            .filter(c =>
+                c.fullName.toLowerCase().includes(s) ||
+                (c.customerCode || "").toLowerCase().includes(s)
+            );
+    }, [customers, searchTerm, activeTab]);
+
+    const formatDateTime = (dateVal: any) => {
+        if (!dateVal) return "---";
+        const d = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
+        return d.toLocaleString('az-AZ', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).replace(/\//g, '.');
+    };
+
+    const getRequestInfo = (c: CustomerRow) => {
+        const lastRequest = [...(c.statusHistory || [])].reverse().find(h => h.action === 'ARCHIVE_REQUEST' || h.action === 'STATUS_CHANGE' && h.label.includes('Arxiv'));
+        if (lastRequest?.timestamp) return formatDateTime(lastRequest.timestamp);
+        return formatDateTime(c.updatedAt);
+    };
 
     if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ARCHIVIST' && user.role !== 'ARCHIVER')) {
         return (
@@ -188,19 +218,45 @@ export default function ArchiveDocumentsPage() {
                 {/* ═══ SİDEBAR ═══ */}
                 <div className="w-[340px] border-r border-slate-200 bg-white flex flex-col shrink-0 relative z-10 transition-all">
                     <div className="p-6 pb-4 shrink-0">
-                        <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Müştəri Siyahısı</h2>
+
+                        {/* Tabs Navigation */}
+                        <div className="flex p-1 bg-slate-100 rounded-2xl mb-6">
+                            <button
+                                onClick={() => { setActiveTab('pending'); setSelectedCustomer(null); }}
+                                className={cn(
+                                    "flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                                    activeTab === 'pending' ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                )}
+                            >
+                                Gözləmədə
+                            </button>
+                            <button
+                                onClick={() => { setActiveTab('completed'); setSelectedCustomer(null); }}
+                                className={cn(
+                                    "flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                                    activeTab === 'completed' ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                )}
+                            >
+                                Tamamlandı
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                                {activeTab === 'pending' ? 'Gözləyən İşlər' : 'Yüklənmiş Sənədlər'}
+                            </h2>
                             <div className="h-5 px-2 bg-slate-100 text-slate-500 rounded-lg flex items-center justify-center text-[9px] font-black border border-slate-200">
                                 {filteredCustomers.length}
                             </div>
                         </div>
-                        <div className="relative group">
+
+                        <div className="relative group mb-2">
                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={16} />
                             <input
                                 type="text"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                placeholder="Ad, Soyad və ya Kod..."
+                                placeholder="Axtar..."
                                 className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-900 outline-none focus:bg-white focus:border-slate-400 transition-all"
                             />
                         </div>
@@ -243,7 +299,7 @@ export default function ArchiveDocumentsPage() {
                                                 <div className="flex items-center gap-2">
                                                     <span className={cn("text-[9px] font-bold tracking-wider", isSelected ? "text-slate-500" : "text-slate-400")}>#{c.customerCode || "---"}</span>
                                                     <div className={cn("w-0.5 h-0.5 rounded-full", isSelected ? "bg-slate-700" : "bg-slate-300")} />
-                                                    <span className={cn("text-[9px] font-black tracking-wider", isSelected ? "text-white/40" : "text-red-500/70")}>{c.debtAmount} AZN</span>
+                                                    <span className={cn("text-[9px] font-black tracking-wider uppercase", isSelected ? "text-white/40" : "text-red-600/70")}>{getRequestInfo(c)}</span>
                                                 </div>
                                             </div>
                                             {hasFiles && (

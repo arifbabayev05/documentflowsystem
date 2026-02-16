@@ -104,22 +104,36 @@ export default function AuditLogsPage() {
         if (user) fetchLogs();
     }, [user]);
 
+    const getLogCategory = (log: AuditLog) => {
+        if (log.category) return log.category;
+
+        // Inference for legacy logs
+        const action = log.action;
+        if (["CREATE", "UPDATE", "DELETE", "BULK_ADD", "STATUS_CHANGE", "ASSIGN"].includes(action)) return "CUSTOMER";
+        if (["ARCHIVE", "RESTORE", "FILE_UPLOAD", "FILE_DELETE", "ARCHIVE_REQUEST"].includes(action)) return "ARCHIVE";
+        if (["GENERATE_DOC"].includes(action)) return "DOCUMENT";
+        if (["SETTINGS_UPDATE", "COURT_ADD", "COURT_UPDATE", "COURT_DELETE", "STORE_ADD", "STORE_UPDATE", "STORE_DELETE", "TEMPLATE_ADD", "TEMPLATE_UPDATE", "TEMPLATE_DELETE"].includes(action)) return "SYSTEM";
+        if (["UPDATE_ROLE"].includes(action)) return "USER";
+        return "SYSTEM";
+    };
+
     const filteredLogs = useMemo(() => {
         return auditLogs.filter(log => {
+            const category = getLogCategory(log);
             const matchesSearch =
                 log.details.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                log.userEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (typeof log.userEmail === 'string' ? log.userEmail.toLowerCase().includes(searchTerm.toLowerCase()) : false) ||
                 (log.metadata?.targetName || "").toLowerCase().includes(searchTerm.toLowerCase());
 
             const matchesAction = selectedAction === "all" || log.action === selectedAction;
-            const matchesTab = activeTab === "all" || log.category === activeTab;
+            const matchesTab = activeTab === "all" || category === activeTab;
 
             return matchesSearch && matchesAction && matchesTab;
         });
     }, [auditLogs, searchTerm, selectedAction, activeTab]);
 
     const actionsList = useMemo(() => {
-        const set = new Set(auditLogs.filter(l => activeTab === 'all' || l.category === activeTab).map(l => l.action));
+        const set = new Set(auditLogs.filter(l => activeTab === 'all' || getLogCategory(l) === activeTab).map(l => l.action));
         return Array.from(set);
     }, [auditLogs, activeTab]);
 
@@ -251,21 +265,25 @@ export default function AuditLogsPage() {
                                                 <td className="px-8 py-5">
                                                     <div className="flex items-center gap-3">
                                                         <div className="h-9 w-9 rounded-xl bg-slate-900 flex items-center justify-center text-[11px] font-black text-white group-hover:scale-105 transition-transform duration-300">
-                                                            {log.userEmail ? log.userEmail[0].toUpperCase() : "?"}
+                                                            {typeof log.userEmail === 'string' && log.userEmail.length > 0 ? log.userEmail[0].toUpperCase() : "?"}
                                                         </div>
                                                         <div className="flex flex-col min-w-0">
                                                             <span className="text-[12px] font-black text-slate-900 truncate max-w-[140px]">
-                                                                {log.userEmail ? log.userEmail.split('@')[0] : "Sistem"}
+                                                                {typeof log.userEmail === 'string' && log.userEmail.includes('@')
+                                                                    ? log.userEmail.split('@')[0]
+                                                                    : (typeof log.userEmail === 'string' ? log.userEmail : "Sistem")}
                                                             </span>
                                                             <span className="text-[9px] font-bold text-slate-400 uppercase truncate max-w-[140px] opacity-60">
-                                                                @{log.userEmail ? log.userEmail.split('@')[1] : "legal12.az"}
+                                                                {typeof log.userEmail === 'string' && log.userEmail.includes('@')
+                                                                    ? `@${log.userEmail.split('@')[1]}`
+                                                                    : "legal12.az"}
                                                             </span>
                                                         </div>
                                                     </div>
                                                 </td>
                                                 <td className="px-8 py-5 text-center">
                                                     <span className="px-3 py-1 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase tracking-wider border border-slate-200">
-                                                        {log.category || "General"}
+                                                        {getLogCategory(log)}
                                                     </span>
                                                 </td>
                                                 <td className="px-8 py-5">

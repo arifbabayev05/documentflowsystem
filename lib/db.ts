@@ -40,7 +40,7 @@ export async function getRolePermissions(role: string) {
     }
 
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
-    if (role === "MANAGER") return ["customers_read", "customers_create", "customers_update", "reports_read", "reports_audit", "reports_generate", "inspector_manage", "action_assignment", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
+    if (role === "MANAGER") return ["analytics_read", "customers_read", "customers_create", "customers_update", "reports_read", "reports_audit", "reports_generate", "inspector_manage", "action_assignment", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
     if (role === "ADMIN") return ["customers_read", "customers_update", "reports_read", "reports_audit", "reports_generate", "action_warning", "action_status_change", "fields_personal", "fields_address"];
     if (role === "INSPECTOR") return ["customers_read", "customers_create", "customers_update", "inspector_manage", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
     if (role === "ARCHIVIST") return ["customers_read", "customers_update", "archive_manage"];
@@ -131,10 +131,24 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
     try {
         const batch = writeBatch(db);
         const results = [];
+        const timestamp = new Date().toISOString();
         for (const customer of customers) {
             const customerId = customer.customerCode || Math.random().toString(36).substring(7);
             const customerRef = doc(db, CUSTOMERS_COLLECTION, customerId);
-            const data = { ...customer, id: customerId, createdBy: userEmail, updatedAt: serverTimestamp() };
+            const data = {
+                ...customer,
+                id: customerId,
+                createdBy: userEmail,
+                updatedAt: serverTimestamp(),
+                statusHistory: [
+                    {
+                        label: "Müştəri qeydə alındı",
+                        action: "CREATE",
+                        timestamp,
+                        user: userEmail
+                    }
+                ]
+            };
             batch.set(customerRef, data, { merge: true });
             results.push(data);
         }
@@ -192,9 +206,21 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
         const customerRef = doc(db, CUSTOMERS_COLLECTION, id);
         const oldDoc = await getDoc(customerRef);
         const oldData = oldDoc.exists() ? oldDoc.data() : null;
-        const cleanedData = { ...data };
 
-        await updateDoc(customerRef, { ...cleanedData, updatedAt: serverTimestamp() });
+        // Mantain status history
+        let statusHistory = [...(oldData?.statusHistory || [])];
+        const timestamp = new Date().toISOString();
+
+        if (!oldDoc.exists() && statusHistory.length === 0) {
+            statusHistory.push({
+                label: "Müştəri qeydə alındı",
+                action: "CREATE",
+                timestamp,
+                user: userEmail
+            });
+        }
+
+        const cleanedData = { ...data, statusHistory };
 
         let action = "UPDATE";
         let detail = `Müştəri məlumatı yeniləndi`;
@@ -205,10 +231,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
         const oldReq = oldData?.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
         const newReq = data.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
 
-        if (!oldDoc.exists()) {
-            action = "CREATE";
-            detail = "Yeni müştəri daxil edildi";
-        } else if (data.isArchived && !oldData?.isArchived) {
+        if (data.isArchived && !oldData?.isArchived) {
             action = "ARCHIVE";
             category = "ARCHIVE";
             detail = "Müştəri arxivə göndərildi";
@@ -231,11 +254,33 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
         } else if (data.process_status && oldData?.process_status !== data.process_status) {
             action = "STATUS_CHANGE";
             const oldStatus = oldData?.process_status || 'N/A';
-            detail = `Status dəyişdi: ${oldStatus} -> ${data.process_status}`;
+
+            // Map status to nice label
+            const statusLabels: any = {
+                'INSPECTOR_ENTERED': 'Müştəri qeydə alındı',
+                'ASSIGNED_BY_MANAGER': 'Müfəttiş təyin edildi',
+                'FILLED_BY_ADMIN': 'Məlumatlar dolduruldu',
+                'WAITING_FOR_ARCHIVE': 'Arxiv sorğusu göndərildi',
+                'ARCHIVE_UPLOADED': 'Arxiv sənədi yükləndi',
+                'COMPLETED': 'Arxiv Müştəri'
+            };
+            detail = statusLabels[data.process_status] || `Status dəyişdi: ${data.process_status}`;
         } else if (data.assignedTo && oldData?.assignedTo !== data.assignedTo) {
             action = "ASSIGN";
-            detail = `Müşfəttiş təyin edildi: ${data.assignedTo}`;
+            detail = `Müfəttiş təyin edildi: ${data.assignedTo}`;
         }
+
+        if (action !== "UPDATE") {
+            statusHistory.push({
+                label: detail,
+                action,
+                timestamp,
+                user: userEmail
+            });
+            cleanedData.statusHistory = statusHistory;
+        }
+
+        await updateDoc(customerRef, { ...cleanedData, updatedAt: serverTimestamp() });
 
         await addAuditLog(action, detail, userEmail, category, {
             targetId: id,

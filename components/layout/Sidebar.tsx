@@ -20,7 +20,8 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 
 const menuItems = [
-    { icon: LayoutDashboard, label: "Müştəri bazası", href: "/dashboard" },
+    { icon: LayoutDashboard, label: "Statistika", href: "/analytics" },
+    { icon: UsersIcon, label: "Müştəri bazası", href: "/dashboard" },
     { icon: Briefcase, label: "Müfəttiş Paneli", href: "/inspector" },
     { icon: FolderArchive, label: "Arxiv Müştərilər", href: "/customers/archived" },
     { icon: FileText, label: "Arxivçi", href: "/archive" },
