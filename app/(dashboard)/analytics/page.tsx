@@ -545,10 +545,10 @@ export default function AnalyticsPage() {
                                 <div className="flex justify-between items-start mb-6">
                                     <div>
                                         <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center">
-                                            İcraatın Sağlamlıq Vəziyyəti
+                                            İcraat Vəziyyəti
                                             <InfoTooltip title="Sağlamlıq Balı" text="Məhkəməyə hazır işlərin ümumi işlərin sayına olan nisbətini faizlə ifadə edir." />
                                         </h4>
-                                        <p className="text-2xl font-black text-slate-900 mt-2">{riskScore} <span className="text-xs text-slate-400">/ 100</span></p>
+                                        <p className="text-2xl font-black text-slate-900 mt-2">{riskScore} <span className="text-xs text-slate-400">/ 100%</span></p>
                                     </div>
                                     <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center", riskScore < 40 ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600")}>
                                         {riskScore < 40 ? <AlertTriangle size={24} /> : <CheckCircle size={24} />}
@@ -677,17 +677,30 @@ export default function AnalyticsPage() {
                     >
                         <div className="flex items-center justify-between mb-4">
                             <div className="h-12 w-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600">
-                                <Gavel size={24} />
+                                <Wallet size={24} />
                             </div>
-                            <Scale size={24} className="opacity-10 text-slate-900" />
+                            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Borcun Tərkibi</div>
                         </div>
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center opacity-70">
-                            Proqnoz Rüsumlar
-                            <InfoTooltip title="Rüsum Proqnozu" text="Hazır olan işlərin təxmini məhkəmə rüsumu." />
-                        </div>
-                        <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">{formatAZN(stats.legalFeesProjection)}</h2>
-                        <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase text-amber-600">
-                            Hazırda olan {stats.readyForCourtCount} iş üzrə
+                        <div className="space-y-3">
+                            {[
+                                { label: "Ödənilməmiş Borc", amount: stats.debtComposition.principal, color: "bg-indigo-500" },
+                                { label: "Cərimə", amount: stats.debtComposition.penalty, color: "bg-rose-500" },
+                                { label: "Rüsumlar", amount: stats.debtComposition.fees, color: "bg-amber-500" }
+                            ].map((item, i) => (
+                                <div key={i}>
+                                    <div className="flex justify-between text-[12px] font-black uppercase mb-1">
+                                        <span className="text-slate-400">{item.label}</span>
+                                        <span className="text-slate-900">{formatAZN(item.amount)}</span>
+                                    </div>
+                                    <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+                                        <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${(item.amount / Math.max(1, stats.totalPendingDebt)) * 100}%` }}
+                                            className={cn("h-full", item.color)}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </motion.div>
                 </div>
@@ -893,6 +906,27 @@ export default function AnalyticsPage() {
                                 </div>
                             ))}
                         </div>
+
+                        {(() => {
+                            const totalHours = stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0);
+                            return (
+                                <div className=" mt-8 border-t border-slate-100 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Cəmi Orta Müddət</p>
+                                        <h4 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Toplam İcraat Müddəti</h4>
+                                    </div>
+                                    <div className="bg-indigo-50 px-6 py-3 rounded-2xl border border-indigo-100 flex items-center gap-3">
+                                        <Clock size={20} className="text-indigo-600" />
+                                        <div className="text-right">
+                                            <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ümumi Gözləmə</span>
+                                            <span className="text-lg font-black text-indigo-700 tracking-tight">
+                                                {totalHours < 1 ? `${Math.round(totalHours * 60)} DƏQ` : totalHours < 24 ? `${totalHours.toFixed(1)} SAAT` : `${(totalHours / 24).toFixed(1)} GÜN`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     <div className="lg:col-span-5 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm">
