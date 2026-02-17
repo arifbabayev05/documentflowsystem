@@ -9,6 +9,7 @@ import {
     X,
     AlertTriangle,
     Edit2,
+    ChevronDown,
     Check,
     User,
     MapPin,
@@ -28,9 +29,9 @@ import {
     Upload,
     FileUp,
     Shield,
-    ChevronDown,
     Store,
-    FolderArchive
+    FolderArchive,
+    ArrowDownToLine
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -237,7 +238,7 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
                             isFin ? "uppercase" : "",
                             isCemi ? "text-primary font-bold shadow-inner bg-primary/5" : ""
                         )}
-                        style={isFin ? { width: '100px', letterSpacing: '0.1em' } : undefined}
+                        style={isFin ? { letterSpacing: '0.1em' } : undefined}
                         value={value || ""}
                         onChange={handleValueChange}
                         placeholder={placeholder || (['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'].includes(path) ? "GG.AA.İİİİ" : "-")}
@@ -606,7 +607,7 @@ const CustomerCard = memo(({
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
         // Status updates for roles (Forward only)
-        if (user?.role === 'ARCHIVIST' || user?.role === 'ARCHIVER') {
+        if (user?.role === 'ARCHIVER') {
             const archIndex = STATUS_ORDER.indexOf('ARCHIVE_UPLOADED');
             if (archIndex > currentIndex) {
                 dataToSave.process_status = 'ARCHIVE_UPLOADED';
@@ -788,34 +789,56 @@ const CustomerCard = memo(({
         return (localData as any)[path] || "";
     };
 
-    const simulateFetchData = (e: React.MouseEvent) => {
+    const fetchDataFromPortal = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        toast.promise(new Promise(resolve => setTimeout(resolve, 1000)), {
-            loading: 'Müştəri məlumatları gətirilir...',
-            success: () => {
-                setLocalData(prev => ({
-                    ...prev,
-                    fullName: "Qədirli Orxan Abdulhəlim",
-                    details: {
-                        ...prev.details,
-                        gender: "Kişi",
-                        birthDate: "15.08.1992",
-                        address: "Bakı şəhəri, Suraxanı rayonu, Hövsan qəsəbəsi",
-                        actualAddress: "Bakı şəhəri, Nizami rayonu, Q.Qarayev pr. 42",
-                        phone: "+994555555555",
-                        contractDate: "12.05.2023",
-                        productDescription: "iPhone 13 128GB Midnight (IMEI: 357128...)",
-                        totalPrice: "2400.00",
-                        paidAmount: "800.00",
-                        unpaidAmount: "1600.00",
-                        totalUnpaid: "1920.00",
-                        fee: "160.00",
-                        penalty: "160.00"
-                    }
-                }));
-                return "Məlumatlar uğurla gətirildi";
-            },
-            error: 'Xəta baş verdi'
+
+        const fin = getValue("details.fin");
+        const sv = getValue("details.passportSeries");
+
+        if (!fin || !sv) {
+            toast.error("Məlumatları gətirmək üçün FİN və Seriya nömrəsi daxil edilməlidir");
+            return;
+        }
+
+        const fetchPromise = async () => {
+            const res = await fetch('/api/scrape', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fin, sv })
+            });
+
+            const result = await res.json();
+            if (!res.ok) {
+                if (result.error === "LOGIN_REQUIRED") {
+                    toast.info(result.message, { duration: 10000 });
+                    throw new Error("Giriş tələb olunur");
+                }
+                throw new Error(result.error || "Xəta baş verdi");
+            }
+
+            const updatedData = {
+                ...localData,
+                fullName: result.data.fullName || localData.fullName,
+                details: {
+                    ...localData.details,
+                    gender: result.data.gender || localData.details?.gender,
+                    birthDate: result.data.birthDate || localData.details?.birthDate,
+                    address: result.data.address || localData.details?.address,
+                }
+            };
+
+            setLocalData(updatedData);
+
+            // Auto-save logic
+            await onSave(updatedData);
+
+            return "Məlumatlar uğurla gətirildi";
+        };
+
+        toast.promise(fetchPromise(), {
+            loading: 'Portaldan məlumatlar gətirilir...',
+            success: (msg) => msg,
+            error: (err) => err.message || "Bilinməyən xəta baş verdi"
         });
     };
 
@@ -865,6 +888,29 @@ const CustomerCard = memo(({
                                 <div className="flex flex-col gap-0.5">
                                     <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest group-hover/item:text-purple-600 transition-colors">
                                         TƏYİNAT
+                                    </span>
+                                    <div className="flex flex-col leading-[1.3] text-slate-700">
+                                        <span className="text-[10px] font-bold tracking-tight">{date}</span>
+                                        <span className="text-[9px] font-medium text-slate-500">{time}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* 3. PRINTING EVENT */}
+                    {(row as any).printedAt && (() => {
+                        const { date, time } = formatDateTime((row as any).printedAt);
+                        return (
+                            <div className="relative pl-8 group/item">
+                                {/* Timeline Dot/Icon */}
+                                <div className="absolute left-[12px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center z-10 transition-all group-hover/item:border-emerald-500 group-hover/item:shadow-[0_0_0_4px_rgba(16,185,129,0.1)]">
+                                    <div className="w-1 h-1 rounded-full bg-slate-300 transition-all group-hover/item:bg-emerald-500" />
+                                </div>
+
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest group-hover/item:text-emerald-600 transition-colors">
+                                        SƏNƏD ÇAPI
                                     </span>
                                     <div className="flex flex-col leading-[1.3] text-slate-700">
                                         <span className="text-[10px] font-bold tracking-tight">{date}</span>
@@ -1020,6 +1066,16 @@ const CustomerCard = memo(({
 
                                     {row.id && (
                                         <>
+                                            {/* ZAP / FETCH DATA BUTTON */}
+                                            <button
+                                                onClick={fetchDataFromPortal}
+                                                className="h-8.5 px-3 bg-primary/10 text-primary rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary hover:text-white transition-all border border-primary/20 flex items-center gap-1.5"
+                                                title="Portaldan Məlumatları Gətir"
+                                            >
+                                                <ArrowDownToLine size={14} />
+                                                <span className="xl:inline">Məlumatları Gətir</span>
+                                            </button>
+
                                             {(user?.role === 'SUPERADMIN' || user?.permissions?.includes('action_warning')) && (() => {
                                                 const overdue = isOverdue(getValue("details.warningDate"));
                                                 return (
@@ -1160,9 +1216,9 @@ const CustomerCard = memo(({
 
                                     <CustomerField label="SOYAD AD ATA ADI" path="fullName" value={localData.fullName || ""} onChange={handleFieldChange} isEditing={isEditing} />
 
-                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                        <CustomerField label="Cins" isSelect={true} path="details.gender" value={getValue("details.gender")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-1" />
-                                        <CustomerField label="Doğum Tarixi" path="details.birthDate" value={getValue("details.birthDate")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-1" />
+                                    <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
+                                        <CustomerField label="Cins" isSelect={true} path="details.gender" value={getValue("details.gender")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-3" />
+                                        <CustomerField label="Doğum Tarixi" path="details.birthDate" value={getValue("details.birthDate")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
                                         <CustomerField
                                             label="FİN"
                                             path="details.fin"
@@ -1171,21 +1227,13 @@ const CustomerCard = memo(({
                                             isEditing={isEditing}
                                             isFin={true}
                                             maxLength={7}
-                                            className="lg:col-span-2"
-                                            action={isEditing && (
-                                                <button
-                                                    onClick={simulateFetchData}
-                                                    className="h-10 px-4 bg-primary text-white rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary/90 transition-all shadow-md shadow-primary/10 flex items-center gap-2 whitespace-nowrap"
-                                                >
-                                                    <Zap size={14} /> Məlumatları Gətir
-                                                </button>
-                                            )}
+                                            className="lg:col-span-4"
                                         />
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Seriya Nömrəsi" path="details.passportSeries" value={getValue("details.passportSeries")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="+994" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} />
+                                    <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
+                                        <CustomerField label="Seriya Nömrəsi" path="details.passportSeries" value={getValue("details.passportSeries")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
+                                        <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="+994" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-7" />
                                     </div>
 
                                     {/* Address info merged inside personal block as requested */}
@@ -1931,8 +1979,8 @@ export default function DashboardPage() {
                                 <Tag size={14} className="text-slate-600 group-focus-within:text-slate-900 transition-colors" />
                                 <input
                                     type="text"
-                                    placeholder="FAKTURA SAYI"
-                                    className="w-12 outline-none text-sm font-bold bg-transparent placeholder:text-slate-300 placeholder:font-normal"
+                                    placeholder="Faktura"
+                                    className="w-16 outline-none text-sm font-bold bg-transparent placeholder:text-slate-300 placeholder:font-normal"
                                     value={invoiceCount}
                                     onChange={(e) => {
                                         const val = e.target.value;
@@ -1961,12 +2009,6 @@ export default function DashboardPage() {
                                 )}
                             </div>
                         </div>
-                        <button
-                            onClick={addRow}
-                            className="h-11 px-6 bg-slate-900 text-white rounded-xl font-bold text-[12px] uppercase tracking-wider hover:bg-slate-800 transition-all flex items-center gap-2 shadow-lg shadow-slate-900/10 shrink-0"
-                        >
-                            <Plus size={18} /> Yeni Müştəri
-                        </button>
                     </div>
                 </div>
 
@@ -1979,8 +2021,8 @@ export default function DashboardPage() {
                             row={row}
                             index={idx}
                             totalRows={rows.length}
-                            canUpdate={can("customers_update")}
-                            canDelete={user?.role === 'SUPERADMIN' || can("customers_delete")}
+                            canUpdate={can("page_customers")}
+                            canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
                             appUsers={appUsers}
                             stores={stores}
                             onSave={handleSave}

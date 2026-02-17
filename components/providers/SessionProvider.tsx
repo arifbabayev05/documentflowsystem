@@ -11,7 +11,7 @@ import { toast } from "sonner";
 interface AppUser {
     email: string;
     displayName: string;
-    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "ARCHIVIST" | "ARCHIVER" | "USER";
+    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "ARCHIVER" | "PENDING";
     permissions: string[];
 }
 

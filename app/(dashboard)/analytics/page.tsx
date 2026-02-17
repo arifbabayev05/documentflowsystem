@@ -156,7 +156,7 @@ export default function AnalyticsPage() {
     };
 
     useEffect(() => {
-        if (can("analytics_read")) {
+        if (can("page_analytics")) {
             fetchData();
         }
     }, [user, user?.role]);
@@ -389,7 +389,7 @@ export default function AnalyticsPage() {
                 inspectorMap[u].count++;
                 if (isDocReady) {
                     const cDateVal = parseDate(c.assignedAt || c.createdAt || c.statusHistory?.[0]?.timestamp);
-                    const uDateVal = parseDate(c.updatedAt || c.createdAt || (c.statusHistory && c.statusHistory[c.statusHistory.length - 1]?.timestamp));
+                    const uDateVal = parseDate(c.printedAt || c.updatedAt || c.createdAt || (c.statusHistory && c.statusHistory[c.statusHistory.length - 1]?.timestamp));
                     if (cDateVal && uDateVal) {
                         inspectorMap[u].totalSpeed += Math.max(0, (uDateVal.getTime() - cDateVal.getTime()) / (1000 * 60 * 60 * 24));
                     }

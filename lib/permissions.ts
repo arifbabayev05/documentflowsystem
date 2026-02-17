@@ -1,9 +1,14 @@
 export type PermissionID =
-    | "customers_read" | "customers_create" | "customers_update" | "customers_delete"
-    | "reports_read" | "reports_audit" | "reports_generate" | "analytics_read"
-    | "users_manage" | "inspector_manage" | "archive_manage" | "parameters_manage"
-    | "action_assignment" | "action_warning" | "action_status_change"
-    | "fields_personal" | "fields_address" | "fields_order" | "fields_invoice";
+    | "page_analytics"
+    | "page_customers"
+    | "page_inspector"
+    | "page_archive_customers"
+    | "page_archiver"
+    | "page_audit_logs"
+    | "page_parameters"
+    | "page_users"
+    | "page_reports"
+    | "action_assignment";
 
 export interface Permission {
     id: PermissionID;
@@ -12,30 +17,15 @@ export interface Permission {
 }
 
 export const AVAILABLE_PERMISSIONS: Permission[] = [
-    // MÜŞTƏRİ MƏLUMATI (SƏHİFƏLƏR)
-    { id: "customers_read", label: "Müştəri məlumatı (Baxış)", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "customers_create", label: "Müştəri məlumatı (Əlavə etmə)", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "customers_update", label: "Müştəri məlumatı (Düzəliş)", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "customers_delete", label: "Müştəri məlumatı (Silmə)", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "inspector_manage", label: "Müfəttiş Paneli", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "archive_manage", label: "Arxiv İdarəetməsi", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "reports_read", label: "Hesabatlar (Baxış)", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "reports_audit", label: "Audit Loqları", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "users_manage", label: "İstifadəçi İdarəetməsi", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "parameters_manage", label: "Parametrlər və Tənzimləmələr", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "reports_generate", label: "Hesabat Hazırlama", group: "SƏHİFƏ İCAZƏLƏRİ" },
-    { id: "analytics_read", label: "Analitika və Statistika", group: "SƏHİFƏ İCAZƏLƏRİ" },
-
-    // DASHBOARD FUNKSİYALARI
-    { id: "action_assignment", label: "Təyinat Etmə", group: "FUNKSİONAL İCAZƏLƏR" },
-    { id: "action_warning", label: "Xəbərdarlıq Etmə", group: "FUNKSİONAL İCAZƏLƏR" },
-    { id: "action_status_change", label: "Status Dəyişmə", group: "FUNKSİONAL İCAZƏLƏR" },
-
-    // SAHƏ İCAZƏLƏRİ (FIELDS)
-    { id: "fields_personal", label: "Şəxsi Məlumatlar (Sahələr)", group: "SAHƏ (FIELD) İCAZƏLƏRİ" },
-    { id: "fields_address", label: "Ünvan Məlumatları (Sahələr)", group: "SAHƏ (FIELD) İCAZƏLƏRİ" },
-    { id: "fields_order", label: "Sifariş Detalları (Sahələr)", group: "SAHƏ (FIELD) İCAZƏLƏRİ" },
-    { id: "fields_invoice", label: "İnvoys və Arxiv (Sahələr)", group: "SAHƏ (FIELD) İCAZƏLƏRİ" },
+    { id: "page_customers", label: "Müştəri bazası", group: "SƏHİFƏLƏR" },
+    { id: "page_inspector", label: "Müfəttiş Paneli", group: "SƏHİFƏLƏR" },
+    { id: "page_archive_customers", label: "Arxiv Müştərilər", group: "SƏHİFƏLƏR" },
+    { id: "page_archiver", label: "Arxivçi", group: "SƏHİFƏLƏR" },
+    { id: "page_audit_logs", label: "Audit Loqları", group: "SƏHİFƏLƏR" },
+    { id: "page_parameters", label: "Parametrlər", group: "SƏHİFƏLƏR" },
+    { id: "page_analytics", label: "Statistika", group: "SƏHİFƏLƏR" },
+    { id: "page_users", label: "İstifadəçilər", group: "SƏHİFƏLƏR" },
+    { id: "page_reports", label: "Hesabatlar (Şablonlar)", group: "SƏHİFƏLƏR" }
 ];
 
 /**
@@ -43,14 +33,14 @@ export const AVAILABLE_PERMISSIONS: Permission[] = [
  * If a user has ANY permission in the group, they should generally see the page.
  */
 export const PATH_TO_PERMISSION_MAP: Record<string, PermissionID[]> = {
-    "/dashboard": ["customers_read", "customers_create", "customers_update", "customers_delete"],
-    "/inspector": ["inspector_manage"],
-    "/archive": ["archive_manage"],
-    "/customers/archived": ["archive_manage"],
-    "/reports": ["reports_read"],
-    "/reports/generate": ["reports_generate"],
-    "/audit-logs": ["reports_audit"],
-    "/settings": ["users_manage"],
-    "/parameters": ["parameters_manage"],
-    "/analytics": ["analytics_read"]
+    "/dashboard": ["page_customers"],
+    "/inspector": ["page_inspector"],
+    "/archive": ["page_archiver"],
+    "/customers/archived": ["page_archive_customers"],
+    "/reports": ["page_reports"], // Only SuperAdmin
+    "/reports/generate": [], // Open to all as requested
+    "/audit-logs": ["page_audit_logs"],
+    "/settings": ["page_users"],
+    "/parameters": ["page_parameters"],
+    "/analytics": ["page_analytics"]
 };

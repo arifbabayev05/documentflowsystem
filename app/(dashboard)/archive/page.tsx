@@ -54,7 +54,7 @@ interface CustomerRow {
 }
 
 export default function ArchiveDocumentsPage() {
-    const { user } = useAuth();
+    const { user, can } = useAuth();
     const [customers, setCustomers] = useState<CustomerRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -166,12 +166,13 @@ export default function ArchiveDocumentsPage() {
         const s = searchTerm.toLowerCase();
         return customers
             .filter(c => {
-                const hasFiles = c.details?.invoices?.some(inv => !!inv.archiveUrl);
-                const isRequested = c.process_status === 'WAITING_FOR_ARCHIVE' ||
-                    c.details?.invoices?.some(inv => (inv as any).archiveRequested);
+                const relevantInvoices = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
+                if (relevantInvoices.length === 0) return false;
 
-                if (activeTab === 'pending') return !hasFiles && isRequested;
-                return hasFiles;
+                const allUploaded = relevantInvoices.every(inv => !!inv.archiveUrl);
+
+                if (activeTab === 'pending') return !allUploaded;
+                return allUploaded;
             })
             .filter(c =>
                 c.fullName.toLowerCase().includes(s) ||
@@ -198,7 +199,7 @@ export default function ArchiveDocumentsPage() {
         return formatDateTime(c.updatedAt);
     };
 
-    if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ARCHIVIST' && user.role !== 'ARCHIVER')) {
+    if (!user || (!can('page_archiver') && user.role !== 'SUPERADMIN')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -273,7 +274,9 @@ export default function ArchiveDocumentsPage() {
                         ) : (
                             filteredCustomers.map(c => {
                                 const isSelected = selectedCustomer?.id === c.id;
-                                const hasFiles = c.details?.invoices?.some(inv => inv.archiveUrl);
+                                const relevantInvoices = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
+                                const isFullyUploaded = relevantInvoices.length > 0 && relevantInvoices.every(inv => !!inv.archiveUrl);
+
                                 return (
                                     <button
                                         key={c.id}
@@ -302,7 +305,7 @@ export default function ArchiveDocumentsPage() {
                                                     <span className={cn("text-[9px] font-black tracking-wider uppercase", isSelected ? "text-white/40" : "text-red-600/70")}>{getRequestInfo(c)}</span>
                                                 </div>
                                             </div>
-                                            {hasFiles && (
+                                            {isFullyUploaded && (
                                                 <div className={cn(
                                                     "h-7 w-7 rounded-lg flex items-center justify-center transition-all",
                                                     isSelected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-600"

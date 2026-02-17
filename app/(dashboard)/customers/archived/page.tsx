@@ -307,7 +307,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
         let duration = "";
         if (unique.length >= 2) {
             const start = new Date(unique[0].date).getTime();
-            const end = new Date(unique[unique.length - 1].date).getTime();
+            const end = row.printedAt ? new Date(row.printedAt).getTime() : new Date(unique[unique.length - 1].date).getTime();
             const diff = Math.max(0, end - start);
             const hours = Math.floor(diff / (1000 * 60 * 60));
             const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -677,7 +677,7 @@ export default function ArchivedCustomersPage() {
         });
     }, [rows, searchTerm]);
 
-    if (!user || !can('archive_manage')) {
+    if (!user || !can('page_archive_customers')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

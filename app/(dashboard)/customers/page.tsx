@@ -13,6 +13,7 @@ import {
     Copy,
     Table as TableIcon
 } from "lucide-react";
+import { toast } from "sonner";
 /** Internal helper for conditional classes */
 const cn = (...classes: (string | boolean | undefined | null)[]) => classes.filter(Boolean).join(" ");
 
@@ -44,7 +45,7 @@ export default function CustomersPage() {
     const onSubmitManual = async (data: CustomerFormValues) => {
         // In a real app, this would call an API
         console.log("Saving manual data:", data);
-        alert("Müştəri uğurla daxil edildi!");
+        toast("Müştəri uğurla daxil edildi!");
         reset();
     };
 
@@ -73,7 +74,7 @@ export default function CustomersPage() {
 
     const saveBulkData = async () => {
         console.log("Saving bulk data:", bulkData);
-        alert(`${bulkData.length} müştəri uğurla daxil edildi!`);
+        toast(`${bulkData.length} müştəri uğurla daxil edildi!`);
         setBulkData([]);
         setPasteValue("");
     };

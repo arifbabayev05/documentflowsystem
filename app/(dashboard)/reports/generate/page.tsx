@@ -715,7 +715,7 @@ function GenerateDocumentContent() {
     const router = useRouter();
     const { user, can } = useAuth();
 
-    if (!user || !can("reports_generate")) {
+    if (!user || !can("page_customers")) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 bg-slate-50/20 w-full">
                 <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
@@ -743,6 +743,11 @@ function GenerateDocumentContent() {
     const [activeDocId, setActiveDocId] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState<string | null>(null);
     const [focusedField, setFocusedField] = useState<string | null>(null);
+
+    const isWarningOnly = useMemo(() => {
+        const t = searchParams.get('template');
+        return t && t.toLowerCase().includes("xəbərdarlıq");
+    }, [searchParams]);
 
     const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
     const [courtSearch, setCourtSearch] = useState("");
@@ -1509,8 +1514,8 @@ function GenerateDocumentContent() {
     const generateDocument = async (template: Template, silent: boolean = false) => {
         if (!customer) return null;
         if (!silent && isModified) {
-            toast.error("Zəhmət olmasa sənədi yükləməzdən əvvəl 'YADDA SAXLA' düyməsinə basaraq bütün dəyişiklikləri arxivə yazın.");
-            return null;
+            const saved = await handleSave(false);
+            if (!saved) return null;
         }
         if (!validateData(template.name)) return null;
         if (!selectedCourt) {
@@ -1519,7 +1524,7 @@ function GenerateDocumentContent() {
             return null;
         }
 
-        if (!silent) {
+        if (!silent && !isWarningOnly) {
             if (!receiptFile) {
                 toast.error("Ödəniş qəbzi (Skan) sənədini yükləməlisiniz");
                 return null;
@@ -1532,7 +1537,7 @@ function GenerateDocumentContent() {
 
         const invoices = customer.details?.invoices || [];
         const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
-        if (invoices.length > 0 && !allArchived) {
+        if (!isWarningOnly && invoices.length > 0 && !allArchived) {
             if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
             return null;
         }
@@ -1771,38 +1776,57 @@ function GenerateDocumentContent() {
                             onClick={async () => {
                                 if (!customer) return;
                                 if (!validateData()) return;
-                                if (!selectedCourt) {
-                                    toast.error("Zəhmət olmasa məhkəmə seçin");
-                                    setIsCourtDropdownOpen(true);
-                                    return;
+
+                                // If NOT warning only, enforce all strict validations
+                                if (!isWarningOnly) {
+                                    if (!selectedCourt) {
+                                        toast.error("Zəhmət olmasa məhkəmə seçin");
+                                        setIsCourtDropdownOpen(true);
+                                        return;
+                                    }
+
+                                    if (!receiptFile) {
+                                        toast.error("Ödəniş qəbzi yüklənməlidir.");
+                                        return;
+                                    }
+
+                                    if (isPostageRequired && !postageFile) {
+                                        toast.error("Poçt markası sənədi yüklənməlidir.");
+                                        return;
+                                    }
+
+                                    const invoices = customer.details?.invoices || [];
+                                    const invoiceDocsUploaded = invoices.length > 0 && invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
+
+                                    if (invoices.length > 0 && !invoiceDocsUploaded) {
+                                        toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir.");
+                                        return;
+                                    }
                                 }
-
-                                if (!receiptFile) {
-                                    toast.error("Ödəniş qəbzi (Skan) sənədini yükləməlisiniz");
-                                    return;
-                                }
-
-                                if (isPostageRequired && !postageFile) {
-                                    toast.error(`Seçilmiş məhkəmə (${selectedCourt.name}) üçün Poçt markası sənədini yükləməlisiniz`);
-                                    return;
-                                }
-
-                                const invoices = customer.details?.invoices || [];
-                                const allArchived = invoices.length > 0 && invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
-
-                                if (invoices.length > 0 && !allArchived) {
-                                    toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir ki, ümumi çap mümkün olsun.");
-                                    return;
-                                }
-
                                 // Auto-save if modified (ensures new uploads/changes are archived before print)
                                 if (isModified) {
-                                    const saveStatusId = toast.loading("Dəyişikliklər arxivə qeyd olunur...");
+                                    const saveStatusId = toast.loading("Dəyişikliklər yadda saxlanılır...");
                                     const saved = await handleSave(false);
                                     toast.dismiss(saveStatusId);
                                     if (!saved) return;
                                 }
 
+                                // Mode 1: Warning Document Only (No session completion)
+                                if (isWarningOnly) {
+                                    try {
+                                        if (filteredTemplates.length > 0) {
+                                            await generateDocument(filteredTemplates[0], false);
+                                        } else {
+                                            toast.error("Şablon tapılmadı");
+                                        }
+                                    } catch (err) {
+                                        console.error("Warning generation error:", err);
+                                        toast.error("Sənəd hazırlanarkən xəta baş verdi");
+                                    }
+                                    return;
+                                }
+
+                                // Mode 2: Full Batch (Standard process)
                                 const loadingId = toast.loading("Bütün sənədlər hazırlanır...");
                                 try {
                                     const mainZip = new PizZip();
@@ -1843,13 +1867,14 @@ function GenerateDocumentContent() {
                                     await updateCustomer(customer.id, {
                                         ...customer,
                                         process_status: 'COMPLETED',
-                                        courtName: selectedCourt.name
+                                        courtName: selectedCourt?.name || "",
+                                        printedAt: new Date().toISOString()
                                     }, user?.email);
 
                                     toast.success("Bütün sənədlər ZIP olaraq yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
 
                                     // Refresh local customer state
-                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt.name } : null);
+                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt?.name || "" } : null);
                                 } catch (err) {
                                     console.error("Batch generation error:", err);
                                     toast.error("Sənədləri yaradarkən xəta baş verdi", { id: loadingId });
@@ -1857,7 +1882,7 @@ function GenerateDocumentContent() {
                             }}
                             className="bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-emerald-700 transition-all shadow-xl active:scale-95 flex items-center gap-3"
                         >
-                            <Printer size={18} /> ÜMUMİ ÇAP
+                            <Printer size={18} /> {isWarningOnly ? "ÇAP ET" : "ÜMUMİ ÇAP"}
                         </button>
 
                         <button
@@ -2186,62 +2211,22 @@ function GenerateDocumentContent() {
                                         <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
                                     </div>
                                     {/* File Uploads - Mandatory for Print */}
-                                    <div className="space-y-4">
-                                        <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
-                                            <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
-                                                <FileUp size={14} className="stroke-[2.5px]" />
-                                            </div>
-                                            <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Məcburi Sənədlər</h4>
-                                        </div>
-                                        <div className="grid grid-cols-1 gap-4">
-                                            {/* Receipt Upload */}
-                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                                                <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
-                                                        Ödəniş Qəbzi (Skan) <span className="text-red-500">*</span>
-                                                    </p>
-                                                    {receiptFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                    {!isWarningOnly && (
+                                        <div className="space-y-4">
+                                            <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                                <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+                                                    <FileUp size={14} className="stroke-[2.5px]" />
                                                 </div>
-                                                <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
-                                                    <input
-                                                        type="file"
-                                                        className="hidden"
-                                                        accept="image/*,.pdf"
-                                                        onChange={(e) => {
-                                                            const file = e.target.files?.[0];
-                                                            if (file) {
-                                                                const reader = new FileReader();
-                                                                reader.onloadend = () => {
-                                                                    setReceiptFile({ name: file.name, content: reader.result as string });
-                                                                    setIsModified(true);
-                                                                };
-                                                                reader.readAsDataURL(file);
-                                                            }
-                                                        }}
-                                                    />
-                                                    {receiptFile ? (
-                                                        <div className="flex items-center gap-3 p-2">
-                                                            <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
-                                                            <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{receiptFile.name}</span>
-                                                            <button onClick={(e) => { e.preventDefault(); setReceiptFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex flex-col items-center gap-1">
-                                                            <FileUp size={20} className="text-slate-300" />
-                                                            <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
-                                                        </div>
-                                                    )}
-                                                </label>
+                                                <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Məcburi Sənədlər</h4>
                                             </div>
-
-                                            {/* Postage Stamp Upload */}
-                                            {isPostageRequired && (
-                                                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                            <div className="grid grid-cols-1 gap-4">
+                                                {/* Receipt Upload */}
+                                                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                                                     <div className="flex items-center justify-between">
                                                         <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
-                                                            Poçt Markası Sənədi <span className="text-red-500">*</span>
+                                                            Ödəniş Qəbzi (Skan) <span className="text-red-500">*</span>
                                                         </p>
-                                                        {postageFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                                        {receiptFile && <CheckCircle2 size={16} className="text-emerald-500" />}
                                                     </div>
                                                     <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
                                                         <input
@@ -2253,18 +2238,18 @@ function GenerateDocumentContent() {
                                                                 if (file) {
                                                                     const reader = new FileReader();
                                                                     reader.onloadend = () => {
-                                                                        setPostageFile({ name: file.name, content: reader.result as string });
+                                                                        setReceiptFile({ name: file.name, content: reader.result as string });
                                                                         setIsModified(true);
                                                                     };
                                                                     reader.readAsDataURL(file);
                                                                 }
                                                             }}
                                                         />
-                                                        {postageFile ? (
+                                                        {receiptFile ? (
                                                             <div className="flex items-center gap-3 p-2">
                                                                 <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
-                                                                <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{postageFile.name}</span>
-                                                                <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
+                                                                <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{receiptFile.name}</span>
+                                                                <button onClick={(e) => { e.preventDefault(); setReceiptFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
                                                             </div>
                                                         ) : (
                                                             <div className="flex flex-col items-center gap-1">
@@ -2274,9 +2259,51 @@ function GenerateDocumentContent() {
                                                         )}
                                                     </label>
                                                 </div>
-                                            )}
+
+                                                {/* Postage Stamp Upload */}
+                                                {isPostageRequired && (
+                                                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                                                                Poçt Markası Sənədi <span className="text-red-500">*</span>
+                                                            </p>
+                                                            {postageFile && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                                        </div>
+                                                        <label className="flex flex-col items-center justify-center w-full min-h-[80px] border-2 border-dashed border-slate-100 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
+                                                            <input
+                                                                type="file"
+                                                                className="hidden"
+                                                                accept="image/*,.pdf"
+                                                                onChange={(e) => {
+                                                                    const file = e.target.files?.[0];
+                                                                    if (file) {
+                                                                        const reader = new FileReader();
+                                                                        reader.onloadend = () => {
+                                                                            setPostageFile({ name: file.name, content: reader.result as string });
+                                                                            setIsModified(true);
+                                                                        };
+                                                                        reader.readAsDataURL(file);
+                                                                    }
+                                                                }}
+                                                            />
+                                                            {postageFile ? (
+                                                                <div className="flex items-center gap-3 p-2">
+                                                                    <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center"><Download size={18} /></div>
+                                                                    <span className="text-[10px] font-bold text-slate-600 truncate max-w-[150px]">{postageFile.name}</span>
+                                                                    <button onClick={(e) => { e.preventDefault(); setPostageFile(null); }} className="text-red-400 hover:text-red-500"><X size={14} /></button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex flex-col items-center gap-1">
+                                                                    <FileUp size={20} className="text-slate-300" />
+                                                                    <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Fayl Seç</span>
+                                                                </div>
+                                                            )}
+                                                        </label>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -2307,8 +2334,8 @@ function GenerateDocumentContent() {
                             {/* MANDATORY FILES PREVIEW */}
                             {receiptFile && (
                                 <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
-                                    <p className="text-[12px] font-black text-slate-300 uppercase tracking-[0.4em] mb-8">1. ÖDƏNİŞ QƏBZİ</p>
-                                    <div className="w-full flex-1 flex items-center justify-center border-4 border-dashed border-slate-100 rounded-[2rem] overflow-hidden">
+                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8">1. ÖDƏNİŞ QƏBZİ</p>
+                                    <div className="w-full flex-1 flex items-center justify-center rounded-[2rem] overflow-hidden">
                                         <img src={receiptFile.content} alt="Receipt" className="max-w-full max-h-full object-contain" />
                                     </div>
                                 </div>
@@ -2316,8 +2343,8 @@ function GenerateDocumentContent() {
 
                             {postageFile && (
                                 <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
-                                    <p className="text-[12px] font-black text-slate-300 uppercase tracking-[0.4em] mb-8">2. POÇT MARKASI</p>
-                                    <div className="w-full flex-1 flex items-center justify-center border-4 border-dashed border-slate-100 rounded-[2rem] overflow-hidden">
+                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8">2. POÇT MARKASI</p>
+                                    <div className="w-full flex-1 flex items-center justify-center rounded-[2rem] overflow-hidden">
                                         <img src={postageFile.content} alt="Postage" className="max-w-full max-h-full object-contain" />
                                     </div>
                                 </div>

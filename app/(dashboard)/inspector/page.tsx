@@ -262,7 +262,7 @@ export default function InspectorPage() {
     const { user, can } = useAuth();
     const router = useRouter();
 
-    if (!user || !can("inspector_manage")) {
+    if (!user || !can("page_inspector")) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

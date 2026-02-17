@@ -40,12 +40,11 @@ export async function getRolePermissions(role: string) {
     }
 
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
-    if (role === "MANAGER") return ["analytics_read", "customers_read", "customers_create", "customers_update", "reports_read", "reports_audit", "reports_generate", "inspector_manage", "action_assignment", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
-    if (role === "ADMIN") return ["customers_read", "customers_update", "reports_read", "reports_audit", "reports_generate", "action_warning", "action_status_change", "fields_personal", "fields_address"];
-    if (role === "INSPECTOR") return ["customers_read", "customers_create", "customers_update", "inspector_manage", "fields_personal", "fields_address", "fields_order", "fields_invoice"];
-    if (role === "ARCHIVIST") return ["customers_read", "customers_update", "archive_manage"];
-    if (role === "ARCHIVER") return ["customers_read", "archive_manage"];
-    return ["customers_read"];
+    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment"];
+    if (role === "ADMIN") return ["page_customers"];
+    if (role === "INSPECTOR") return ["page_inspector"];
+    if (role === "ARCHIVER") return ["page_archiver"];
+    return []; // PENDING or others have no default permissions
 }
 
 export async function updateRolePermissions(role: string, paths: string[]) {
@@ -83,9 +82,9 @@ export async function syncUser(user: { email: string; displayName?: string }) {
                 id: normalizedEmail,
                 email: normalizedEmail,
                 displayName: user.displayName || normalizedEmail.split('@')[0],
-                role: isFirstUser ? "SUPERADMIN" : "USER",
+                role: isFirstUser ? "SUPERADMIN" : "PENDING",
                 lastLogin: new Date().toISOString(),
-                status: "ACTIVE",
+                status: isFirstUser ? "ACTIVE" : "PENDING",
                 permissions: []
             };
             await setDoc(userRef, userDoc);

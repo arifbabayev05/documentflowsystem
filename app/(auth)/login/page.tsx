@@ -14,6 +14,7 @@ import {
     ShieldCheck,
     Briefcase
 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -37,8 +38,7 @@ export default function LoginPage() {
             console.error("Firebase Outlook login error:", error);
             setIsOutlookLoading(false);
             if (error.code !== "auth/popup-closed-by-user") {
-                // Using simple alert as per original code
-                alert("Giriş zamanı xəta baş verdi: " + error.message);
+                toast("Giriş zamanı xəta baş verdi: " + error.message);
             }
         }
     };
