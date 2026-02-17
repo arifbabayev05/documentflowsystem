@@ -22,7 +22,9 @@ import {
     X,
     FileText,
     ExternalLink,
-    ChevronRight
+    ChevronRight,
+    ChevronDown,
+    UserCircle
 } from "lucide-react";
 import { getCustomers, getAuditLogs, getCourts } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
@@ -98,16 +100,19 @@ interface AnalyticsData {
 
 const FEE_PER_CASE = 20;
 
-const parseDate = (dateVal: any): Date => {
-    if (!dateVal) return new Date();
+const parseDate = (dateVal: any): Date | null => {
+    if (!dateVal) return null;
     if (dateVal instanceof Timestamp) return dateVal.toDate();
     if (dateVal.toDate && typeof dateVal.toDate === 'function') return dateVal.toDate();
     if (typeof dateVal === 'string' && dateVal.includes('.')) {
         const [d, m, y] = dateVal.split('.').map(Number);
-        if (d && m && y) return new Date(y, m - 1, d);
+        if (d && m && y) {
+            const year = y < 100 ? 2000 + y : y;
+            return new Date(year, m - 1, d);
+        }
     }
-    if (typeof dateVal === 'string' || typeof dateVal === 'number') return new Date(dateVal);
-    return new Date();
+    const d = new Date(dateVal);
+    return isNaN(d.getTime()) ? null : d;
 };
 
 export default function AnalyticsPage() {
@@ -118,6 +123,21 @@ export default function AnalyticsPage() {
     const [timeRange, setTimeRange] = useState<string>('all');
 
     const [drillDown, setDrillDown] = useState<{ title: string; customers: any[] } | null>(null);
+    const [selectedPerfUser, setSelectedPerfUser] = useState<string | null>(null);
+
+    const allUsers = useMemo(() => {
+        const users = new Set<string>();
+        customers.forEach(c => {
+            if (c.statusHistory) {
+                c.statusHistory.forEach((h: any) => {
+                    if (h.user && h.user.includes('@')) users.add(h.user);
+                });
+            }
+            if (c.assignedTo && c.assignedTo.includes('@')) users.add(c.assignedTo);
+            if (c.createdBy && c.createdBy.includes('@')) users.add(c.createdBy);
+        });
+        return Array.from(users).sort();
+    }, [customers]);
 
     const fetchData = async () => {
         setLoading(true);
@@ -142,6 +162,23 @@ export default function AnalyticsPage() {
     }, [user, user?.role]);
 
     const formatAZN = (v: number) => Math.floor(v).toLocaleString('az-AZ') + " ₼";
+
+    const formatDetailedTime = (hours: number) => {
+        const totalMinutes = Math.round(hours * 60);
+        if (totalMinutes < 60) return `${totalMinutes} DƏQ`;
+
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+
+        if (h < 24) {
+            return m > 0 ? `${h} SAAT ${m} DƏQ` : `${h} SAAT`;
+        }
+
+        const d = Math.floor(h / 24);
+        const rh = h % 24;
+
+        return rh > 0 ? `${d} GÜN ${rh} SAAT` : `${d} GÜN`;
+    };
 
     const InfoTooltip = ({ title, text, iconClass }: { title: string, text: string, iconClass?: string }) => (
         <span className="relative inline-block ml-2 align-middle group z-[100]">
@@ -176,7 +213,8 @@ export default function AnalyticsPage() {
         const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
         return customers.filter(c => {
-            const date = parseDate(c.createdAt);
+            const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+            if (!date) return timeRange === 'all';
             return date >= cutoff;
         });
     }, [customers, timeRange]);
@@ -285,11 +323,13 @@ export default function AnalyticsPage() {
             initial.totalCases++;
 
             // Use creation date for trend analysis
-            const cDate = parseDate(c.createdAt);
-            const trendKey = `${cDate.getFullYear()}-${String(cDate.getMonth() + 1).padStart(2, '0')}`;
-            if (trendMap[trendKey]) {
-                trendMap[trendKey].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
-                trendMap[trendKey].count++;
+            const cDate = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+            if (cDate) {
+                const trendKey = `${cDate.getFullYear()}-${String(cDate.getMonth() + 1).padStart(2, '0')}`;
+                if (trendMap[trendKey]) {
+                    trendMap[trendKey].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
+                    trendMap[trendKey].count++;
+                }
             }
 
             // Dwell Analysis Logic (Status History)
@@ -313,8 +353,11 @@ export default function AnalyticsPage() {
 
                     const dwellKey = getPhaseKey(prev);
                     if (dwellKey && dwellMap[dwellKey]) {
-                        dwellMap[dwellKey].totalHours += diffHours;
-                        dwellMap[dwellKey].count++;
+                        // Attribute duration to the user who performed the NEXT action (the one who finished the phase)
+                        if (!selectedPerfUser || curr.user === selectedPerfUser) {
+                            dwellMap[dwellKey].totalHours += diffHours;
+                            dwellMap[dwellKey].count++;
+                        }
                     }
 
                     if (stageTotals[curr.action]) {
@@ -345,9 +388,11 @@ export default function AnalyticsPage() {
                 if (!inspectorMap[u]) inspectorMap[u] = { count: 0, totalSpeed: 0 };
                 inspectorMap[u].count++;
                 if (isDocReady) {
-                    const cDateVal = parseDate(c.assignedAt || c.createdAt);
-                    const uDateVal = parseDate(c.updatedAt || c.createdAt);
-                    inspectorMap[u].totalSpeed += Math.max(0, (uDateVal.getTime() - cDateVal.getTime()) / (1000 * 60 * 60 * 24));
+                    const cDateVal = parseDate(c.assignedAt || c.createdAt || c.statusHistory?.[0]?.timestamp);
+                    const uDateVal = parseDate(c.updatedAt || c.createdAt || (c.statusHistory && c.statusHistory[c.statusHistory.length - 1]?.timestamp));
+                    if (cDateVal && uDateVal) {
+                        inspectorMap[u].totalSpeed += Math.max(0, (uDateVal.getTime() - cDateVal.getTime()) / (1000 * 60 * 60 * 24));
+                    }
                 }
             });
 
@@ -457,7 +502,7 @@ export default function AnalyticsPage() {
         initial.regionalData = Object.entries(regionMap).map(([name, val]) => ({ name, ...val })).sort((a, b) => b.amount - a.amount).slice(0, 100);
 
         return initial;
-    }, [filteredCustomers, auditLogs]);
+    }, [filteredCustomers, auditLogs, selectedPerfUser]);
 
 
     if (loading) return (
@@ -528,7 +573,7 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{stats.avgProcessingDays.toFixed(1)} gün</span> təşkil edir.
+                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatDetailedTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
                                     Hazırda ən çox ləngimə <span className="underline decoration-indigo-400">{maxDwell.label}</span> mərhələsində müşahidə olunur.
                                 </p>
                                 <div className="flex items-center gap-3">
@@ -542,13 +587,13 @@ export default function AnalyticsPage() {
                                 whileHover={{ y: -5 }}
                                 className="bg-white p-8 rounded-[2.5rem] border border-slate-300 shadow-sm relative overflow-hidden group"
                             >
-                                <div className="flex justify-between items-start mb-6">
+                                <div className="flex justify-between items-start mb-10">
                                     <div>
                                         <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center">
                                             İcraat Vəziyyəti
-                                            <InfoTooltip title="Sağlamlıq Balı" text="Məhkəməyə hazır işlərin ümumi işlərin sayına olan nisbətini faizlə ifadə edir." />
+                                            <InfoTooltip title="Sənədlərin hazırlıq faizi" text="Məhkəməyə hazır işlərin ümumi işlərin sayına olan nisbətini faizlə ifadə edir." />
                                         </h4>
-                                        <p className="text-2xl font-black text-slate-900 mt-2">{riskScore} <span className="text-xs text-slate-400">/ 100%</span></p>
+                                        <p className="text-3xl font-black text-slate-900 mt-2">{riskScore} <span className="text-md text-slate-400">/ 100%</span></p>
                                     </div>
                                     <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center", riskScore < 40 ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600")}>
                                         {riskScore < 40 ? <AlertTriangle size={24} /> : <CheckCircle size={24} />}
@@ -867,10 +912,29 @@ export default function AnalyticsPage() {
                 {/* Workflow Analytics & Demographics */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     <div className="lg:col-span-7 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative group">
-                        <div className="flex items-center justify-between mb-12 relative">
+                        <div className="flex items-start justify-between mb-12 relative flex-wrap gap-4">
                             <div>
                                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">İcraat Sürəti (Ləngimə Nöqtələri)</h3>
                                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Mərhələlər üzrə orta gözləmə müddəti</p>
+                            </div>
+
+                            <div className="relative group/select">
+                                <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                                    <UserCircle size={16} className="text-indigo-500" />
+                                </div>
+                                <select
+                                    value={selectedPerfUser || ""}
+                                    onChange={(e) => setSelectedPerfUser(e.target.value || null)}
+                                    className="appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-black uppercase rounded-2xl pl-11 pr-10 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer shadow-sm hover:bg-white hover:border-indigo-200"
+                                >
+                                    <option value="">Bütün İstifadəçilər</option>
+                                    {allUsers.map((u) => (
+                                        <option key={u} value={u}>{u.split('@')[0]}</option>
+                                    ))}
+                                </select>
+                                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
+                                    <ChevronDown size={14} className="text-slate-400 group-hover/select:text-indigo-500 transition-colors" />
+                                </div>
                             </div>
                         </div>
 
@@ -886,7 +950,7 @@ export default function AnalyticsPage() {
                                                     "bg-emerald-50 text-emerald-600 border-emerald-100"
                                         )}>
                                             <Clock size={12} />
-                                            {dwell.avgHours < 1 ? `${Math.round(dwell.avgHours * 60)} DƏQ` : dwell.avgHours < 24 ? `${dwell.avgHours.toFixed(1)} SAAT` : `${(dwell.avgHours / 24).toFixed(1)} GÜN`}
+                                            {formatDetailedTime(dwell.avgHours)}
                                         </div>
                                     </div>
                                     <div className="h-6 w-full bg-slate-50 rounded-2xl overflow-hidden border border-slate-300 p-1.5 shadow-inner">
@@ -920,7 +984,7 @@ export default function AnalyticsPage() {
                                         <div className="text-right">
                                             <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ümumi Gözləmə</span>
                                             <span className="text-lg font-black text-indigo-700 tracking-tight">
-                                                {totalHours < 1 ? `${Math.round(totalHours * 60)} DƏQ` : totalHours < 24 ? `${totalHours.toFixed(1)} SAAT` : `${(totalHours / 24).toFixed(1)} GÜN`}
+                                                {formatDetailedTime(totalHours)}
                                             </span>
                                         </div>
                                     </div>
