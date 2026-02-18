@@ -61,7 +61,7 @@ export default function ParametersPage() {
     const [stores, setStores] = useState<Store[]>([]);
     const [searchTerm, setSearchTerm] = useState("");
 
-    if (!user || !can("parameters_manage")) {
+    if (!user || (!can('page_parameters') && user.role !== 'SUPERADMIN')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

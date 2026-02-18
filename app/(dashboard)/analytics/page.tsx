@@ -995,7 +995,7 @@ export default function AnalyticsPage() {
                                                 <X size={16} className="text-rose-400" />
                                             </div>
                                             <div className="relative">
-                                                <div className="absolute top-1/2 left-0 w-full h-1 bg-rose-500/20 -rotate-2 scale-x-110 origin-left" />
+                                                <div className="absolute top-1/2 left-0 w-full h-1 scale-x-110 origin-left" />
                                                 <div className="flex items-baseline gap-2">
                                                     <span className="text-4xl font-black text-slate-400 line-through decoration-rose-500/40 decoration-4">{totalFaktiki.toFixed(1)}</span>
                                                     <span className="text-sm font-bold text-slate-400 uppercase">Saat</span>

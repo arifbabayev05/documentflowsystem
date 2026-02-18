@@ -54,7 +54,7 @@ export default function UsersPage() {
     const { user: currentUser, can, isLoading } = useAuth();
     const [users, setUsers] = useState<UserDoc[]>([]);
 
-    if (!isLoading && (!currentUser || !can("users_manage"))) {
+    if (!isLoading && (!currentUser || currentUser.role !== 'SUPERADMIN')) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

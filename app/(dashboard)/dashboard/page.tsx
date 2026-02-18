@@ -45,6 +45,78 @@ import AuthGuard from "@/components/auth/AuthGuard";
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
+/** Expandable icon button — compact by default, expands with label on hover */
+const ExpandableButton = ({
+    icon,
+    label,
+    onClick,
+    title,
+    className,
+    labelClassName,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    onClick: (e: React.MouseEvent) => void;
+    title?: string;
+    className?: string;
+    labelClassName?: string;
+}) => {
+    const [expanded, setExpanded] = useState(false);
+    const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleEnter = () => {
+        if (closeTimer.current) clearTimeout(closeTimer.current);
+        openTimer.current = setTimeout(() => setExpanded(true), 300);
+    };
+
+    const handleLeave = () => {
+        if (openTimer.current) clearTimeout(openTimer.current);
+        closeTimer.current = setTimeout(() => setExpanded(false), 150);
+    };
+
+    return (
+        <button
+            onClick={onClick}
+            title={title || label}
+            onMouseEnter={handleEnter}
+            onMouseLeave={handleLeave}
+            style={{
+                minWidth: '38px',
+                height: '38px',
+                paddingLeft: expanded ? '12px' : '0',
+                paddingRight: expanded ? '12px' : '0',
+                gap: expanded ? '7px' : '0',
+                maxWidth: expanded ? '220px' : '38px',
+                transition: 'max-width 250ms cubic-bezier(0.4,0,0.2,1), padding 250ms ease, gap 250ms ease',
+            }}
+            className={cn(
+                "flex items-center justify-center overflow-hidden shrink-0 rounded-xl font-bold text-[10px] uppercase tracking-wider border whitespace-nowrap",
+                className
+            )}
+        >
+            {/* Fixed-size icon wrapper so icon never shifts */}
+            <span style={{ minWidth: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {icon}
+            </span>
+            <span
+                style={{
+                    maxWidth: expanded ? '180px' : '0px',
+                    opacity: expanded ? 1 : 0,
+                    overflow: 'hidden',
+                    transition: 'max-width 350ms cubic-bezier(0.4,0,0.2,1), opacity 200ms ease',
+                    whiteSpace: 'nowrap',
+                    display: 'inline-block',
+                    letterSpacing: '0.05em',
+                }}
+                className={labelClassName}
+            >
+                {label}
+            </span>
+        </button>
+    );
+};
+
 export type ProcessStatus = 'INSPECTOR_ENTERED' | 'ASSIGNED_BY_MANAGER' | 'FILLED_BY_ADMIN' | 'WAITING_FOR_ARCHIVE' | 'ARCHIVE_UPLOADED' | 'COMPLETED';
 
 export const STATUS_ORDER: ProcessStatus[] = [
@@ -832,6 +904,9 @@ const CustomerCard = memo(({
         }
 
         const fetchPromise = async () => {
+            // Step-by-step feedback for the user who can't see the console
+            toast.info(`Bot-a sorğu göndərildi: FİN: ${fin}`, { duration: 2000 });
+
             const res = await fetch('/api/scrape', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -845,6 +920,10 @@ const CustomerCard = memo(({
                     throw new Error("Giriş tələb olunur");
                 }
                 throw new Error(result.error || "Xəta baş verdi");
+            }
+
+            if (result.data) {
+                toast.success(`Məlumat alındı: ${result.data.fullName}`, { duration: 4000 });
             }
 
             const updatedData = {
@@ -863,11 +942,11 @@ const CustomerCard = memo(({
             // Auto-save logic
             await onSave(updatedData);
 
-            return "Məlumatlar uğurla gətirildi";
+            return `Uğurlu: ${result.data.fullName} bazaya yazıldı.`;
         };
 
         toast.promise(fetchPromise(), {
-            loading: 'Portaldan məlumatlar gətirilir...',
+            loading: 'ƏMAS-a bağlanılır...',
             success: (msg) => msg,
             error: (err) => err.message || "Bilinməyən xəta baş verdi"
         });
@@ -1099,51 +1178,51 @@ const CustomerCard = memo(({
 
                                     {row.id && (
                                         <>
-                                            {/* ZAP / FETCH DATA BUTTON */}
+                                            {/* FETCH DATA BUTTON */}
+                                            {user?.role === 'SUPERADMIN' && (
+                                                <ExpandableButton
+                                                    onClick={fetchDataFromPortal}
+                                                    icon={<ArrowDownToLine size={14} />}
+                                                    label="Məlumatları Gətir"
+                                                    className="bg-primary/10 text-primary border-primary/20 hover:bg-primary hover:text-white"
+                                                />
+                                            )}
 
-                                            {/* <button
-                                                onClick={fetchDataFromPortal}
-                                                className="h-8.5 px-3 bg-primary/10 text-primary rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary hover:text-white transition-all border border-primary/20 flex items-center gap-1.5"
-                                                title="Portaldan Məlumatları Gətir"
-                                            >
-                                                <ArrowDownToLine size={14} />
-                                                <span className="xl:inline">Məlumatları Gətir</span>
-                                            </button> */}
-
-                                            {(user?.role === 'SUPERADMIN' || user?.permissions?.includes('action_warning')) && (() => {
+                                            {/* WARNING BUTTON */}
+                                            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (() => {
                                                 const overdue = isOverdue(getValue("details.warningDate"));
+                                                const hasDate = !!getValue("details.warningDate");
+                                                const warningLabel = hasDate
+                                                    ? `Göndərilib: ${getValue("details.warningDate")}${overdue ? " (+5)" : ""}`
+                                                    : "Xəbərdarlıq Göndər";
                                                 return (
-                                                    <button
+                                                    <ExpandableButton
                                                         onClick={handleWarningClick}
-                                                        className={cn(
-                                                            "h-auto py-2.5 px-5 flex items-center gap-2.5 transition-all border rounded-xl",
-                                                            overdue
-                                                                ? "bg-red-50 text-red-600 border-red-200/50 hover:bg-red-100"
-                                                                : "bg-amber-50 text-amber-600 border-amber-200/50 hover:bg-amber-100"
-                                                        )}
-                                                    >
-                                                        <AlertTriangle size={14} strokeWidth={2.5} className={overdue ? "text-red-500" : "text-amber-500"} />
-                                                        <div className="flex flex-col items-start leading-tight">
-                                                            <span className="text-[10px] font-bold uppercase tracking-wider">XƏBƏRDARLIQ</span>
-                                                            {getValue("details.warningDate") && (
-                                                                <span className="text-[9px] font-bold opacity-70">
-                                                                    {getValue("details.warningDate")}
-                                                                    {overdue && " (+5 gün)"}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </button>
+                                                        icon={<AlertTriangle size={14} strokeWidth={2.5} />}
+                                                        label={warningLabel}
+                                                        className={
+                                                            !hasDate
+                                                                ? "bg-blue-50 text-blue-600 border-blue-200/50 hover:bg-blue-100"
+                                                                : overdue
+                                                                    ? "bg-red-50 text-red-600 border-red-200/50 hover:bg-red-100"
+                                                                    : "bg-amber-50 text-amber-600 border-amber-200/50 hover:bg-amber-100"
+                                                        }
+                                                    />
                                                 );
                                             })()}
+
+                                            {/* EDIT BUTTON */}
                                             {canUpdate && (
-                                                <button
+                                                <ExpandableButton
                                                     onClick={() => { setIsEditing(true); setIsExpanded(true); }}
-                                                    className="h-8.5 px-5 flex items-center gap-2 bg-white text-slate-600 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-all font-bold text-[10px] uppercase tracking-wider border border-slate-200"
-                                                >
-                                                    <Edit2 size={12} /> DÜZƏLİŞ
-                                                </button>
+                                                    icon={<Edit2 size={13} />}
+                                                    label="Məlumatlarda Düzəliş"
+                                                    className="bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900"
+                                                />
                                             )}
-                                            <button
+
+                                            {/* PRINT BUTTON */}
+                                            <ExpandableButton
                                                 onClick={() => {
                                                     const isKarabakh = isKarabakhAddress(localData.details?.address || "");
 
@@ -1214,10 +1293,10 @@ const CustomerCard = memo(({
                                                     }
                                                     router.push(`/reports/generate?id=${row.id}`);
                                                 }}
-                                                className="h-8.5 px-5 flex items-center gap-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all font-bold text-[10px] uppercase tracking-wider"
-                                            >
-                                                <FileText size={12} /> SƏNƏD ÇAPI
-                                            </button>
+                                                icon={<FileText size={13} />}
+                                                label="Sənəd Çapı"
+                                                className="bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+                                            />
                                         </>
                                     )}
                                     {canDelete && (
@@ -1314,366 +1393,364 @@ const CustomerCard = memo(({
                             </div>
                         </div>
 
-                        {/* BOTTOM: INVOICES (SIFARIS DETALLARI) */}
-                        {can('fields_invoice') ? (
-                            <div className="bg-white p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <div className="h-8 w-8 rounded-xl bg-slate-900 text-white flex items-center justify-center">
-                                            <Box size={14} />
-                                        </div>
-                                        <h4 className="text-[10px] font-bold text-slate-800 uppercase tracking-wider">Faktura və Sifariş Detalları</h4>
+                        <div className="bg-white p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-xl bg-slate-900 text-white flex items-center justify-center">
+                                        <Box size={14} />
                                     </div>
-                                    {isEditing && (
-                                        <button
-                                            onClick={() => {
-                                                if (!isEditing) setIsEditing(true);
-                                                addInvoice();
-                                            }}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/5 text-primary rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary hover:text-white transition-all border border-primary/10"
-                                        >
-                                            <Plus size={10} /> Yeni Faktura
-                                        </button>
-                                    )}
+                                    <h4 className="text-[10px] font-bold text-slate-800 uppercase tracking-wider">Faktura və Sifariş Detalları</h4>
                                 </div>
+                                {isEditing && (
+                                    <button
+                                        onClick={() => {
+                                            if (!isEditing) setIsEditing(true);
+                                            addInvoice();
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/5 text-primary rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary hover:text-white transition-all border border-primary/10"
+                                    >
+                                        <Plus size={10} /> Yeni Faktura
+                                    </button>
+                                )}
+                            </div>
 
-                                <div className="grid grid-cols-1 gap-8">
-                                    {(localData.details?.invoices || [{
-                                        id: 'def',
-                                        invoiceNumber: getValue("details.contractNumber"),
-                                        archiveUrl: "",
-                                        archiveBase64: "",
-                                        archiveName: "",
-                                        archiveRequested: false,
-                                        orders: [{
-                                            id: 'o_def',
-                                            productDescription: getValue("details.productDescription"),
-                                            phoneCount: localData.details?.phoneCount || 1,
-                                            contractDate: getValue("details.contractDate"),
-                                            paymentPeriod: getValue("details.paymentPeriod"),
-                                            monthlyPayment: getValue("details.monthlyPayment"),
-                                            initialPayment: getValue("details.initialPayment"),
-                                            paidAmount: getValue("details.paidAmount") || "0.00",
-                                            totalPrice: getValue("details.totalPrice")
-                                        }]
-                                    }]).map((inv, idx) => (
-                                        <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
+                            <div className="grid grid-cols-1 gap-8">
+                                {(localData.details?.invoices || [{
+                                    id: 'def',
+                                    invoiceNumber: getValue("details.contractNumber"),
+                                    archiveUrl: "",
+                                    archiveBase64: "",
+                                    archiveName: "",
+                                    archiveRequested: false,
+                                    orders: [{
+                                        id: 'o_def',
+                                        productDescription: getValue("details.productDescription"),
+                                        phoneCount: localData.details?.phoneCount || 1,
+                                        contractDate: getValue("details.contractDate"),
+                                        paymentPeriod: getValue("details.paymentPeriod"),
+                                        monthlyPayment: getValue("details.monthlyPayment"),
+                                        initialPayment: getValue("details.initialPayment"),
+                                        paidAmount: getValue("details.paidAmount") || "0.00",
+                                        totalPrice: getValue("details.totalPrice")
+                                    }]
+                                }]).map((inv, idx) => (
+                                    <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
 
-                                            {/* HEADER SECTION */}
-                                            <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6 mb-6">
-                                                {/* Left: Invoice Number */}
-                                                <div className="flex items-end gap-4 w-full xl:w-auto">
-                                                    <div className="shrink-0 h-11 w-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-sm font-black text-slate-500 shadow-sm mb-0.5">
-                                                        {idx + 1}
-                                                    </div>
-                                                    <div className="space-y-1.5 flex-1 xl:flex-none">
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                readOnly={!isEditing}
-                                                                value={inv.invoiceNumber || ""}
-                                                                onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
-                                                                className={cn(
-                                                                    "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
-                                                                    isEditing
-                                                                        ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100 placeholder:text-slate-300"
-                                                                        : "bg-slate-50 border border-slate-500 text-slate-900"
-                                                                )}
-                                                                placeholder="Faktura Nömrəsi"
-                                                            />
-                                                            {!inv.archiveUrl && !inv.archiveBase64 && !inv.archiveRequested && (
-                                                                <button
-                                                                    onClick={(e) => handleArchiveRequest(inv.id, e)}
-                                                                    className="h-11 px-6 bg-orange-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-100 hover:text-red transition-all border border-orange-200/50 flex items-center gap-2"
-                                                                >
-                                                                    <FolderArchive size={14} /> Sənədi istə
-                                                                </button>
-                                                            )}
-                                                            {inv.archiveRequested && !inv.archiveUrl && !inv.archiveBase64 && (
-                                                                <div className="h-11 px-6 bg-slate-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider border border-slate-200 flex items-center gap-2 italic">
-                                                                    Sorğu göndərilib...
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </div>
+                                        {/* HEADER SECTION */}
+                                        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6 mb-6">
+                                            {/* Left: Invoice Number */}
+                                            <div className="flex items-end gap-4 w-full xl:w-auto">
+                                                <div className="shrink-0 h-11 w-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-sm font-black text-slate-500 shadow-sm mb-0.5">
+                                                    {idx + 1}
                                                 </div>
-
-                                                {/* Right: Controls */}
-                                                <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
-
-                                                    {/* VIEW FILE */}
-                                                    {(inv.archiveBase64 || inv.archiveUrl) && (
-                                                        <div className="bg-emerald-50 rounded-xl border border-emerald-200/60 p-1 pr-3 flex items-center gap-3 h-11">
-                                                            <div className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                                                                <FileText size={14} />
-                                                            </div>
+                                                <div className="space-y-1.5 flex-1 xl:flex-none">
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            readOnly={!isEditing}
+                                                            value={inv.invoiceNumber || ""}
+                                                            onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                            className={cn(
+                                                                "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
+                                                                isEditing
+                                                                    ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100 placeholder:text-slate-300"
+                                                                    : "bg-slate-50 border border-slate-500 text-slate-900"
+                                                            )}
+                                                            placeholder="Faktura Nömrəsi"
+                                                        />
+                                                        {!inv.archiveUrl && !inv.archiveBase64 && !inv.archiveRequested && (
                                                             <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    const data = inv.archiveUrl || inv.archiveBase64;
-                                                                    if (data) window.open(data, '_blank');
-                                                                    else toast.error("Fayl tapılmadı");
-                                                                }}
-                                                                className="text-[10px] font-black text-emerald-700 uppercase tracking-wider hover:text-emerald-800"
+                                                                onClick={(e) => handleArchiveRequest(inv.id, e)}
+                                                                className="h-11 px-6 bg-orange-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-100 hover:text-red transition-all border border-orange-200/50 flex items-center gap-2"
                                                             >
-                                                                Sənədə Bax
+                                                                <FolderArchive size={14} /> Sənədi istə
                                                             </button>
-                                                        </div>
-                                                    )}
-
-                                                    {/* STORE */}
-                                                    <div className="relative group/store min-w-[220px]">
-                                                        {isEditing ? (
-                                                            <div className="relative">
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setOpenStoreDropdownId(openStoreDropdownId === inv.id ? null : inv.id);
-                                                                        setDropdownSelectedIndex(0);
-                                                                        setStoreSearch("");
-                                                                    }}
-                                                                    className="w-full h-11 pl-10 pr-4 bg-white text-[11px] font-bold text-slate-800 outline-none flex items-center justify-between rounded-xl border-2 border-slate-900 hover:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
-                                                                >
-                                                                    <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
-                                                                    <span className="truncate flex-1 text-left">{localData.store || "Mağaza Seç"}</span>
-                                                                    <ChevronDown size={14} className={cn("transition-transform duration-300", openStoreDropdownId === inv.id && "rotate-180")} />
-                                                                </button>
-
-                                                                {openStoreDropdownId === inv.id && (
-                                                                    <>
-                                                                        <div
-                                                                            className="fixed inset-0 z-[90]"
-                                                                            onClick={() => setOpenStoreDropdownId(null)}
-                                                                        />
-                                                                        <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-slate-200 rounded-[1.5rem] shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                                                            <div className="p-3 border-b border-slate-100 bg-slate-50/50">
-                                                                                <div className="relative">
-                                                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
-                                                                                    <input
-                                                                                        autoFocus
-                                                                                        value={storeSearch}
-                                                                                        onClick={(e) => e.stopPropagation()}
-                                                                                        onChange={(e) => {
-                                                                                            setStoreSearch(e.target.value);
-                                                                                            setDropdownSelectedIndex(0);
-                                                                                        }}
-                                                                                        onKeyDown={(e) => {
-                                                                                            const filtered = stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()));
-                                                                                            if (e.key === 'ArrowDown') {
-                                                                                                e.preventDefault();
-                                                                                                setDropdownSelectedIndex(prev => (prev + 1) % (filtered.length || 1));
-                                                                                            } else if (e.key === 'ArrowUp') {
-                                                                                                e.preventDefault();
-                                                                                                setDropdownSelectedIndex(prev => (prev - 1 + (filtered.length || 1)) % (filtered.length || 1));
-                                                                                            } else if (e.key === 'Enter') {
-                                                                                                e.preventDefault();
-                                                                                                if (filtered[dropdownSelectedIndex]) {
-                                                                                                    setLocalData(prev => ({ ...prev, store: filtered[dropdownSelectedIndex].name }));
-                                                                                                    setOpenStoreDropdownId(null);
-                                                                                                    setStoreSearch("");
-                                                                                                }
-                                                                                            } else if (e.key === 'Escape') {
-                                                                                                setOpenStoreDropdownId(null);
-                                                                                            }
-                                                                                        }}
-                                                                                        placeholder="Mağaza axtar..."
-                                                                                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-slate-400 transition-all text-[11px] font-bold"
-                                                                                    />
-                                                                                </div>
-                                                                            </div>
-                                                                            <div className="max-h-[250px] overflow-y-auto p-1.5 scrollbar-thin">
-                                                                                <button
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        setLocalData(prev => ({ ...prev, store: "" }));
-                                                                                        setOpenStoreDropdownId(null);
-                                                                                        setStoreSearch("");
-                                                                                    }}
-                                                                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 transition-all text-[11px] font-bold text-slate-500 mb-1"
-                                                                                >
-                                                                                    Seçimi təmizlə
-                                                                                </button>
-                                                                                {stores
-                                                                                    .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
-                                                                                    .map((s, sIdx) => (
-                                                                                        <button
-                                                                                            key={s.id}
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                setLocalData(prev => ({ ...prev, store: s.name }));
-                                                                                                setOpenStoreDropdownId(null);
-                                                                                                setStoreSearch("");
-                                                                                            }}
-                                                                                            className={cn(
-                                                                                                "w-full text-left px-3 py-2 rounded-lg transition-all text-[11px] font-bold mb-0.5",
-                                                                                                localData.store === s.name || dropdownSelectedIndex === sIdx ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
-                                                                                            )}
-                                                                                        >
-                                                                                            {s.name}
-                                                                                        </button>
-                                                                                    ))}
-                                                                                {stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase())).length === 0 && (
-                                                                                    <div className="py-8 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest italic">Mağaza tapılmadı</div>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        ) : (
-                                                            <div className={cn(
-                                                                "h-11 px-4 flex items-center gap-2 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm",
-                                                                localData.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-50 text-slate-400 border-slate-500"
-                                                            )}>
-                                                                <Store size={14} className={localData.store ? "text-primary" : "text-slate-400"} />
-                                                                <span className="truncate max-w-[120px]">{localData.store || "Mağaza Seçilməyib"}</span>
+                                                        )}
+                                                        {inv.archiveRequested && !inv.archiveUrl && !inv.archiveBase64 && (
+                                                            <div className="h-11 px-6 bg-slate-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider border border-slate-200 flex items-center gap-2 italic">
+                                                                Sorğu göndərilib...
                                                             </div>
                                                         )}
                                                     </div>
-
-
-
-                                                    {/* DELETE INVOICE */}
-                                                    {(isEditing || user?.role === 'SUPERADMIN') && (
-                                                        <button
-                                                            onClick={() => {
-                                                                if (!isEditing) setIsEditing(true);
-                                                                removeInvoice(inv.id);
-                                                            }}
-                                                            className="h-11 w-11 bg-red-50 text-red-500 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border border-red-100"
-                                                            title="Fakturanı Sil"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    )}
                                                 </div>
                                             </div>
 
-                                            {/* ORDERS LIST */}
-                                            <div className="grid gap-4">
-                                                {(inv.orders || []).map((ord, oidx) => (
-                                                    <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
-                                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-                                                            {/* Məhsul Adı */}
-                                                            <div className="lg:col-span-3 space-y-2.5">
-                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MƏHSUL ADI</label>
+                                            {/* Right: Controls */}
+                                            <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+
+                                                {/* VIEW FILE */}
+                                                {(inv.archiveBase64 || inv.archiveUrl) && (
+                                                    <div className="bg-emerald-50 rounded-xl border border-emerald-200/60 p-1 pr-3 flex items-center gap-3 h-11">
+                                                        <div className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                                                            <FileText size={14} />
+                                                        </div>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const data = inv.archiveUrl || inv.archiveBase64;
+                                                                if (data) window.open(data, '_blank');
+                                                                else toast.error("Fayl tapılmadı");
+                                                            }}
+                                                            className="text-[10px] font-black text-emerald-700 uppercase tracking-wider hover:text-emerald-800"
+                                                        >
+                                                            Sənədə Bax
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* STORE */}
+                                                <div className="relative group/store min-w-[220px]">
+                                                    {isEditing ? (
+                                                        <div className="relative">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setOpenStoreDropdownId(openStoreDropdownId === inv.id ? null : inv.id);
+                                                                    setDropdownSelectedIndex(0);
+                                                                    setStoreSearch("");
+                                                                }}
+                                                                className="w-full h-11 pl-10 pr-4 bg-white text-[11px] font-bold text-slate-800 outline-none flex items-center justify-between rounded-xl border-2 border-slate-900 hover:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
+                                                            >
+                                                                <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                                                                <span className="truncate flex-1 text-left">{localData.store || "Mağaza Seç"}</span>
+                                                                <ChevronDown size={14} className={cn("transition-transform duration-300", openStoreDropdownId === inv.id && "rotate-180")} />
+                                                            </button>
+
+                                                            {openStoreDropdownId === inv.id && (
+                                                                <>
+                                                                    <div
+                                                                        className="fixed inset-0 z-[90]"
+                                                                        onClick={() => setOpenStoreDropdownId(null)}
+                                                                    />
+                                                                    <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-slate-200 rounded-[1.5rem] shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                                                        <div className="p-3 border-b border-slate-100 bg-slate-50/50">
+                                                                            <div className="relative">
+                                                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
+                                                                                <input
+                                                                                    autoFocus
+                                                                                    value={storeSearch}
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                    onChange={(e) => {
+                                                                                        setStoreSearch(e.target.value);
+                                                                                        setDropdownSelectedIndex(0);
+                                                                                    }}
+                                                                                    onKeyDown={(e) => {
+                                                                                        const filtered = stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()));
+                                                                                        if (e.key === 'ArrowDown') {
+                                                                                            e.preventDefault();
+                                                                                            setDropdownSelectedIndex(prev => (prev + 1) % (filtered.length || 1));
+                                                                                        } else if (e.key === 'ArrowUp') {
+                                                                                            e.preventDefault();
+                                                                                            setDropdownSelectedIndex(prev => (prev - 1 + (filtered.length || 1)) % (filtered.length || 1));
+                                                                                        } else if (e.key === 'Enter') {
+                                                                                            e.preventDefault();
+                                                                                            if (filtered[dropdownSelectedIndex]) {
+                                                                                                setLocalData(prev => ({ ...prev, store: filtered[dropdownSelectedIndex].name }));
+                                                                                                setOpenStoreDropdownId(null);
+                                                                                                setStoreSearch("");
+                                                                                            }
+                                                                                        } else if (e.key === 'Escape') {
+                                                                                            setOpenStoreDropdownId(null);
+                                                                                        }
+                                                                                    }}
+                                                                                    placeholder="Mağaza axtar..."
+                                                                                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-slate-400 transition-all text-[11px] font-bold"
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                        <div className="max-h-[250px] overflow-y-auto p-1.5 scrollbar-thin">
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setLocalData(prev => ({ ...prev, store: "" }));
+                                                                                    setOpenStoreDropdownId(null);
+                                                                                    setStoreSearch("");
+                                                                                }}
+                                                                                className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 transition-all text-[11px] font-bold text-slate-500 mb-1"
+                                                                            >
+                                                                                Seçimi təmizlə
+                                                                            </button>
+                                                                            {stores
+                                                                                .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                                                                                .map((s, sIdx) => (
+                                                                                    <button
+                                                                                        key={s.id}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            setLocalData(prev => ({ ...prev, store: s.name }));
+                                                                                            setOpenStoreDropdownId(null);
+                                                                                            setStoreSearch("");
+                                                                                        }}
+                                                                                        className={cn(
+                                                                                            "w-full text-left px-3 py-2 rounded-lg transition-all text-[11px] font-bold mb-0.5",
+                                                                                            localData.store === s.name || dropdownSelectedIndex === sIdx ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
+                                                                                        )}
+                                                                                    >
+                                                                                        {s.name}
+                                                                                    </button>
+                                                                                ))}
+                                                                            {stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase())).length === 0 && (
+                                                                                <div className="py-8 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest italic">Mağaza tapılmadı</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <div className={cn(
+                                                            "h-11 px-4 flex items-center gap-2 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm",
+                                                            localData.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-50 text-slate-400 border-slate-500"
+                                                        )}>
+                                                            <Store size={14} className={localData.store ? "text-primary" : "text-slate-400"} />
+                                                            <span className="truncate max-w-[120px]">{localData.store || "Mağaza Seçilməyib"}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+
+
+                                                {/* DELETE INVOICE */}
+                                                {(isEditing || user?.role === 'SUPERADMIN') && (
+                                                    <button
+                                                        onClick={() => {
+                                                            if (!isEditing) setIsEditing(true);
+                                                            removeInvoice(inv.id);
+                                                        }}
+                                                        className="h-11 w-11 bg-red-50 text-red-500 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border border-red-100"
+                                                        title="Fakturanı Sil"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* ORDERS LIST */}
+                                        <div className="grid gap-4">
+                                            {(inv.orders || []).map((ord, oidx) => (
+                                                <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
+                                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                                                        {/* Məhsul Adı */}
+                                                        <div className="lg:col-span-3 space-y-2.5">
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MƏHSUL ADI</label>
+                                                            <input
+                                                                readOnly={!isEditing}
+                                                                value={ord.productDescription || ""}
+                                                                onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
+                                                                className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
+                                                                placeholder="Məhsul adı..."
+                                                            />
+                                                        </div>
+
+                                                        {/* Müqavilə Tarixi */}
+                                                        <div className="lg:col-span-2 space-y-2.5">
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MÜQAVİLƏ TARİXİ</label>
+                                                            <input
+                                                                readOnly={!isEditing}
+                                                                value={ord.contractDate || ""}
+                                                                onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', formatDateInput(e.target.value))}
+                                                                className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all text-center shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
+                                                                placeholder="GG.AA.İİİİ"
+                                                            />
+                                                        </div>
+
+                                                        {/* Ödəmə Parametrləri */}
+                                                        <div className="lg:col-span-6 grid grid-cols-4 gap-3">
+                                                            <div className="space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Müddət</label>
                                                                 <input
                                                                     readOnly={!isEditing}
-                                                                    value={ord.productDescription || ""}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
-                                                                    className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
-                                                                    placeholder="Məhsul adı..."
+                                                                    value={ord.paymentPeriod || ""}
+                                                                    onChange={(e) => {
+                                                                        let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                        if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                        const parts = v.split(".");
+                                                                        if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                        updateOrder(inv.id, ord.id, 'paymentPeriod', v);
+                                                                    }}
+                                                                    className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
-
-                                                            {/* Müqavilə Tarixi */}
-                                                            <div className="lg:col-span-2 space-y-2.5">
-                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MÜQAVİLƏ TARİXİ</label>
+                                                            <div className="space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">İlkin Ödəniş</label>
                                                                 <input
                                                                     readOnly={!isEditing}
-                                                                    value={ord.contractDate || ""}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', formatDateInput(e.target.value))}
-                                                                    className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all text-center shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
-                                                                    placeholder="GG.AA.İİİİ"
+                                                                    value={ord.initialPayment || ""}
+                                                                    onChange={(e) => {
+                                                                        let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                        const parts = v.split(".");
+                                                                        if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                        updateOrder(inv.id, ord.id, 'initialPayment', v);
+                                                                    }}
+                                                                    className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
-
-                                                            {/* Ödəmə Parametrləri */}
-                                                            <div className="lg:col-span-6 grid grid-cols-4 gap-3">
-                                                                <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Müddət</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.paymentPeriod || ""}
-                                                                        onChange={(e) => {
-                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
-                                                                            if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
-                                                                            const parts = v.split(".");
-                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
-                                                                            updateOrder(inv.id, ord.id, 'paymentPeriod', v);
-                                                                        }}
-                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
-                                                                    />
-                                                                </div>
-                                                                <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">İlkin Ödəniş</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.initialPayment || ""}
-                                                                        onChange={(e) => {
-                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
-                                                                            const parts = v.split(".");
-                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
-                                                                            updateOrder(inv.id, ord.id, 'initialPayment', v);
-                                                                        }}
-                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
-                                                                    />
-                                                                </div>
-                                                                <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Aylıq Ödəniş</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.monthlyPayment || ""}
-                                                                        onChange={(e) => {
-                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
-                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
-                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
-                                                                            const parts = v.split(".");
-                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
-                                                                            updateOrder(inv.id, ord.id, 'monthlyPayment', v);
-                                                                        }}
-                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
-                                                                    />
-                                                                </div>
-                                                                <div className="space-y-2.5">
-                                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Ödənilmiş</label>
-                                                                    <input
-                                                                        readOnly={!isEditing}
-                                                                        value={ord.paidAmount || ""}
-                                                                        onChange={(e) => {
-                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
-                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
-                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
-                                                                            const parts = v.split(".");
-                                                                            if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
-                                                                            updateOrder(inv.id, ord.id, 'paidAmount', v);
-                                                                        }}
-                                                                        className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
-                                                                    />
-                                                                </div>
+                                                            <div className="space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Aylıq Ödəniş</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={ord.monthlyPayment || ""}
+                                                                    onChange={(e) => {
+                                                                        let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                        if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                        else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                        const parts = v.split(".");
+                                                                        if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                        updateOrder(inv.id, ord.id, 'monthlyPayment', v);
+                                                                    }}
+                                                                    className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
+                                                                />
                                                             </div>
-
-                                                            {/* DELETE PRODUCT BUTTON */}
-                                                            <div className="lg:col-span-1 flex justify-end pt-8">
-                                                                {(isEditing || user?.role === 'SUPERADMIN') && (
-                                                                    <button
-                                                                        onClick={() => {
-                                                                            if (!isEditing) setIsEditing(true);
-                                                                            removeOrder(inv.id, ord.id);
-                                                                        }}
-                                                                        className="h-11 w-11 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                                                                        title="Məhsulu Sil"
-                                                                    >
-                                                                        <Trash2 size={20} />
-                                                                    </button>
-                                                                )}
+                                                            <div className="space-y-2.5">
+                                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Ödənilmiş</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={ord.paidAmount || ""}
+                                                                    onChange={(e) => {
+                                                                        let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                        if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                        else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                        const parts = v.split(".");
+                                                                        if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                                        updateOrder(inv.id, ord.id, 'paidAmount', v);
+                                                                    }}
+                                                                    className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
+                                                                />
                                                             </div>
                                                         </div>
 
-                                                        {/* TOTAL PRICE BAR */}
-                                                        <div className="mt-6 pt-5 border-t border-slate-500 flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="h-2 w-2 rounded-full bg-primary/20 animate-pulse" />
-                                                                <span className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em]">CƏMİ MƏBLƏĞ</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-xl font-black text-slate-900 tracking-tighter">{ord.totalPrice || "0.00"}</span>
-                                                                <span className="text-[11px] font-black text-slate-400 uppercase">AZN</span>
-                                                            </div>
+                                                        {/* DELETE PRODUCT BUTTON */}
+                                                        <div className="lg:col-span-1 flex justify-end pt-8">
+                                                            {(isEditing || user?.role === 'SUPERADMIN') && (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        if (!isEditing) setIsEditing(true);
+                                                                        removeOrder(inv.id, ord.id);
+                                                                    }}
+                                                                    className="h-11 w-11 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                                                    title="Məhsulu Sil"
+                                                                >
+                                                                    <Trash2 size={20} />
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     </div>
-                                                ))}
-                                            </div>
-                                            {/* ADD PRODUCT
+
+                                                    {/* TOTAL PRICE BAR */}
+                                                    <div className="mt-6 pt-5 border-t border-slate-500 flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="h-2 w-2 rounded-full bg-primary/20 animate-pulse" />
+                                                            <span className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em]">CƏMİ MƏBLƏĞ</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xl font-black text-slate-900 tracking-tighter">{ord.totalPrice || "0.00"}</span>
+                                                            <span className="text-[11px] font-black text-slate-400 uppercase">AZN</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {/* ADD PRODUCT
                                             {isEditing && (
                                                 <div className="flex justify-end mt-4">
                                                     <button
@@ -1687,16 +1764,10 @@ const CustomerCard = memo(({
                                                     </button>
                                                 </div>
                                             )} */}
-                                        </div>
-                                    ))}
-                                </div>
+                                    </div>
+                                ))}
                             </div>
-                        ) : (
-                            <div className="bg-white p-20 rounded-[2.5rem] border-2 border-dashed border-slate-500 flex flex-col items-center justify-center text-center opacity-20">
-                                <Shield size={40} />
-                                <p className="mt-6 text-sm font-black uppercase tracking-[0.2em] italic">Faktura Məlumatlarına Giriş Məhdudlaşdırılıb</p>
-                            </div>
-                        )}
+                        </div>
                     </div>
                 )}
             </div>
@@ -1790,7 +1861,7 @@ const CustomerCard = memo(({
                 </div>
 
                 {/* ARCHIVE BUTTON - Only if COMPLETED and can archive */}
-                {row.process_status === 'COMPLETED' && can('archive_manage') && (
+                {row.process_status === 'COMPLETED' && (
                     <button
                         onClick={async (e) => {
                             e.stopPropagation();

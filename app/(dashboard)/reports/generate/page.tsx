@@ -1562,7 +1562,7 @@ function GenerateDocumentContent() {
             }
         }
 
-        if (isEmpty(customer.store)) {
+        if (isEmpty(customer.store) && !isWarningOnly) {
             toast.error("Faktura və Sifariş Detalları bölməsində, sifarişin \"Mağaza\" xanasını doldurun.");
             return false;
         }
@@ -1619,7 +1619,7 @@ function GenerateDocumentContent() {
             if (!saved) return null;
         }
         if (!validateData(template.name)) return null;
-        if (!selectedCourt) {
+        if (!isWarningOnly && !selectedCourt) {
             toast.error("Zəhmət olmasa məhkəmə seçin");
             setIsCourtDropdownOpen(true);
             return null;
@@ -1631,7 +1631,7 @@ function GenerateDocumentContent() {
                 return null;
             }
             if (isPostageRequired && !postageFile) {
-                toast.error(`Seçilmiş məhkəmə (${selectedCourt.name}) üçün Poçt markası sənədini yükləməlisiniz`);
+                toast.error(`Seçilmiş məhkəmə (${selectedCourt?.name}) üçün Poçt markası sənədini yükləməlisiniz`);
                 return null;
             }
         }
@@ -1692,10 +1692,10 @@ function GenerateDocumentContent() {
             const totalDebt = unpaidVal + extraCosts;
 
             const data = {
-                MEHKEME_ADI: selectedCourt.name,
-                MEHKEME_UNVAN: selectedCourt.address,
-                MEHKEME_TELEFON: selectedCourt.phone || "",
-                MEHKEME_FAKS: selectedCourt.fax || "",
+                MEHKEME_ADI: selectedCourt?.name || "",
+                MEHKEME_UNVAN: selectedCourt?.address || "",
+                MEHKEME_TELEFON: selectedCourt?.phone || "",
+                MEHKEME_FAKS: selectedCourt?.fax || "",
                 IDDIACININ_ADI: companyInfo?.companyName || "",
                 IDDIACI_UNVAN: companyInfo?.address || "",
                 IDDIACI_TELEFON: companyInfo?.phone || "",
@@ -1943,10 +1943,49 @@ function GenerateDocumentContent() {
                                 // Mode 1: Warning Document Only (No session completion)
                                 if (isWarningOnly) {
                                     try {
-                                        if (filteredTemplates.length > 0) {
-                                            await generateDocument(filteredTemplates[0], false);
-                                        } else {
+                                        if (filteredTemplates.length === 0) {
                                             toast.error("Şablon tapılmadı");
+                                            return;
+                                        }
+
+                                        const result = await generateDocument(filteredTemplates[0], true) as any;
+                                        if (!result || !result.content) return;
+
+                                        // Trigger print iframe
+                                        const printContainer = document.getElementById('print-iframe') as HTMLIFrameElement;
+                                        if (printContainer) {
+                                            const printDoc = printContainer.contentDocument || printContainer.contentWindow?.document;
+                                            if (printDoc) {
+                                                printDoc.open();
+                                                printDoc.write('<html><head></head><body><div id="print-mount"></div></body></html>');
+                                                printDoc.close();
+
+                                                const style = printDoc.createElement('style');
+                                                style.textContent = `
+                                                    @page { size: A4; margin: 0; }
+                                                    body { margin: 0; padding: 0; font-family: 'Times New Roman', serif; }
+                                                    .docx-wrapper { background: white !important; padding: 0 !important; }
+                                                    .docx { box-shadow: none !important; margin: 0 !important; padding: 2.54cm !important; width: 100% !important; box-sizing: border-box; }
+                                                `;
+                                                printDoc.head.appendChild(style);
+
+                                                const mountPoint = printDoc.getElementById('print-mount');
+                                                const { renderAsync } = await import("docx-preview");
+                                                if (mountPoint) {
+                                                    await renderAsync(result.content, mountPoint, undefined, {
+                                                        className: "docx-viewer",
+                                                        inWrapper: false,
+                                                        ignoreWidth: true,
+                                                        ignoreHeight: true,
+                                                        breakPages: true,
+                                                    });
+                                                }
+
+                                                setTimeout(() => {
+                                                    printContainer.contentWindow?.focus();
+                                                    printContainer.contentWindow?.print();
+                                                }, 500);
+                                            }
                                         }
                                     } catch (err) {
                                         console.error("Warning generation error:", err);
