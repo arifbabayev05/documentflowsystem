@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, memo } from "react";
+import { useState, useCallback, useEffect, useMemo, memo, useRef } from "react";
 import {
     Plus,
     Trash2,
@@ -37,6 +37,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
+import { formatDateInput } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 
@@ -186,14 +187,20 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
         ];
 
         if (datePaths.includes(path)) {
-            val = val.replace(/\D/g, '').slice(0, 8);
-            if (val.length >= 4) val = val.slice(0, 2) + '.' + val.slice(2, 4) + '.' + val.slice(4);
-            else if (val.length >= 2) val = val.slice(0, 2) + '.' + val.slice(2);
+            val = formatDateInput(val);
         } else if (numericPaths.includes(path)) {
             // Allow only digits, dots, and commas
             val = val.replace(/[^0-9.,]/g, "");
             // Convert comma to dot
             val = val.replace(/,/g, ".");
+
+            // Clear zero prefix if user starts typing something else
+            if (val.startsWith("0.00") && val.length > 4) {
+                val = val.slice(4);
+            } else if (val.startsWith("0") && val.length > 1 && val[1] !== ".") {
+                val = val.replace(/^0+/, "");
+            }
+
             // Allow only one dot
             const parts = val.split(".");
             if (parts.length > 2) val = parts[0] + "." + parts.slice(1).join("");
@@ -270,6 +277,7 @@ const CustomerCard = memo(({
     canUpdate,
     canDelete,
     appUsers,
+    userWorkload,
     stores,
     onSave,
     onDelete,
@@ -281,6 +289,7 @@ const CustomerCard = memo(({
     canUpdate: boolean;
     canDelete: boolean;
     appUsers: any[];
+    userWorkload: Record<string, number>;
     stores: any[];
     onSave: (data: CustomerRow) => Promise<void>;
     onDelete: (index: number) => void;
@@ -294,6 +303,28 @@ const CustomerCard = memo(({
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
     const [openStoreDropdownId, setOpenStoreDropdownId] = useState<string | null>(null);
     const [storeSearch, setStoreSearch] = useState("");
+    const [dropdownSelectedIndex, setDropdownSelectedIndex] = useState(0);
+    const cardRef = useRef<HTMLDivElement>(null);
+
+    // Handle click outside to close
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
+                // If expanded but NOT editing, close it
+                if (isExpanded && !isEditing) {
+                    setIsExpanded(false);
+                }
+            }
+        };
+
+        if (isExpanded) {
+            document.addEventListener("mousedown", handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [isExpanded, isEditing]);
 
     useEffect(() => {
         if (!isEditing) {
@@ -924,12 +955,14 @@ const CustomerCard = memo(({
             </div>
 
             {/* MAIN CARD */}
-            <div className={cn(
-                "relative bg-white rounded-xl border transition-all duration-300 overflow-hidden flex-1",
-                isExpanded
-                    ? "border-slate-300 shadow-lg ring-1 ring-slate-200"
-                    : "border-slate-200 hover:border-slate-400 hover:shadow-md cursor-pointer group"
-            )} >
+            <div
+                ref={cardRef}
+                className={cn(
+                    "relative bg-white rounded-xl border transition-all duration-300 overflow-hidden flex-1",
+                    isExpanded
+                        ? "border-slate-300 shadow-lg ring-1 ring-slate-200"
+                        : "border-slate-200 hover:border-slate-400 hover:shadow-md cursor-pointer group"
+                )} >
                 {/* HEADER / COMPACT VIEW */}
                 <div
                     className={cn(
@@ -1067,14 +1100,15 @@ const CustomerCard = memo(({
                                     {row.id && (
                                         <>
                                             {/* ZAP / FETCH DATA BUTTON */}
-                                            <button
+
+                                            {/* <button
                                                 onClick={fetchDataFromPortal}
                                                 className="h-8.5 px-3 bg-primary/10 text-primary rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-primary hover:text-white transition-all border border-primary/20 flex items-center gap-1.5"
                                                 title="Portaldan Məlumatları Gətir"
                                             >
                                                 <ArrowDownToLine size={14} />
                                                 <span className="xl:inline">Məlumatları Gətir</span>
-                                            </button>
+                                            </button> */}
 
                                             {(user?.role === 'SUPERADMIN' || user?.permissions?.includes('action_warning')) && (() => {
                                                 const overdue = isOverdue(getValue("details.warningDate"));
@@ -1233,7 +1267,7 @@ const CustomerCard = memo(({
 
                                     <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
                                         <CustomerField label="Seriya Nömrəsi" path="details.passportSeries" value={getValue("details.passportSeries")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
-                                        <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="+994" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-7" />
+                                        <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="0501234567" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-7" />
                                     </div>
 
                                     {/* Address info merged inside personal block as requested */}
@@ -1271,7 +1305,7 @@ const CustomerCard = memo(({
                                         <CustomerField label="Alqı-satqı qiyməti" path="details.totalPrice" value={getValue("details.totalPrice")} onChange={handleFieldChange} isEditing={isEditing} />
                                         <CustomerField label="Əsas borca ödənilmiş məbləğ" path="details.paidAmount" value={getValue("details.paidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
                                         <CustomerField label="Əsas borca ödənilməmiş məbləğ" path="details.unpaidAmount" value={getValue("details.unpaidAmount")} onChange={handleFieldChange} isEditing={isEditing} />
-                                        <CustomerField label="İLM Rüsumu" path="details.fee" value={getValue("details.fee")} onChange={handleFieldChange} isEditing={isEditing} />
+                                        <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" path="details.fee" value={getValue("details.fee")} onChange={handleFieldChange} isEditing={isEditing} />
                                         <CustomerField label="Cərimə" path="details.penalty" value={getValue("details.penalty")} onChange={handleFieldChange} isEditing={isEditing} />
                                         <CustomerField label="Güzəşt Məbləği" path="details.discountAmount" value={getValue("details.discountAmount")} onChange={handleFieldChange} isEditing={isEditing} />
                                         <CustomerField label="Ümumilikdə ödənilməmiş məbləğ" path="details.totalUnpaid" isCemi={true} value={getValue("details.totalUnpaid")} onChange={handleFieldChange} isEditing={isEditing} className="col-span-2" />
@@ -1394,6 +1428,8 @@ const CustomerCard = memo(({
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
                                                                         setOpenStoreDropdownId(openStoreDropdownId === inv.id ? null : inv.id);
+                                                                        setDropdownSelectedIndex(0);
+                                                                        setStoreSearch("");
                                                                     }}
                                                                     className="w-full h-11 pl-10 pr-4 bg-white text-[11px] font-bold text-slate-800 outline-none flex items-center justify-between rounded-xl border-2 border-slate-900 hover:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
                                                                 >
@@ -1416,7 +1452,29 @@ const CustomerCard = memo(({
                                                                                         autoFocus
                                                                                         value={storeSearch}
                                                                                         onClick={(e) => e.stopPropagation()}
-                                                                                        onChange={(e) => setStoreSearch(e.target.value)}
+                                                                                        onChange={(e) => {
+                                                                                            setStoreSearch(e.target.value);
+                                                                                            setDropdownSelectedIndex(0);
+                                                                                        }}
+                                                                                        onKeyDown={(e) => {
+                                                                                            const filtered = stores.filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()));
+                                                                                            if (e.key === 'ArrowDown') {
+                                                                                                e.preventDefault();
+                                                                                                setDropdownSelectedIndex(prev => (prev + 1) % (filtered.length || 1));
+                                                                                            } else if (e.key === 'ArrowUp') {
+                                                                                                e.preventDefault();
+                                                                                                setDropdownSelectedIndex(prev => (prev - 1 + (filtered.length || 1)) % (filtered.length || 1));
+                                                                                            } else if (e.key === 'Enter') {
+                                                                                                e.preventDefault();
+                                                                                                if (filtered[dropdownSelectedIndex]) {
+                                                                                                    setLocalData(prev => ({ ...prev, store: filtered[dropdownSelectedIndex].name }));
+                                                                                                    setOpenStoreDropdownId(null);
+                                                                                                    setStoreSearch("");
+                                                                                                }
+                                                                                            } else if (e.key === 'Escape') {
+                                                                                                setOpenStoreDropdownId(null);
+                                                                                            }
+                                                                                        }}
                                                                                         placeholder="Mağaza axtar..."
                                                                                         className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-slate-400 transition-all text-[11px] font-bold"
                                                                                     />
@@ -1436,7 +1494,7 @@ const CustomerCard = memo(({
                                                                                 </button>
                                                                                 {stores
                                                                                     .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
-                                                                                    .map((s) => (
+                                                                                    .map((s, sIdx) => (
                                                                                         <button
                                                                                             key={s.id}
                                                                                             onClick={(e) => {
@@ -1447,7 +1505,7 @@ const CustomerCard = memo(({
                                                                                             }}
                                                                                             className={cn(
                                                                                                 "w-full text-left px-3 py-2 rounded-lg transition-all text-[11px] font-bold mb-0.5",
-                                                                                                localData.store === s.name ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
+                                                                                                localData.store === s.name || dropdownSelectedIndex === sIdx ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
                                                                                             )}
                                                                                         >
                                                                                             {s.name}
@@ -1513,7 +1571,7 @@ const CustomerCard = memo(({
                                                                 <input
                                                                     readOnly={!isEditing}
                                                                     value={ord.contractDate || ""}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', e.target.value)}
+                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', formatDateInput(e.target.value))}
                                                                     className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all text-center shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                     placeholder="GG.AA.İİİİ"
                                                                 />
@@ -1528,6 +1586,7 @@ const CustomerCard = memo(({
                                                                         value={ord.paymentPeriod || ""}
                                                                         onChange={(e) => {
                                                                             let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
                                                                             const parts = v.split(".");
                                                                             if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                             updateOrder(inv.id, ord.id, 'paymentPeriod', v);
@@ -1556,6 +1615,8 @@ const CustomerCard = memo(({
                                                                         value={ord.monthlyPayment || ""}
                                                                         onChange={(e) => {
                                                                             let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
                                                                             const parts = v.split(".");
                                                                             if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                             updateOrder(inv.id, ord.id, 'monthlyPayment', v);
@@ -1569,11 +1630,9 @@ const CustomerCard = memo(({
                                                                         readOnly={!isEditing}
                                                                         value={ord.paidAmount || ""}
                                                                         onChange={(e) => {
-                                                                            let v = e.target.value;
-                                                                            // Strict numeric validation for inner order fields
-                                                                            // The field name is 'paidAmount'
-                                                                            v = v.replace(/[^0-9.,]/g, "");
-                                                                            v = v.replace(/,/g, ".");
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
                                                                             const parts = v.split(".");
                                                                             if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                             updateOrder(inv.id, ord.id, 'paidAmount', v);
@@ -1675,9 +1734,15 @@ const CustomerCard = memo(({
                                 className="w-full bg-slate-50 text-[10px] font-bold text-slate-700 outline-none appearance-none cursor-pointer pr-6 pl-2.5 py-2 rounded-lg border border-slate-200 hover:border-slate-300 transition-all shadow-sm focus:border-purple-400"
                             >
                                 <option value="">Seçilməyib</option>
-                                {appUsers.map((u: any) => (
-                                    <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
-                                ))}
+                                {appUsers.map((u: any) => {
+                                    const active = userWorkload[u.id] ?? 0;
+                                    const badge = active === 0 ? '✅ 0' : active <= 3 ? `🟢 ${active}` : `🔴 ${active}`;
+                                    return (
+                                        <option key={u.id} value={u.id}>
+                                            {u.displayName || u.email} — {badge} iş
+                                        </option>
+                                    );
+                                })}
                             </select>
                             <ChevronDown size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
                         </div>
@@ -1808,7 +1873,10 @@ export default function DashboardPage() {
     useEffect(() => {
         fetchCustomers(true);
         if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') {
-            getAllUsers().then(setAppUsers);
+            getAllUsers().then(users => {
+                const admins = users.filter((u: any) => u.role === 'ADMIN');
+                setAppUsers(admins);
+            });
         }
         getStores().then(setStores);
     }, [user?.role]);
@@ -1924,6 +1992,16 @@ export default function DashboardPage() {
         });
     }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, user?.email, user?.role]);
 
+    const userWorkload = useMemo(() => {
+        const map: Record<string, number> = {};
+        rows.forEach(r => {
+            if (r.assignedTo && !['ARCHIVE_UPLOADED', 'COMPLETED'].includes(r.process_status || '')) {
+                map[r.assignedTo] = (map[r.assignedTo] || 0) + 1;
+            }
+        });
+        return map;
+    }, [rows]);
+
     if (loadingData && rows.length === 0) {
         return (
             <div className="flex h-[70vh] items-center justify-center">
@@ -2024,6 +2102,7 @@ export default function DashboardPage() {
                             canUpdate={can("page_customers")}
                             canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
                             appUsers={appUsers}
+                            userWorkload={userWorkload}
                             stores={stores}
                             onSave={handleSave}
                             onDelete={onDelete}
@@ -2043,8 +2122,14 @@ export default function DashboardPage() {
 
                 {/* DELETE MODAL */}
                 {deleteModal.isOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
-                        <div className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200">
+                    <div
+                        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
+                        onClick={() => setDeleteModal({ isOpen: false, index: null })}
+                    >
+                        <div
+                            className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default"
+                            onClick={(e) => e.stopPropagation()}
+                        >
                             <div className="flex flex-col items-center text-center gap-6">
                                 <div className="h-16 w-16 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100">
                                     <AlertTriangle size={32} />

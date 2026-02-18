@@ -71,7 +71,7 @@ export default function AuditLogsPage() {
     const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
     const [activeTab, setActiveTab] = useState("all");
 
-    if (!user || !can("reports_audit")) {
+    if (!user || !can("page_audit_logs")) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

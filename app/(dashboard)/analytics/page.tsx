@@ -13,6 +13,7 @@ import {
     Package,
     RefreshCw,
     AlertTriangle,
+    TrendingDown,
     Info,
     CheckCircle,
     Store as StoreIcon,
@@ -96,6 +97,15 @@ interface AnalyticsData {
     };
     groups: Record<string, any[]>;
     trendData: { name: string; amount: number; count: number }[];
+    warningStats: {
+        noWarning: number;      // warningDate boş - Baxılmayan Sorğu
+        warningSent: number;    // warningDate var, 5 gündən az
+        overdue: number;        // warningDate var, 5 gündən çox (red)
+        archived: number;       // ARCHIVE_UPLOADED statusunda olanlar
+        totalDocs: number;      // Ümumi sənəd sayı
+    };
+    timeSavingsData: { name: string; faktiki: number; bizim: number; saved: number }[];
+    totalSavedHours: number;
 }
 
 const FEE_PER_CASE = 20;
@@ -121,6 +131,8 @@ export default function AnalyticsPage() {
     const [customers, setCustomers] = useState<any[]>([]);
     const [auditLogs, setAuditLogs] = useState<any[]>([]);
     const [timeRange, setTimeRange] = useState<string>('all');
+    const [dateFrom, setDateFrom] = useState<string>('');
+    const [dateTo, setDateTo] = useState<string>('');
 
     const [drillDown, setDrillDown] = useState<{ title: string; customers: any[] } | null>(null);
     const [selectedPerfUser, setSelectedPerfUser] = useState<string | null>(null);
@@ -171,13 +183,28 @@ export default function AnalyticsPage() {
         const m = totalMinutes % 60;
 
         if (h < 24) {
-            return m > 0 ? `${h} SAAT ${m} DƏQ` : `${h} SAAT`;
+            return m > 0 ? `${h} Saat ${m} DƏQ` : `${h} Saat`;
         }
 
         const d = Math.floor(h / 24);
         const rh = h % 24;
 
-        return rh > 0 ? `${d} GÜN ${rh} SAAT` : `${d} GÜN`;
+        return rh > 0 ? `${d} GÜN ${rh} Saat` : `${d} GÜN`;
+    };
+
+    const formatWorkTime = (hours: number) => {
+        const h = Math.floor(hours);
+        const m = Math.round((hours - h) * 60);
+
+        const workDays = Math.floor(h / 8);
+        const remainingH = h % 8;
+
+        let parts = [];
+        if (workDays > 0) parts.push(`${workDays} İş günü`);
+        if (remainingH > 0) parts.push(`${remainingH} Saat`);
+        if (m > 0 && workDays === 0) parts.push(`${m} DƏQ`);
+
+        return parts.length > 0 ? parts.join(' ') : "0 Saat";
     };
 
     const InfoTooltip = ({ title, text, iconClass }: { title: string, text: string, iconClass?: string }) => (
@@ -208,16 +235,59 @@ export default function AnalyticsPage() {
         if (!customers.length) return [];
         if (timeRange === 'all') return customers;
 
+        if (timeRange === 'custom') {
+            const from = dateFrom ? new Date(dateFrom) : null;
+            const to = dateTo ? new Date(dateTo + 'T23:59:59') : null;
+            return customers.filter(c => {
+                const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+                if (!date) return false;
+                if (from && date < from) return false;
+                if (to && date > to) return false;
+                return true;
+            });
+        }
+
         const now = new Date();
         const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 365;
         const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
         return customers.filter(c => {
             const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
-            if (!date) return timeRange === 'all';
+            if (!date) return false;
             return date >= cutoff;
         });
-    }, [customers, timeRange]);
+    }, [customers, timeRange, dateFrom, dateTo]);
+
+    // Trend chart: same data source and formula as stats.totalPendingDebt
+    const allTimeTrendData = useMemo(() => {
+        const AZ_MONTHS_SHORT = ["Yan", "Fev", "Mar", "Apr", "May", "İyun", "İyul", "Avq", "Sen", "Okt", "Noy", "Dek"];
+        const map: Record<string, { label: string; amount: number; count: number }> = {};
+        // Always show last 6 months
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            map[key] = { label: AZ_MONTHS_SHORT[d.getMonth()], amount: 0, count: 0 };
+        }
+        // Use ALL customers (unfiltered by time) but exclude COMPLETED — same as totalPendingDebt
+        customers.forEach(c => {
+            const status = c.process_status || 'INSPECTOR_ENTERED';
+            if (status === 'COMPLETED') return; // exclude completed, same as totalPendingDebt
+            const cDate = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+            if (!cDate) return;
+            const key = `${cDate.getFullYear()}-${String(cDate.getMonth() + 1).padStart(2, '0')}`;
+            if (!map[key]) return;
+            // Exact same formula as stats.totalPendingDebt
+            const principal = parseFloat((c.details?.unpaidAmount || '0').toString().replace(',', '.')) || 0;
+            const penalty = parseFloat((c.details?.penalty || '0').toString().replace(',', '.')) || 0;
+            const fees = parseFloat((c.details?.fee || '0').toString().replace(',', '.')) || 0;
+            const amount = principal + penalty + fees;
+            map[key].amount += isNaN(amount) ? 0 : amount;
+            map[key].count++;
+        });
+        return Object.values(map);
+    }, [customers]);
+
 
     const stats: AnalyticsData = useMemo(() => {
         const initial: AnalyticsData = {
@@ -252,10 +322,30 @@ export default function AnalyticsPage() {
                 ageGroups: { young: 0, mid: 0, senior: 0 }
             },
             groups: {},
-            trendData: []
+            trendData: [],
+            warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
+            timeSavingsData: [],
+            totalSavedHours: 0
         };
 
-        if (!filteredCustomers.length) return initial;
+        if (!filteredCustomers.length) return {
+            ...initial,
+            warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
+            timeSavingsData: [],
+            totalSavedHours: 0
+        };
+
+        const isOverdueWarning = (dateStr?: string) => {
+            if (!dateStr) return false;
+            try {
+                const [dd, mm, yyyy] = dateStr.split('.').map(Number);
+                const wDate = new Date(yyyy, mm - 1, dd);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                wDate.setHours(0, 0, 0, 0);
+                return Math.floor((today.getTime() - wDate.getTime()) / (1000 * 60 * 60 * 24)) > 5;
+            } catch { return false; }
+        };
 
         const now = new Date();
         const storeMap: Record<string, { count: number; amount: number }> = {};
@@ -339,26 +429,34 @@ export default function AnalyticsPage() {
                 const getPhaseKey = (hItem: any) => {
                     const act = hItem.action;
                     const lbl = hItem.label || "";
+                    // 1. Creation starts Assignment Waiting
                     if (act === 'CREATE' || lbl.includes('qeydə alındı')) return 'ASSIGN_WAITING';
+                    // 2. Assignment starts Inspector Fill
                     if (act === 'ASSIGN' || lbl.includes('Müfəttiş təyin edildi')) return 'INSPECTOR_FILL';
+                    // 3. Archive Request starts Archive Waiting
                     if (act === 'ARCHIVE_REQUEST' || lbl.includes('Arxiv sorğusu')) return 'ARCHIVE_WAITING';
+                    // 4. File Upload starts Final Doc Prep
                     if (act === 'FILE_UPLOAD' || lbl.includes('Arxiv sənədi yükləndi')) return 'FINAL_DOC_PREP';
                     return null;
                 };
+
+                let currentPhase: string | null = 'ASSIGN_WAITING';
 
                 for (let i = 1; i < history.length; i++) {
                     const prev = history[i - 1];
                     const curr = history[i];
                     const diffHours = Math.max(0, (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / (1000 * 60 * 60));
 
-                    const dwellKey = getPhaseKey(prev);
-                    if (dwellKey && dwellMap[dwellKey]) {
-                        // Attribute duration to the user who performed the NEXT action (the one who finished the phase)
+                    if (currentPhase && dwellMap[currentPhase]) {
                         if (!selectedPerfUser || curr.user === selectedPerfUser) {
-                            dwellMap[dwellKey].totalHours += diffHours;
-                            dwellMap[dwellKey].count++;
+                            dwellMap[currentPhase].totalHours += diffHours;
+                            dwellMap[currentPhase].count++;
                         }
                     }
+
+                    // Update phase for the NEXT segment
+                    const nextPhase = getPhaseKey(curr);
+                    if (nextPhase) currentPhase = nextPhase;
 
                     if (stageTotals[curr.action]) {
                         stageTotals[curr.action].totalTime += diffHours;
@@ -373,12 +471,12 @@ export default function AnalyticsPage() {
                     }
                 }
 
-                const last = history[history.length - 1];
-                const currentDwellKey = getPhaseKey(last);
-                if (currentDwellKey && dwellMap[currentDwellKey] && !isCompleted) {
+                // Add time from last action to NOW if not completed
+                if (currentPhase && dwellMap[currentPhase] && status !== 'COMPLETED') {
+                    const last = history[history.length - 1];
                     const diffHoursNow = Math.max(0, (now.getTime() - new Date(last.timestamp).getTime()) / (1000 * 60 * 60));
-                    dwellMap[currentDwellKey].totalHours += diffHoursNow;
-                    dwellMap[currentDwellKey].count++;
+                    dwellMap[currentPhase].totalHours += diffHoursNow;
+                    dwellMap[currentPhase].count++;
                 }
             }
 
@@ -471,6 +569,39 @@ export default function AnalyticsPage() {
         });
 
         initial.trendData = Object.entries(trendMap).map(([key, val]) => ({ name: val.label, amount: val.amount, count: val.count }));
+
+        // Warning Stats
+        let noWarning = 0, warningSent = 0, overdue = 0, archived = 0;
+        filteredCustomers.forEach(c => {
+            const wDate = c.details?.warningDate;
+            const status = c.process_status || 'INSPECTOR_ENTERED';
+            if (!wDate) {
+                noWarning++;
+            } else if (isOverdueWarning(wDate)) {
+                overdue++;
+            } else {
+                warningSent++;
+            }
+            if (status === 'ARCHIVE_UPLOADED') archived++;
+        });
+        initial.warningStats = {
+            noWarning,
+            warningSent,
+            overdue,
+            archived,
+            totalDocs: filteredCustomers.length
+        };
+
+        // Time Savings Data: Faktiki=1 sənəd/1 saat, Bizim=3 sənəd/1 saat
+        const timeSavingsData = Object.entries(trendMap).map(([key, val]) => {
+            const faktiki = val.count * 1;   // 1 hour per doc
+            const bizim = val.count / 3;     // 3 docs per hour
+            const saved = Math.max(0, faktiki - bizim);
+            return { name: val.label, faktiki: parseFloat(faktiki.toFixed(1)), bizim: parseFloat(bizim.toFixed(1)), saved: parseFloat(saved.toFixed(1)) };
+        });
+        initial.timeSavingsData = timeSavingsData;
+        const totalSavedHours = timeSavingsData.reduce((acc, d) => acc + d.saved, 0);
+        initial.totalSavedHours = totalSavedHours;
         initial.avgProcessingDays = initial.totalCases > 0 ? Object.values(inspectorMap).reduce((acc, curr) => acc + curr.totalSpeed, 0) / initial.totalCases : 0;
         initial.legalFeesProjection = initial.readyForCourtCount * FEE_PER_CASE;
 
@@ -526,28 +657,52 @@ export default function AnalyticsPage() {
                         </h1>
                         <p className="text-slate-500 font-medium mt-1 uppercase text-xs tracking-[0.2em] opacity-60">Problemli portfelin strateji idarəolunması</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <div className="flex bg-white/50 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-300">
-                            {[
-                                { id: '7d', label: '7G' },
-                                { id: '30d', label: '30G' },
-                                { id: '90d', label: '3A' },
-                                { id: 'all', label: 'HAMISI' }
-                            ].map((t) => (
+                    <div className="flex items-center gap-2 flex-wrap">
+
+                        {/* Date range — native date pickers */}
+                        <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-2xl px-2 py-1 shadow-sm">
+                            {/* From */}
+                            <div className="relative flex items-center">
+                                <svg className="absolute left-2 text-slate-300 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                                </svg>
+                                <input
+                                    type="date"
+                                    value={dateFrom}
+                                    onChange={e => { setDateFrom(e.target.value); if (e.target.value || dateTo) setTimeRange('custom'); else if (!dateTo) setTimeRange('all'); }}
+                                    className="pl-6 pr-2 py-1.5 text-[11px] font-bold text-slate-600 bg-transparent border-none outline-none cursor-pointer w-[130px]"
+                                    style={{ colorScheme: 'light' }}
+                                />
+                            </div>
+                            <span className="text-slate-200 font-bold text-xs select-none px-0.5">—</span>
+                            {/* To */}
+                            <div className="relative flex items-center">
+                                <svg className="absolute left-2 text-slate-300 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                                </svg>
+                                <input
+                                    type="date"
+                                    value={dateTo}
+                                    onChange={e => { setDateTo(e.target.value); if (dateFrom || e.target.value) setTimeRange('custom'); else setTimeRange('all'); }}
+                                    className="pl-6 pr-2 py-1.5 text-[11px] font-bold text-slate-600 bg-transparent border-none outline-none cursor-pointer w-[130px]"
+                                    style={{ colorScheme: 'light' }}
+                                />
+                            </div>
+                            {(dateFrom || dateTo) && (
                                 <button
-                                    key={t.id}
-                                    onClick={() => setTimeRange(t.id)}
-                                    className={cn(
-                                        "px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                                        timeRange === t.id ? "bg-slate-900 text-white shadow-lg" : "text-slate-500 hover:bg-white"
-                                    )}
+                                    onClick={() => { setDateFrom(''); setDateTo(''); setTimeRange('all'); }}
+                                    className="ml-0.5 p-1 text-slate-300 hover:text-slate-500 transition-colors rounded-lg hover:bg-slate-50"
                                 >
-                                    {t.label}
+                                    <X size={11} />
                                 </button>
-                            ))}
+                            )}
                         </div>
-                        <button onClick={fetchData} className="h-12 w-12 bg-white hover:bg-slate-50 border border-slate-300 rounded-2xl flex items-center justify-center transition-all shadow-sm active:scale-95 text-slate-600">
-                            <RefreshCw size={18} />
+
+                        <button
+                            onClick={fetchData}
+                            className="h-9 w-9 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-center transition-all shadow-sm active:scale-95 text-slate-400 hover:text-indigo-600"
+                        >
+                            <RefreshCw size={14} />
                         </button>
                     </div>
                 </div>
@@ -573,8 +728,8 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatDetailedTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
-                                    Hazırda ən çox ləngimə <span className="underline decoration-indigo-400">{maxDwell.label}</span> mərhələsində müşahidə olunur.
+                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatWorkTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
+                                    Prosesdə ən çox ləngimə <span className="underline decoration-indigo-400 font-bold">{maxDwell.label}</span> mərhələsində qeydə alınıb.
                                 </p>
                                 <div className="flex items-center gap-3">
                                     <span className="px-3 py-1 bg-white/10 rounded-full text-[9px] font-black uppercase tracking-widest">
@@ -620,31 +775,82 @@ export default function AnalyticsPage() {
                                     <div>
                                         <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center">
                                             Borc Portfelinin Gedişatı
-                                            <InfoTooltip title="Trend Analizi" text="Son 6 ayın borc məbləğləri müqayisə olunur. Cari dövr əvvəlkindən çoxdursa “Artan”, azdırsa “Azalan” kimi qeyd edilir." />
                                         </h4>
                                         <p className="text-2xl font-black text-slate-900 mt-2">{trendDir} Trend</p>
                                     </div>
                                     <div className="h-12 w-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-600">
                                         <Activity size={24} />
                                     </div>                                </div>
-                                <div className="h-24 w-full mt-4">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={stats.trendData.slice(-6)} margin={{ top: 5, right: 15, left: 15, bottom: 5 }}>
-                                            <XAxis
-                                                dataKey="name"
-                                                axisLine={false}
-                                                tickLine={false}
-                                                tick={{ fontSize: 12, fontWeight: 800, fill: '#000000ff' }}
-                                                interval={0}
-                                            />
-                                            <Area type="monotone" dataKey="amount" stroke="#4f46e5" fill="#eef2ff" strokeWidth={2} />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
+                                {/* Enhanced bar chart */}
+                                {(() => {
+                                    const maxCount = Math.max(...allTimeTrendData.map(d => d.count), 1);
+                                    return (
+                                        <div className="mt-4 w-full">
+                                            <div className="flex items-end gap-1.5 w-full" style={{ height: 96 }}>
+                                                {allTimeTrendData.map((d, i) => {
+                                                    const pct = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
+                                                    const barH = d.count > 0 ? Math.max(pct, 14) : 5;
+                                                    const isLast = i === allTimeTrendData.length - 1;
+                                                    const amtFmt = d.amount >= 1000
+                                                        ? `${(d.amount / 1000).toFixed(1)}K ₼`
+                                                        : d.amount > 0 ? `${Math.round(d.amount)} ₼` : '';
+                                                    return (
+                                                        <div key={d.label} title={`${d.count} iş${amtFmt ? ' · ' + amtFmt : ''}`}
+                                                            className="flex-1 flex flex-col items-center justify-end h-full cursor-default group/bar">
+                                                            {/* Count badge above bar */}
+                                                            {d.count > 0 && (
+                                                                <span className="text-[9px] font-black mb-0.5"
+                                                                    style={{ color: isLast ? '#4f46e5' : '#94a3b8' }}>
+                                                                    {d.count}
+                                                                </span>
+                                                            )}
+                                                            {/* Bar */}
+                                                            <motion.div
+                                                                initial={{ height: 0 }}
+                                                                animate={{ height: `${barH}%` }}
+                                                                transition={{ duration: 0.5, delay: i * 0.07, ease: 'easeOut' }}
+                                                                className="w-full rounded-t-lg"
+                                                                style={{
+                                                                    background: isLast
+                                                                        ? 'linear-gradient(180deg, #818cf8 0%, #4f46e5 100%)'
+                                                                        : d.count > 0
+                                                                            ? 'linear-gradient(180deg, #e0e7ff 0%, #a5b4fc 100%)'
+                                                                            : '#f1f5f9'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            {/* X-axis labels: month + amount */}
+                                            <div className="flex gap-1.5 w-full mt-2">
+                                                {allTimeTrendData.map((d, i) => {
+                                                    const isLast = i === allTimeTrendData.length - 1;
+                                                    const amtFmt = d.amount >= 1000
+                                                        ? `${(d.amount / 1000).toFixed(1)}K`
+                                                        : d.amount > 0 ? `${Math.round(d.amount)}` : '—';
+                                                    return (
+                                                        <div key={d.label} className="flex-1 flex flex-col items-center gap-0.5">
+                                                            <span className={`text-[9px] font-black ${isLast ? 'text-indigo-500' : 'text-slate-400'}`}>
+                                                                {d.label}
+                                                            </span>
+                                                            <span className={`text-[8px] font-bold ${isLast ? 'text-indigo-400' : 'text-slate-300'}`}>
+                                                                {amtFmt}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+
                             </motion.div>
                         </div>
                     );
-                })()}
+                })()
+                }
 
                 {/* KPI Cards Upgraded with Sparklines */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -750,163 +956,219 @@ export default function AnalyticsPage() {
                     </motion.div>
                 </div>
 
-                {/* Portfel Dinamikası & Status Paylanması */}
+                {/* Faktiki durum vs Bizim durum & Statuslar üzrə Bölgü */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Main Trend Chart */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="lg:col-span-8 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative overflow-hidden group"
-                    >
-                        <div className="flex items-center justify-between mb-10 relative z-10">
-                            <div>
-                                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Portfelin Gedişatı</h3>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Son 6 ayda borc məbləği və iş sayının müqayisəli analizi</p>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="h-2 w-2 rounded-full bg-indigo-500" />
-                                    <span className="text-[9px] font-black text-slate-500 uppercase">Məbləğ</span>
+                    {/* Time Savings Chart */}
+                    {(() => {
+                        const totalSaved = stats.totalSavedHours;
+                        const timeSavingsData = stats.timeSavingsData;
+                        const totalFaktiki = timeSavingsData.reduce((a: number, d: any) => a + d.faktiki, 0);
+                        const totalBizim = timeSavingsData.reduce((a: number, d: any) => a + d.bizim, 0);
+                        const totalDocs = stats.totalCases;
+                        const efficiencyRatio = totalFaktiki > 0 ? ((totalSaved / totalFaktiki) * 100) : 0;
+                        return (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="lg:col-span-7 bg-white p-8 rounded-[3rem] border border-slate-300 shadow-sm relative overflow-hidden group"
+                            >
+                                {/* Header */}
+                                <div className="flex items-start justify-between mb-6">
+                                    <div>
+                                        <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Vaxt Qənaəti</h3>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Faktiki: 1 sənəd = 1 saat · Bizim: 3 sənəd = 1 saat</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 px-4 py-2 rounded-2xl">
+                                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Qənaət</span>
+                                        <span className="text-xl font-black text-emerald-600">{totalSaved.toFixed(1)}<span className="text-xs font-bold text-emerald-400 ml-1">saat</span></span>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="h-2 w-2 rounded-full bg-slate-300" />
-                                    <span className="text-[9px] font-black text-slate-500 uppercase">Say</span>
+
+                                {/* Redesigned Comparison Row */}
+                                <div className="space-y-6">
+                                    <div className="flex flex-col md:flex-row items-stretch gap-6">
+                                        {/* Traditional Method */}
+                                        <div className="flex-1 bg-slate-50 border border-slate-200 rounded-[2rem] p-6 relative overflow-hidden group/trad">
+                                            <div className="absolute -top-4 -right-4 h-24 w-24 bg-rose-500/5 rounded-full blur-2xl group-hover/trad:scale-150 transition-transform" />
+                                            <div className="flex justify-between items-start mb-4">
+                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Ənənəvi Üsul</span>
+                                                <X size={16} className="text-rose-400" />
+                                            </div>
+                                            <div className="relative">
+                                                <div className="absolute top-1/2 left-0 w-full h-1 bg-rose-500/20 -rotate-2 scale-x-110 origin-left" />
+                                                <div className="flex items-baseline gap-2">
+                                                    <span className="text-4xl font-black text-slate-400 line-through decoration-rose-500/40 decoration-4">{totalFaktiki.toFixed(1)}</span>
+                                                    <span className="text-sm font-bold text-slate-400 uppercase">Saat</span>
+                                                </div>
+                                            </div>
+                                            <p className="text-[9px] font-bold text-slate-400 mt-4 uppercase tracking-widest leading-relaxed">
+                                                1 sənəd üçün tələb olunan orta müddət (1 saat)
+                                            </p>
+                                        </div>
+
+                                        {/* Our Platform */}
+                                        <div className="flex-1 bg-indigo-50 border border-indigo-100 rounded-[2rem] p-6 relative overflow-hidden group/plat shadow-sm">
+                                            <div className="absolute -top-4 -right-4 h-24 w-24 bg-indigo-500/10 rounded-full blur-2xl group-hover/plat:scale-150 transition-transform" />
+                                            <div className="flex justify-between items-start mb-4">
+                                                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Platforma ilə</span>
+                                                <CheckCircle size={16} className="text-indigo-500" />
+                                            </div>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-4xl font-black text-indigo-600">{totalBizim.toFixed(1)}</span>
+                                                <span className="text-sm font-bold text-indigo-400 uppercase">Saat</span>
+                                            </div>
+                                            <p className="text-[9px] font-bold text-indigo-400 mt-4 uppercase tracking-widest leading-relaxed font-black">
+                                                3 qat daha sürətli sənəd tərtibatı
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Result / Efficiency */}
+                                    <div className="bg-emerald-50/50 border border-emerald-100 rounded-[2.5rem] p-8 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden group/res">
+                                        <div className="absolute -left-10 -top-10 h-32 w-32 bg-emerald-100/50 rounded-full blur-3xl" />
+                                        <div className="relative">
+                                            <h4 className="text-[11px] font-black text-emerald-600 uppercase tracking-[0.3em] mb-3">Toplam Qənaət Edilən Müddət</h4>
+                                            <div className="flex items-center gap-4">
+                                                <div className="h-14 w-14 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-emerald-200">
+                                                    <TrendingDown size={28} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-4xl font-black text-emerald-600 leading-none">{totalSaved.toFixed(1)} <span className="text-base">Saat</span></p>
+                                                    <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mt-2">Səmərəlilik Artımı: +{efficiencyRatio.toFixed(0)}%</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex-1 w-full max-w-md space-y-3 relative">
+                                            <div className="flex justify-between text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                                                <span>Optimal Səviyyə</span>
+                                                <span>{efficiencyRatio.toFixed(0)}% Sürətli</span>
+                                            </div>
+                                            <div className="h-4 w-full bg-emerald-100 rounded-full p-1 shadow-inner">
+                                                <motion.div
+                                                    initial={{ width: 0 }}
+                                                    animate={{ width: `${efficiencyRatio}%` }}
+                                                    transition={{ duration: 1.5, ease: "circOut" }}
+                                                    className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full shadow-lg relative"
+                                                >
+                                                    <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
+                                                </motion.div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
 
-                        <div className="h-[350px] w-full mt-4">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={stats.trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                                    <defs>
-                                        <linearGradient id="colorAmt" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.1} />
-                                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis
-                                        dataKey="name"
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fontSize: 10, fontWeight: 900, fill: '#94a3b8' }}
-                                        dy={10}
-                                    />
-                                    <YAxis
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fontSize: 10, fontWeight: 900, fill: '#94a3b8' }}
-                                        tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
-                                    />
-                                    <Tooltip
-                                        content={({ active, payload }) => {
-                                            if (active && payload && payload.length) {
-                                                return (
-                                                    <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 p-4 rounded-3xl shadow-2xl">
-                                                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-2 border-b border-white/5 pb-2">{payload[0].payload.name}</p>
-                                                        <div className="space-y-1">
-                                                            <p className="text-sm font-black text-white">{formatAZN(payload[0].value as number)}</p>
-                                                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">Cəmi {payload[0].payload.count} iş qeydə alınıb</p>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        }}
-                                    />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="amount"
-                                        stroke="#4f46e5"
-                                        strokeWidth={4}
-                                        fillOpacity={1}
-                                        fill="url(#colorAmt)"
-                                        animationDuration={2000}
-                                    />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </motion.div>
+                            </motion.div>
+                        );
+                    })()}
 
-                    {/* Donut Chart for Statuses */}
-                    <motion.div
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="lg:col-span-4 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm flex flex-col items-center justify-center relative overflow-hidden"
-                    >
-                        <div className="text-center mb-8 w-full">
-                            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Statuslar üzrə Bölgü</h3>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">İşlərin cari vəziyyəti</p>
-                        </div>
+                    {/* Statuslar üzrə Bölgü - New Warning Stats Pie */}
+                    {(() => {
+                        const ws = stats.warningStats;
+                        const pieData = [
+                            { name: 'Baxılmayan Sorğu', value: ws.noWarning, color: '#93c5fd' },       // soft blue
+                            { name: 'Xəbərdarlıq Göndərildi', value: ws.warningSent, color: '#fcd34d' }, // soft amber
+                            { name: 'Gecikmiş (5+ gün)', value: ws.overdue, color: '#f87171' },          // soft red
+                            { name: 'Hazırlanmış İş', value: ws.archived, color: '#6ee7b7' },            // soft teal
+                        ].filter(d => d.value > 0);
 
-                        <div className="h-[280px] w-full relative">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={[
-                                            { name: 'Yeni', value: stats.processFunnel.new, color: '#94a3b8' },
-                                            { name: 'İcraatda', value: stats.processFunnel.filling, color: '#818cf8' },
-                                            { name: 'Arxivdə', value: stats.processFunnel.waiting, color: '#fbbf24' },
-                                            { name: 'Hazır', value: stats.processFunnel.ready, color: '#34d399' },
-                                            { name: 'Tamamlanmış', value: stats.processFunnel.filed, color: '#4f46e5' }
-                                        ].filter(d => d.value > 0)}
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={70}
-                                        outerRadius={100}
-                                        paddingAngle={8}
-                                        dataKey="value"
-                                        strokeWidth={0}
-                                        animationBegin={500}
-                                        animationDuration={1500}
-                                    >
-                                        {[
-                                            { name: 'Yeni', value: stats.processFunnel.new, color: '#94a3b8' },
-                                            { name: 'İcraatda', value: stats.processFunnel.filling, color: '#818cf8' },
-                                            { name: 'Arxivdə', value: stats.processFunnel.waiting, color: '#fbbf24' },
-                                            { name: 'Hazır', value: stats.processFunnel.ready, color: '#34d399' },
-                                            { name: 'Tamamlanmış', value: stats.processFunnel.filed, color: '#4f46e5' }
-                                        ].map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                        const legendItems = [
+                            { label: 'Baxılmayan Sorğu', count: ws.noWarning, color: 'bg-blue-300', textColor: 'text-blue-500' },
+                            { label: 'Xəbərdarlıq Göndərildi', count: ws.warningSent, color: 'bg-amber-300', textColor: 'text-amber-600' },
+                            { label: 'Gecikmiş (5+ gün)', count: ws.overdue, color: 'bg-red-300', textColor: 'text-red-500' },
+                            { label: 'Hazırlanmış İş', count: ws.archived, color: 'bg-teal-300', textColor: 'text-teal-600' },
+                        ];
+
+                        return (
+                            <motion.div
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                className="lg:col-span-5 bg-white p-8 rounded-[3rem] border border-slate-300 shadow-sm flex flex-col relative overflow-hidden"
+                            >
+                                {/* Header */}
+                                <div className="mb-5">
+                                    <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Statuslar üzrə Bölgü</h3>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Seçilən dövr üzrə sənəd vəziyyəti</p>
+                                </div>
+
+                                {/* Pie + Legend side by side */}
+                                <div className="flex items-center gap-6 mb-5">
+                                    <div className="relative flex-shrink-0" style={{ width: 160, height: 160 }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={pieData.length > 0 ? pieData : [{ name: 'Məlumat yoxdur', value: 1, color: '#e2e8f0' }]}
+                                                    cx="50%" cy="50%"
+                                                    innerRadius={48} outerRadius={74}
+                                                    paddingAngle={pieData.length > 1 ? 4 : 0}
+                                                    dataKey="value" strokeWidth={0}
+                                                    animationBegin={300} animationDuration={1200}
+                                                >
+                                                    {(pieData.length > 0 ? pieData : [{ name: 'Məlumat yoxdur', value: 1, color: '#e2e8f0' }]).map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip
+                                                    content={({ active, payload }) => {
+                                                        if (active && payload && payload.length) {
+                                                            const d = payload[0].payload;
+                                                            return (
+                                                                <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 p-3 rounded-2xl shadow-2xl">
+                                                                    <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: d.color }}>{d.name}</p>
+                                                                    <p className="text-lg font-black text-white">{d.value} sənəd</p>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    }}
+                                                />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                            <span className="text-3xl font-black text-slate-900 leading-none">{ws.totalDocs}</span>
+                                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Toplam</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Legend with counts */}
+                                    <div className="flex flex-col gap-2.5 flex-1">
+                                        {legendItems.map((item, i) => (
+                                            <div key={i} className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <div className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', item.color)} />
+                                                    <span className="text-[11px] font-semibold text-slate-600 leading-tight truncate">{item.label}</span>
+                                                </div>
+                                                <span className={cn('text-base font-black flex-shrink-0', item.textColor)}>{item.count}</span>
+                                            </div>
                                         ))}
-                                    </Pie>
-                                    <Tooltip
-                                        content={({ active, payload }) => {
-                                            if (active && payload && payload.length) {
-                                                const data = payload[0].payload;
-                                                return (
-                                                    <div className="bg-white border border-slate-300 p-3 rounded-2xl shadow-xl">
-                                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{data.name}</span>
-                                                        <p className="text-lg font-black text-slate-900">{data.value} İş</p>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        }}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                <span className="text-3xl font-black text-slate-900 leading-none">{stats.totalCases}</span>
-                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Toplam İş Sayı</span>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-3 w-full mt-6">
-                            {[
-                                { label: "İcraatda", count: stats.processFunnel.filling, color: "bg-indigo-400" },
-                                { label: "Arxivdə", count: stats.processFunnel.waiting, color: "bg-amber-400" },
-                                { label: "Hazır", count: stats.processFunnel.ready, color: "bg-emerald-400" },
-                                { label: "Tamamlanmış", count: stats.processFunnel.filed, color: "bg-indigo-600" }
-                            ].map((item, i) => (
-                                <div key={i} className="flex items-center gap-2">
-                                    <div className={cn("h-2 w-2 rounded-full", item.color)} />
-                                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-tighter truncate">{item.label}</span>
-                                    <span className="text-[10px] font-bold text-slate-500 ml-auto">{item.count}</span>
+                                    </div>
                                 </div>
-                            ))}
-                        </div>
-                    </motion.div>
+
+                                {/* Per-category progress bars */}
+                                <div className="flex flex-col gap-3 mb-5">
+                                    {legendItems.map((item, i) => {
+                                        const pct = ws.totalDocs > 0 ? (item.count / ws.totalDocs) * 100 : 0;
+                                        return (
+                                            <div key={i}>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
+                                                    <span className={cn('text-[9px] font-black', item.textColor)}>{pct.toFixed(0)}%</span>
+                                                </div>
+                                                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                                    <motion.div
+                                                        initial={{ width: 0 }}
+                                                        animate={{ width: `${pct}%` }}
+                                                        transition={{ duration: 0.9, delay: i * 0.1 }}
+                                                        className={cn('h-full rounded-full', item.color)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </motion.div>
+                        );
+                    })()}
                 </div>
 
                 {/* Workflow Analytics & Demographics */}
@@ -950,7 +1212,7 @@ export default function AnalyticsPage() {
                                                     "bg-emerald-50 text-emerald-600 border-emerald-100"
                                         )}>
                                             <Clock size={12} />
-                                            {formatDetailedTime(dwell.avgHours)}
+                                            {formatWorkTime(dwell.avgHours)}
                                         </div>
                                     </div>
                                     <div className="h-6 w-full bg-slate-50 rounded-2xl overflow-hidden border border-slate-300 p-1.5 shadow-inner">
@@ -984,7 +1246,7 @@ export default function AnalyticsPage() {
                                         <div className="text-right">
                                             <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ümumi Gözləmə</span>
                                             <span className="text-lg font-black text-indigo-700 tracking-tight">
-                                                {formatDetailedTime(totalHours)}
+                                                {formatWorkTime(totalHours)}
                                             </span>
                                         </div>
                                     </div>
@@ -1003,7 +1265,7 @@ export default function AnalyticsPage() {
                         <div className="space-y-12">
                             <div>
                                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center justify-between">
-                                    Cins üzrə paylanma <span>{stats.totalCases} İş</span>
+                                    Gender Bölgüsü <span>{stats.totalCases} İş</span>
                                 </p>
                                 <div className="flex h-12 w-full rounded-3xl overflow-hidden border border-slate-300 shadow-sm p-1.5 bg-slate-50/50">
                                     {stats.demographics.gender.male > 0 && (
@@ -1145,8 +1407,8 @@ export default function AnalyticsPage() {
                     title={drillDown?.title || ""}
                     customers={drillDown?.customers || []}
                 />
-            </div>
-        </AuthGuard>
+            </div >
+        </AuthGuard >
     );
 }
 

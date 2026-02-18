@@ -8,6 +8,11 @@ export type PermissionID =
     | "page_parameters"
     | "page_users"
     | "page_reports"
+    | "users_manage"
+    | "parameters_manage"
+    | "fields_invoice"
+    | "action_status_change"
+    | "archive_manage"
     | "action_assignment";
 
 export interface Permission {

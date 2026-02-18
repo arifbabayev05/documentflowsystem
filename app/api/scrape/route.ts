@@ -9,8 +9,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Brauzer hazırda başladılır, zəhmət olmasa bir neçə saniyə gözləyin." }, { status: 429 });
     }
 
-    let browser;
-    let page;
+    let browser: any;
+    let page: any;
     try {
         let { fin, sv } = await req.json();
 
@@ -127,7 +127,7 @@ export async function POST(req: Request) {
         await new Promise(r => setTimeout(r, 1000));
 
         // FİN VƏ ŞV DAXİL ETMƏK
-        const searchSuccess = await page.evaluate((finVal, svVal) => {
+        const searchSuccess = await page.evaluate((finVal: string, svVal: string) => {
             const finInput = document.querySelector('input[placeholder*="FİN"], input[id*="fin"], input[name*="fin"]') as HTMLInputElement;
             const svInput = document.querySelector('input[placeholder*="ŞV"], input[placeholder*="nömrəsi"], input[name*="sv"]') as HTMLInputElement;
 

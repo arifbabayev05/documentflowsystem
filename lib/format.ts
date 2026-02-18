@@ -59,3 +59,24 @@ export function numberToAzerbaijaniFinancialWords(amount: number | string): stri
 
     return `${manatWords} manat ${formattedQepik} qəpik`;
 }
+
+/**
+ * Formats a date string as DD.MM.YYYY as the user types.
+ * Logic ensures that it doesn't get stuck on dots during deletion.
+ */
+export function formatDateInput(value: string): string {
+    const digits = value.replace(/\D/g, '').slice(0, 8);
+    let res = "";
+
+    if (digits.length > 0) {
+        res = digits.slice(0, 2);
+        if (digits.length >= 3) {
+            res += "." + digits.slice(2, 4);
+            if (digits.length >= 5) {
+                res += "." + digits.slice(4, 8);
+            }
+        }
+    }
+
+    return res;
+}

@@ -6,3 +6,8 @@ node_modules/
 *.log 
 out/
 .firebase/
+/user_data_legal_bot
+/user_data
+/user_data_bot
+/bot_profile
+

@@ -30,6 +30,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, deleteCustomer, updateCustomer, getStores } from "@/lib/db";
+import { formatDateInput } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
@@ -116,9 +117,7 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
         let val = e.target.value;
         const datePaths = ['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'];
         if (datePaths.includes(path)) {
-            val = val.replace(/\D/g, '').slice(0, 8);
-            if (val.length >= 4) val = val.slice(0, 2) + '.' + val.slice(2, 4) + '.' + val.slice(4);
-            else if (val.length >= 2) val = val.slice(0, 2) + '.' + val.slice(2);
+            val = formatDateInput(val);
         }
         if (isFin) val = val.toUpperCase();
         onChange(path, val);

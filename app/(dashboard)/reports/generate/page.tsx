@@ -52,7 +52,7 @@ import Docxtemplater from "docxtemplater";
 import { saveAs } from "file-saver";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
-import { numberToAzerbaijaniFinancialWords } from "@/lib/format";
+import { numberToAzerbaijaniFinancialWords, formatDateInput } from "@/lib/format";
 import { storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -335,7 +335,7 @@ function buildInvoiceData(
 }
 
 // --- Components ---
-const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, isFin, isPrice, isSelect, options, onFocus, onBlur, info }: any) => {
+const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placeholder, isPrice, isFin, isSelect, options, onFocus, onBlur, className, readOnly }: any) => {
     return (
         <div className="space-y-1.5 group relative">
             <div className="flex items-center gap-1.5">
@@ -360,7 +360,11 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                         onChange={(e) => onChange(e.target.value)}
                         onFocus={() => onFocus?.(label)}
                         onBlur={onBlur}
-                        className="w-full px-3 py-1.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none"
+                        disabled={readOnly}
+                        className={cn(
+                            "w-full px-3 py-1.5 bg-white border border-slate-100 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm focus:border-primary/30 focus:ring-4 focus:ring-primary/5 text-slate-700 appearance-none",
+                            readOnly ? "bg-slate-50 cursor-not-allowed opacity-80" : ""
+                        )}
                     >
                         <option value="">-</option>
                         {options?.map((opt: any) => (
@@ -379,21 +383,48 @@ const CustomerField = memo(({ label, icon: Icon, value, onChange, placeholder, i
                     onChange={(e) => {
                         let val = e.target.value;
                         if (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label)) {
-                            val = val.replace(/\D/g, "").slice(0, 8);
-                            if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
-                            else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
+                            val = formatDateInput(val);
                         }
+
+                        // Clear zero prefix for financial/numeric fields
+                        const isFinancial = label && (
+                            label.includes("qiyməti") ||
+                            label.includes("məbləğ") ||
+                            label.includes("rüsum") ||
+                            label.includes("Rüsumu") ||
+                            label.includes("Cərimə") ||
+                            label.includes("Borc") ||
+                            label.includes("Ödənilmiş") ||
+                            label.includes("Ödənilən") ||
+                            label.includes("İlkin") ||
+                            label.includes("Aylıq") ||
+                            isPrice
+                        );
+
+                        if (isFinancial) {
+                            val = val.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                            if (val.startsWith("0.00") && val.length > 4) {
+                                val = val.slice(4);
+                            } else if (val.startsWith("0") && val.length > 1 && val[1] !== ".") {
+                                val = val.replace(/^0+/, "");
+                            }
+                            const parts = val.split(".");
+                            if (parts.length > 2) val = parts[0] + "." + parts.slice(1).join("");
+                        }
+
                         if (isFin) {
                             val = val.toUpperCase();
                         }
                         onChange(val);
                     }}
                     placeholder={placeholder || (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label) ? "GG.AA.İİİİ" : "-")}
+                    readOnly={readOnly}
                     className={cn(
                         "w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl outline-none transition-all font-bold text-[13px] shadow-sm",
                         "focus:border-primary focus:ring-2 focus:ring-primary/5 focus:shadow-md hover:border-slate-300",
                         isFin ? "uppercase tracking-widest" : "",
-                        isPrice ? "text-primary font-black bg-primary/5 border-primary/10" : ""
+                        isPrice ? "text-primary font-black bg-primary/5 border-primary/10" : "",
+                        readOnly ? "bg-slate-50 cursor-not-allowed opacity-80 border-slate-100" : ""
                     )}
                 />
             )}
@@ -548,37 +579,106 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
 
                 // Apply highlighter marker to the focused value
                 const FIELD_TO_TAG: any = {
-                    "SOYAD AD ATA ADI": ["CAVABDEH_AD_SOYAD", "CAVABDEH_TAM_AD"],
-                    "Cins": ["CAVABDEH_ATA_SUFFIX", "CAVABDEH_ATA_SUFFIX_2"],
-                    "FİN": ["CAVABDEH_FIN"],
-                    "Telefon Nömrəsi": ["CAVABDEH_MOBIL"],
-                    "Doğum Tarixi": ["CAVABDEH_DOGUM_TARIXI"],
-                    "Qeydiyyat Ünvanı": ["CAVABDEH_QEYDIYYAT_UNVAN", "CAVABDEH_UNVAN"],
-                    "Faktiki Yaşayış": ["CAVABDEH_FAKTIKI_UNVAN"],
-                    "Məhsul Adı": ["MEHSUL_IMEI_SIYAHI", "MEHSUL_SIYAHI"],
-                    "Müq. Tarixi": ["MUQAVILE_TARIXI"],
-                    "Müddət (Ay)": ["TAKSIT_AY"],
-                    "Aylıq Ödəniş": ["AYLIQ_ODENIS"],
-                    "İlkin Ödəniş": ["ILKIN_ODENIS"],
-                    "Cəmi Qiymət": ["ALQI_SATQI_QIYMETI"],
-                    "Ödənilən": ["CEMI_ODENEN"],
-                    "Ödənilməmiş Hissə": ["ODENILMEMIS_HISSE"],
-                    "İDM Rüsumu": ["ILM_RUSUM"],
-                    "Dövlət Rüsumu": ["DOVLET_RUSUMU"],
-                    "Dəbbə Pulu": ["DEBBE_PULU"],
-                    "Güzəşt Məbləği": ["GUZEST_MEBLEGI"],
-                    "Yekun Borc (AZN)": ["UMUMI_BORC", "UMUMI_BORC_SOZLE"],
-                    "Müfəttiş": ["ICRACI_AD_SOYAD"],
-                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI"]
+                    "SOYAD AD ATA ADI": [
+                        "CAVABDEH_AD_SOYAD", "CAVABDEH_TAM_AD", "customer_name", "cavabdeh_ad",
+                        "CAVABDEH_TAM_AD_SOZLE", "CAVABDEH_ATA_ADI", "CAVABDEH_SOYAD", "Full_Name"
+                    ],
+                    "Cins": ["CAVABDEH_ATA_SUFFIX", "CAVABDEH_ATA_SUFFIX_2", "CAVABDEH_ATA_SUFFIX_3", "gender"],
+                    "FİN": ["CAVABDEH_FIN", "cavabdeh_fin", "fin_code", "fin"],
+                    "Telefon Nömrəsi": ["CAVABDEH_MOBIL", "cavabdeh_mobil", "phone_number", "phone"],
+                    "Doğum Tarixi": ["CAVABDEH_DOGUM_TARIXI", "cavabdeh_dogum_tarixi", "birth_date", "birthDate"],
+                    "QEYDİYYAT ÜNVANI": ["CAVABDEH_QEYDIYYAT_UNVAN", "CAVABDEH_UNVAN", "cavabdeh_unvan", "address"],
+                    "Qeydiyyat Ünvanı": ["CAVABDEH_QEYDIYYAT_UNVAN", "CAVABDEH_UNVAN", "cavabdeh_unvan", "address"],
+                    "FAKTIKI YAŞAYIŞ ": ["CAVABDEH_FAKTIKI_UNVAN", "cavabdeh_faktiki_unvan", "actual_address"],
+                    "Faktiki Yaşayış": ["CAVABDEH_FAKTIKI_UNVAN", "cavabdeh_faktiki_unvan", "actual_address"],
+                    "MƏHSUL ADI": [
+                        "MEHSUL_IMEI_SIYAHI", "MEHSUL_SIYAHI", "product_description",
+                        "mehsul_siyahi", "inv_model_date", "product_name", "model",
+                        "BUTUN_MEHSULLAR", "BUTUN_IMEI_MEHSULLAR"
+                    ],
+                    "Məhsul Adı": [
+                        "MEHSUL_IMEI_SIYAHI", "MEHSUL_SIYAHI", "product_description",
+                        "mehsul_siyahi", "inv_model_date", "product_name", "model",
+                        "BUTUN_MEHSULLAR", "BUTUN_IMEI_MEHSULLAR"
+                    ],
+                    "Faktura tarixi": [
+                        "MUQAVILE_TARIXI", "contract_date", "muqavile_tarixi",
+                        "BUTUN_MUQAVILE_TARIXLERI", "contractDate", "date"
+                    ],
+                    "Müq. Tarixi": [
+                        "MUQAVILE_TARIXI", "contract_date", "muqavile_tarixi",
+                        "BUTUN_MUQAVILE_TARIXLERI", "contractDate", "date"
+                    ],
+                    "Müddət": ["TAKSIT_AY", "payment_period", "taksit_ay", "paymentPeriod", "period", "month_count"],
+                    "Müddət (Ay)": ["TAKSIT_AY", "payment_period", "taksit_ay", "paymentPeriod", "period", "month_count"],
+                    "Aylıq": ["AYLIQ_ODENIS", "monthly_payment", "ayliq_odenis", "monthlyPayment", "monthly"],
+                    "Aylıq Ödəniş": ["AYLIQ_ODENIS", "monthly_payment", "ayliq_odenis", "monthlyPayment", "monthly"],
+                    "İlkin": ["ILKIN_ODENIS", "initial_payment", "ilkin_odenis", "initialPayment", "down_payment"],
+                    "İlkin Ödəniş": ["ILKIN_ODENIS", "initial_payment", "ilkin_odenis", "initialPayment", "down_payment"],
+                    "Alqı-satqı qiyməti": [
+                        "ALQI_SATQI_QIYMETI", "ALQI_SATQI_QIYMETI_SOZLE", "price", "total_price",
+                        "alqi_satqi_qiymeti", "alqi_satqi_qiymeti_sozle", "totalPrice"
+                    ],
+                    "Cəmi Qiymət": [
+                        "ALQI_SATQI_QIYMETI", "ALQI_SATQI_QIYMETI_SOZLE", "price", "total_price",
+                        "alqi_satqi_qiymeti", "alqi_satqi_qiymeti_sozle", "totalPrice"
+                    ],
+                    "Əsas borca ödənilmiş məbləğ": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
+                    "Ödənilən": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
+                    "Əsas borca ödənilməmiş məbləğ": [
+                        "ODENILMEMIS_HISSE", "ODENILMEMIS_HISSE_SOZLE", "unpaid_amount",
+                        "odenilmemis_hisse", "odenilmemis_hisse_sozle", "unpaidAmount", "remaining"
+                    ],
+                    "Ödənilməmiş Hissə": [
+                        "ODENILMEMIS_HISSE", "ODENILMEMIS_HISSE_SOZLE", "unpaid_amount",
+                        "odenilmemis_hisse", "odenilmemis_hisse_sozle", "unpaidAmount", "remaining"
+                    ],
+                    "İnnovativ Layihələr Mərkəzi Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU"],
+                    "İDM Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU"],
+                    "Dövlət Rüsumu": ["DOVLET_RUSUMU", "court_fee", "courtFee"],
+                    "Cərimə": ["DEBBE_PULU", "DEBBE_PULU_SOZLE", "penalty", "debbe_pulu", "debbe_pulu_sozle", "CERIME_ODENEN", "penalty_amount"],
+                    "Dəbbə Pulu": ["DEBBE_PULU", "DEBBE_PULU_SOZLE", "penalty", "debbe_pulu", "debbe_pulu_sozle", "CERIME_ODENEN", "penalty_amount"],
+                    "Güzəşt Məbləği": ["GUZEST_MEBLEGI", "discount", "guzest_meblegi", "discountAmount"],
+                    "Yekun Borc (AZN)": [
+                        "UMUMI_BORC", "UMUMI_BORC_SOZLE", "total_debt",
+                        "inv_umumi_borc", "inv_umumi_borc_sozle", "totalUnpaid", "UMUMI_BORC_AZN", "total_debt_amount"
+                    ],
+                    "Müfəttiş": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
+                    "İcraçı": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
+                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI", "xeberdarliq_tarixi", "warningDate"]
                 };
 
-                if (focusedField && FIELD_TO_TAG[focusedField]) {
-                    FIELD_TO_TAG[focusedField].forEach((tag: string) => {
-                        const val = data[tag as keyof typeof data];
-                        if (val !== undefined && val !== null && val !== "") {
-                            (data as any)[tag] = `[[FOC_S]]${val}[[FOC_E]]`;
-                        }
-                    });
+                if (focusedField) {
+                    const focusedFieldNormalized = focusedField.trim().toLowerCase();
+                    const matchedKey = Object.keys(FIELD_TO_TAG).find(
+                        k => k.trim().toLowerCase() === focusedFieldNormalized
+                    );
+
+                    if (matchedKey) {
+                        const tagsToHighlight = FIELD_TO_TAG[matchedKey];
+                        const applyMarkersToData = (obj: any) => {
+                            if (!obj || typeof obj !== 'object') return;
+
+                            if (Array.isArray(obj)) {
+                                obj.forEach(item => applyMarkersToData(item));
+                                return;
+                            }
+
+                            Object.keys(obj).forEach(key => {
+                                // Direct tag match
+                                if (tagsToHighlight.includes(key)) {
+                                    const val = obj[key];
+                                    if (val !== undefined && val !== null && val !== "" && typeof val !== 'object') {
+                                        obj[key] = `[[FOC_S]]${val}[[FOC_E]]`;
+                                    }
+                                } else if (typeof obj[key] === 'object') {
+                                    applyMarkersToData(obj[key]);
+                                }
+                            });
+                        };
+
+                        applyMarkersToData(data);
+                    }
                 }
 
                 try {
@@ -752,6 +852,7 @@ function GenerateDocumentContent() {
     const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
     const [courtSearch, setCourtSearch] = useState("");
     const [isCourtDropdownOpen, setIsCourtDropdownOpen] = useState(false);
+    const [courtSelectedIndex, setCourtSelectedIndex] = useState(0);
 
     // Mandatory File Uploads
     const [receiptFile, setReceiptFile] = useState<{ name: string; content: string } | null>(null);
@@ -1703,7 +1804,7 @@ function GenerateDocumentContent() {
         <AuthGuard>
             <div className="flex flex-col h-screen bg-slate-100 overflow-hidden -m-4 lg:-m-8">
                 {/* Fixed Top Header */}
-                <div className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0 z-50 shadow-sm">
+                <div className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0 z-50 shadow-sm no-print">
                     <div className="flex items-center gap-10">
                         <button onClick={() => router.push("/dashboard")} className="h-10 w-10 flex items-center justify-center bg-slate-100 text-slate-600 hover:text-primary rounded-xl border border-slate-300 transition-all hover:bg-white hover:shadow-md">
                             <ArrowLeft size={18} />
@@ -1726,7 +1827,11 @@ function GenerateDocumentContent() {
                         {/* Court Selection */}
                         <div className="relative group">
                             <button
-                                onClick={() => setIsCourtDropdownOpen(!isCourtDropdownOpen)}
+                                onClick={() => {
+                                    setIsCourtDropdownOpen(!isCourtDropdownOpen);
+                                    setCourtSelectedIndex(0);
+                                    setCourtSearch("");
+                                }}
                                 className={cn(
                                     "flex items-center gap-4 px-6 py-3 rounded-2xl border transition-all text-left min-w-[340px] shadow-sm",
                                     selectedCourt ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
@@ -1750,21 +1855,45 @@ function GenerateDocumentContent() {
                                             <input
                                                 autoFocus
                                                 value={courtSearch}
-                                                onChange={(e) => setCourtSearch(e.target.value)}
+                                                onChange={(e) => {
+                                                    setCourtSearch(e.target.value);
+                                                    setCourtSelectedIndex(0);
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'ArrowDown') {
+                                                        e.preventDefault();
+                                                        setCourtSelectedIndex(prev => (prev + 1) % (filteredCourts.length || 1));
+                                                    } else if (e.key === 'ArrowUp') {
+                                                        e.preventDefault();
+                                                        setCourtSelectedIndex(prev => (prev - 1 + (filteredCourts.length || 1)) % (filteredCourts.length || 1));
+                                                    } else if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        if (filteredCourts[courtSelectedIndex]) {
+                                                            setSelectedCourt(filteredCourts[courtSelectedIndex]);
+                                                            setIsCourtDropdownOpen(false);
+                                                            setCourtSearch("");
+                                                        }
+                                                    } else if (e.key === 'Escape') {
+                                                        setIsCourtDropdownOpen(false);
+                                                    }
+                                                }}
                                                 placeholder="Axtar..."
                                                 className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:border-primary/30 transition-all text-xs font-bold"
                                             />
                                         </div>
                                     </div>
                                     <div className="max-h-[320px] overflow-y-auto p-2 scrollbar-thin">
-                                        {filteredCourts.map((court) => (
+                                        {filteredCourts.map((court, cIdx) => (
                                             <button
                                                 key={court.id}
-                                                onClick={() => { setSelectedCourt(court); setIsCourtDropdownOpen(false); }}
-                                                className="w-full text-left p-4 rounded-xl hover:bg-primary hover:text-white transition-all group flex flex-col gap-1 mb-1"
+                                                onClick={() => { setSelectedCourt(court); setIsCourtDropdownOpen(false); setCourtSearch(""); }}
+                                                className={cn(
+                                                    "w-full text-left p-4 rounded-xl transition-all group flex flex-col gap-1 mb-1",
+                                                    courtSelectedIndex === cIdx ? "bg-primary text-white" : "hover:bg-primary/5 text-slate-800"
+                                                )}
                                             >
-                                                <span className="font-black text-xs tracking-tight uppercase">{court.name}</span>
-                                                <span className="text-[10px] font-bold opacity-50 group-hover:opacity-100 truncate">{court.address}</span>
+                                                <span className={cn("font-black text-xs tracking-tight uppercase", courtSelectedIndex === cIdx ? "text-white" : "text-slate-800 group-hover:text-primary")}>{court.name}</span>
+                                                <span className={cn("text-[10px] font-bold opacity-50 truncate", courtSelectedIndex === cIdx ? "text-white" : "group-hover:opacity-100")}>{court.address}</span>
                                             </button>
                                         ))}
                                     </div>
@@ -1875,6 +2004,68 @@ function GenerateDocumentContent() {
 
                                     // Refresh local customer state
                                     setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt?.name || "" } : null);
+
+                                    // High-Fidelity Print Pass
+                                    const printContainer = document.getElementById('print-iframe') as HTMLIFrameElement;
+                                    if (printContainer) {
+                                        const printDoc = printContainer.contentDocument || printContainer.contentWindow?.document;
+                                        if (printDoc) {
+                                            printDoc.body.innerHTML = '<div id="print-mount"></div>';
+                                            const mountPoint = printDoc.getElementById('print-mount');
+
+                                            // 1. Add Print Styles to Iframe
+                                            const style = printDoc.createElement('style');
+                                            style.textContent = `
+                                                @page { size: A4; margin: 0; }
+                                                body { margin: 0; padding: 0; font-family: 'Times New Roman', serif; }
+                                                .docx-wrapper { background: white !important; padding: 0 !important; }
+                                                .docx { box-shadow: none !important; margin: 0 !important; padding: 2.54cm !important; width: 100% !important; box-sizing: border-box; }
+                                                .print-page { page-break-after: always; width: 100%; position: relative; }
+                                                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+                                                .file-preview { display: flex; flex-direction: column; items-center; justify-content: center; min-height: 100vh; padding: 2cm; box-sizing: border-box; }
+                                            `;
+                                            printDoc.head.appendChild(style);
+
+                                            const { renderAsync } = await import("docx-preview");
+
+                                            // 2. Render all Documents into Iframe
+                                            for (const template of filteredTemplates) {
+                                                const result = await generateDocument(template, true) as any;
+                                                if (result && result.content) {
+                                                    const pageDiv = printDoc.createElement('div');
+                                                    pageDiv.className = 'print-page';
+                                                    mountPoint?.appendChild(pageDiv);
+                                                    await renderAsync(result.content, pageDiv, undefined, {
+                                                        className: "docx-viewer",
+                                                        inWrapper: false,
+                                                        ignoreWidth: true,
+                                                        ignoreHeight: true,
+                                                        breakPages: true,
+                                                    });
+                                                }
+                                            }
+
+                                            // 3. Render Mandatory Files into Iframe
+                                            if (receiptFile && !isWarningOnly) {
+                                                const imgPage = printDoc.createElement('div');
+                                                imgPage.className = 'print-page file-preview';
+                                                imgPage.innerHTML = `<img src="${receiptFile.content}" />`;
+                                                mountPoint?.appendChild(imgPage);
+                                            }
+                                            if (postageFile && !isWarningOnly) {
+                                                const imgPage = printDoc.createElement('div');
+                                                imgPage.className = 'print-page file-preview';
+                                                imgPage.innerHTML = `<img src="${postageFile.content}" />`;
+                                                mountPoint?.appendChild(imgPage);
+                                            }
+
+                                            // 4. Trigger Print in Iframe
+                                            setTimeout(() => {
+                                                printContainer.contentWindow?.focus();
+                                                printContainer.contentWindow?.print();
+                                            }, 500);
+                                        }
+                                    }
                                 } catch (err) {
                                     console.error("Batch generation error:", err);
                                     toast.error("Sənədləri yaradarkən xəta baş verdi", { id: loadingId });
@@ -1898,7 +2089,7 @@ function GenerateDocumentContent() {
 
                 <div className="flex flex-1 overflow-hidden h-full">
                     {/* LEFT PANEL - Editor */}
-                    <div className="w-[480px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)]">
+                    <div className="w-[480px] border-r border-slate-200 bg-white overflow-y-auto shrink-0 flex flex-col scrollbar-thin shadow-[10px_0_30px_-15px_rgba(0,0,0,0.05)] no-print">
                         <div className="p-3 border-b border-slate-100 bg-slate-50/30">
                             <div className="bg-primary/[0.03] p-3 rounded-2xl border border-primary/10 relative overflow-hidden group">
                                 <div className="absolute top-0 right-0 p-3 opacity-10"><File size={24} /></div>
@@ -1996,34 +2187,38 @@ function GenerateDocumentContent() {
                                             onBlur={() => setFocusedField(null)}
                                             onChange={(v: string) => handleFieldChange("details.gender", v)}
                                         />
-                                        <CustomerField
-                                            label="FİN"
-                                            isFin={true}
-                                            value={customer.details?.fin}
-                                            onFocus={setFocusedField}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(v: string) => handleFieldChange("details.fin", v)}
-                                            placeholder="7 Simvollu"
-                                        />
+                                        {!isWarningOnly && (
+                                            <CustomerField
+                                                label="FİN"
+                                                isFin={true}
+                                                value={customer.details?.fin}
+                                                onFocus={setFocusedField}
+                                                onBlur={() => setFocusedField(null)}
+                                                onChange={(v: string) => handleFieldChange("details.fin", v)}
+                                                placeholder="7 Simvollu"
+                                            />
+                                        )}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField
-                                            label="Doğum Tarixi"
-                                            value={customer.details?.birthDate}
-                                            onFocus={setFocusedField}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(v: string) => handleFieldChange("details.birthDate", v)}
-                                            placeholder="GG.AA.İİİİ"
-                                        />
-                                        <CustomerField
-                                            label="Telefon Nömrəsi"
-                                            value={customer.details?.phone}
-                                            onFocus={setFocusedField}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(v: string) => handleFieldChange("details.phone", v)}
-                                            placeholder="+994"
-                                        />
-                                    </div>
+                                    {!isWarningOnly && (
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <CustomerField
+                                                label="Doğum Tarixi"
+                                                value={customer.details?.birthDate}
+                                                onFocus={setFocusedField}
+                                                onBlur={() => setFocusedField(null)}
+                                                onChange={(v: string) => handleFieldChange("details.birthDate", v)}
+                                                placeholder="GG.AA.İİİİ"
+                                            />
+                                            <CustomerField
+                                                label="Telefon Nömrəsi"
+                                                value={customer.details?.phone}
+                                                onFocus={setFocusedField}
+                                                onBlur={() => setFocusedField(null)}
+                                                onChange={(v: string) => handleFieldChange("details.phone", v)}
+                                                placeholder="0501234567"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -2045,7 +2240,7 @@ function GenerateDocumentContent() {
                                             onFocus={setFocusedField}
                                             onBlur={() => setFocusedField(null)}
                                         />
-                                        {isKarabakhAddress(customer.details?.address || "") && (
+                                        {customer.details?.actualAddress && !isWarningOnly && (
                                             <CustomerField
                                                 label="FAKTİKİ YAŞAYIŞ "
                                                 path="details.actualAddress"
@@ -2069,12 +2264,14 @@ function GenerateDocumentContent() {
                                         </div>
                                         <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Sifariş Detalları</h4>
                                     </div>
-                                    <button
-                                        onClick={addInvoice}
-                                        className="h-9 px-4 bg-primary text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-primary/90 transition-all flex items-center gap-2 shadow-lg shadow-primary/20 active:scale-95"
-                                    >
-                                        <Plus size={14} strokeWidth={3} /> Faktura Əlavə Et
-                                    </button>
+                                    {!isWarningOnly && (
+                                        <button
+                                            onClick={addInvoice}
+                                            className="h-9 px-4 bg-primary text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-primary/90 transition-all flex items-center gap-2 shadow-lg shadow-primary/20 active:scale-95"
+                                        >
+                                            <Plus size={14} strokeWidth={3} /> Faktura Əlavə Et
+                                        </button>
+                                    )}
                                 </div>
 
                                 <div className="space-y-8">
@@ -2086,19 +2283,23 @@ function GenerateDocumentContent() {
                                                     <div className="h-8 w-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-600 text-[10px] shadow-sm">
                                                         {idx + 1}
                                                     </div>
-                                                    <input
-                                                        value={inv.invoiceNumber}
-                                                        onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
-                                                        className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/30 transition-all shadow-sm"
-                                                        placeholder="Faktura Nömrəsi"
-                                                    />
+                                                    {!isWarningOnly && (
+                                                        <input
+                                                            value={inv.invoiceNumber}
+                                                            onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                            className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/30 transition-all shadow-sm"
+                                                            placeholder="Faktura Nömrəsi"
+                                                        />
+                                                    )}
                                                 </div>
-                                                <button
-                                                    onClick={() => removeInvoice(inv.id)}
-                                                    className="h-8 w-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+                                                {!isWarningOnly && (
+                                                    <button
+                                                        onClick={() => removeInvoice(inv.id)}
+                                                        className="h-8 w-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}
                                             </div>
 
                                             {/* Orders List */}
@@ -2109,8 +2310,10 @@ function GenerateDocumentContent() {
                                                             <div className="flex-1">
                                                                 <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-1 mb-1.5 block">MƏHSUL ADI</label>
                                                                 <textarea
-                                                                    rows={2}
+                                                                    rows={4}
                                                                     value={ord.productDescription}
+                                                                    onFocus={() => setFocusedField("MƏHSUL ADI")}
+                                                                    onBlur={() => setFocusedField(null)}
                                                                     onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
                                                                     className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2.5 rounded-xl font-bold text-[12px] outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/5 transition-all resize-none scrollbar-none"
                                                                     placeholder="Məs: iPhone 13 (IMEI: ...), Kabro, Adapter"
@@ -2126,54 +2329,82 @@ function GenerateDocumentContent() {
                                                             )}
                                                         </div>
 
-                                                        <div className="grid grid-cols-4 gap-2">
-                                                            <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Müddət</label>
-                                                                <input
-                                                                    value={ord.paymentPeriod}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'paymentPeriod', e.target.value)}
-                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
-                                                                />
+                                                        {!isWarningOnly && (
+                                                            <div className="grid grid-cols-4 gap-2">
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Müddət</label>
+                                                                    <input
+                                                                        value={ord.paymentPeriod}
+                                                                        onFocus={() => setFocusedField("Müddət")}
+                                                                        onBlur={() => setFocusedField(null)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value;
+                                                                            if (v.startsWith("0") && v.length > 1 && v[1] !== "." && v[1] !== ",") v = v.replace(/^0+/, "");
+                                                                            updateOrder(inv.id, ord.id, 'paymentPeriod', v.replace(/\D/g, ""));
+                                                                        }}
+                                                                        className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">İlkin</label>
+                                                                    <input
+                                                                        value={ord.initialPayment}
+                                                                        onFocus={() => setFocusedField("İlkin")}
+                                                                        onBlur={() => setFocusedField(null)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                            updateOrder(inv.id, ord.id, 'initialPayment', v);
+                                                                        }}
+                                                                        className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Aylıq</label>
+                                                                    <input
+                                                                        value={ord.monthlyPayment}
+                                                                        onFocus={() => setFocusedField("Aylıq")}
+                                                                        onBlur={() => setFocusedField(null)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                            updateOrder(inv.id, ord.id, 'monthlyPayment', v);
+                                                                        }}
+                                                                        className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Ödənilən</label>
+                                                                    <input
+                                                                        value={ord.paidAmount}
+                                                                        onFocus={() => setFocusedField("Ödənilən")}
+                                                                        onBlur={() => setFocusedField(null)}
+                                                                        onChange={(e) => {
+                                                                            let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                                            if (v.startsWith("0.00") && v.length > 4) v = v.slice(4);
+                                                                            else if (v.startsWith("0") && v.length > 1 && v[1] !== ".") v = v.replace(/^0+/, "");
+                                                                            updateOrder(inv.id, ord.id, 'paidAmount', v);
+                                                                        }}
+                                                                        className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
+                                                                    />
+                                                                </div>
                                                             </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">İlkin</label>
-                                                                <input
-                                                                    value={ord.initialPayment}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'initialPayment', e.target.value)}
-                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Aylıq</label>
-                                                                <input
-                                                                    value={ord.monthlyPayment}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'monthlyPayment', e.target.value)}
-                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest text-center block">Ödənilən</label>
-                                                                <input
-                                                                    value={ord.paidAmount}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'paidAmount', e.target.value)}
-                                                                    className="w-full bg-slate-100/50 border border-slate-200 py-1.5 rounded-md font-bold text-[11px] text-center outline-none"
-                                                                />
-                                                            </div>
-                                                        </div>
+                                                        )}
 
-                                                        <div className="pt-2 border-t border-slate-50 flex items-center justify-between">
-                                                            <span className="text-[9px] font-bold text-primary tracking-tight">Cəm: {ord.totalPrice} ₼</span>
+                                                        <div className="pt-2 border-t border-slate-50 flex items-center justify-end">
+                                                            {!isWarningOnly && <span className="text-[9px] font-bold text-primary tracking-tight">Cəm: {ord.totalPrice} ₼</span>}
                                                             <div className="flex items-center gap-1">
-                                                                <label className="text-[7px] font-black text-slate-600 uppercase tracking-widest px-1">Tarix</label>
+                                                                <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest px-1">Müqavilə tarixi</label>
                                                                 <input
                                                                     value={ord.contractDate}
+                                                                    onFocus={() => setFocusedField("Müqavilə tarixi")}
+                                                                    onBlur={() => setFocusedField(null)}
                                                                     onChange={(e) => {
-                                                                        let val = e.target.value.replace(/\D/g, "").slice(0, 8);
-                                                                        if (val.length >= 4) val = val.slice(0, 2) + "." + val.slice(2, 4) + "." + val.slice(4);
-                                                                        else if (val.length >= 2) val = val.slice(0, 2) + "." + val.slice(2);
-                                                                        updateOrder(inv.id, ord.id, 'contractDate', val);
+                                                                        updateOrder(inv.id, ord.id, 'contractDate', formatDateInput(e.target.value));
                                                                     }}
-                                                                    className="w-20 bg-slate-100/50 border border-slate-200 py-1 rounded-md font-bold text-[10px] text-center outline-none"
+                                                                    className="w-24 bg-slate-100/50 border border-slate-200 py-1 rounded-md font-bold text-[11px] text-center outline-none"
                                                                     placeholder="GG.AA.İİİİ"
                                                                 />
                                                             </div>
@@ -2187,31 +2418,31 @@ function GenerateDocumentContent() {
                             </div>
 
                             {/* Financial Report */}
-                            <div className="space-y-4 pb-20">
-                                <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
-                                    <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
-                                        <DollarSign size={14} className="stroke-[2.5px]" />
+                            {!isWarningOnly && (
+                                <div className="space-y-4 pb-20">
+                                    <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
+                                        <div className="h-7 w-7 rounded-lg bg-primary/5 flex items-center justify-center text-primary">
+                                            <DollarSign size={14} className="stroke-[2.5px]" />
+                                        </div>
+                                        <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Maliyyə Hesabatı</h4>
                                     </div>
-                                    <h4 className="text-[14px] font-black text-red-600 uppercase tracking-[0.15em]">Maliyyə Hesabatı</h4>
-                                </div>
-                                <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Alqı-satqı qiyməti" info="Fakturalardakı bütün məhsulların (Qiymət * Müddət + İlkin) cəmi." value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} />
-                                        <CustomerField label="Əsas borca ödənilmiş məbləğ" info="Müştərinin indiyədək ödədiyi cəmi məbləğ." value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
-                                    </div>
-                                    <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm">
-                                        <CustomerField label="Əsas borca ödənilməmiş məbləğ" info="Alqı-satqı qiyməti - Əsas borca ödənilmiş məbləğ." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
-                                        <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 23.60)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
-                                        <CustomerField label="Dövlət Rüsumu" info="Məhkəmə dövlət rüsumu məbləği." value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField label="Cərimə" info="Əsas borca ödənilməmiş məbləğ * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
-                                        <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
-                                    </div>
-                                    {/* File Uploads - Mandatory for Print */}
-                                    {!isWarningOnly && (
+                                    <div className="bg-primary/[0.02] p-6 rounded-[2.5rem] border border-primary/10 space-y-6">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <CustomerField label="Alqı-satqı qiyməti" info="Fakturalardakı bütün məhsulların (Qiymət * Müddət + İlkin) cəmi." value={customer.details?.totalPrice} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.totalPrice", v)} readOnly={true} />
+                                            <CustomerField label="Əsas borca ödənilmiş məbləğ" info="Müştərinin indiyədək ödədiyi cəmi məbləğ." value={customer.details?.paidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.paidAmount", v)} />
+                                        </div>
+                                        <div className="p-4 bg-white rounded-2xl border border-primary/5 shadow-sm">
+                                            <CustomerField label="Əsas borca ödənilməmiş məbləğ" info="Alqı-satqı qiyməti - Əsas borca ödənilmiş məbləğ." value={customer.details?.unpaidAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.unpaidAmount", v)} isPrice={true} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4 border-t border-primary/5 pt-4">
+                                            <CustomerField label="İnnovativ Layihələr Mərkəzi Rüsumu" info="Telefonlar üzrə rüsum (IMEI varsa: Say * 23.60)." value={customer.details?.fee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.fee", v)} />
+                                            <CustomerField label="Dövlət Rüsumu" info="Məhkəmə dövlət rüsumu məbləği." value={customer.details?.courtFee} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.courtFee", v)} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <CustomerField label="Cərimə" info="Əsas borca ödənilməmiş məbləğ * 10%." value={customer.details?.penalty} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.penalty", v)} />
+                                            <CustomerField label="Güzəşt Məbləği" info="Əsas borca ödənilməmiş məbləğ - Cərimə." value={customer.details?.discountAmount} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("details.discountAmount", v)} />
+                                        </div>
+                                        {/* File Uploads - Mandatory for Print */}
                                         <div className="space-y-4">
                                             <div className="flex items-center gap-3 border-b border-primary/10 pb-2">
                                                 <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
@@ -2303,10 +2534,9 @@ function GenerateDocumentContent() {
                                                 )}
                                             </div>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                            </div>
-
+                            )}
                         </div>
                     </div>
 
@@ -2314,9 +2544,9 @@ function GenerateDocumentContent() {
                     <div
                         ref={scrollContainerRef}
                         onScroll={handleScroll}
-                        className="flex-1 bg-slate-200/50 overflow-y-auto p-12 scrollbar-thin flex flex-col items-center gap-8 relative"
+                        className="flex-1 bg-slate-200/50 overflow-y-auto p-12 scrollbar-thin flex flex-col items-center gap-8 relative print:p-0 print:bg-white"
                     >
-                        <div className="w-full max-w-[900px] flex flex-col pb-40">
+                        <div className="w-full max-w-[900px] flex flex-col pb-40 print:p-0 print:pb-0">
                             {filteredTemplates.map((template) => (
                                 <DocumentPreview
                                     key={template.id}
@@ -2332,18 +2562,18 @@ function GenerateDocumentContent() {
                             ))}
 
                             {/* MANDATORY FILES PREVIEW */}
-                            {receiptFile && (
-                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
-                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8">1. ÖDƏNİŞ QƏBZİ</p>
+                            {receiptFile && !isWarningOnly && (
+                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12 print:shadow-none print:border-none print:m-0 print:mb-0">
+                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8 no-print">1. ÖDƏNİŞ QƏBZİ</p>
                                     <div className="w-full flex-1 flex items-center justify-center rounded-[2rem] overflow-hidden">
                                         <img src={receiptFile.content} alt="Receipt" className="max-w-full max-h-full object-contain" />
                                     </div>
                                 </div>
                             )}
 
-                            {postageFile && (
-                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12">
-                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8">2. POÇT MARKASI</p>
+                            {postageFile && !isWarningOnly && (
+                                <div className="doc-page bg-white shadow-xl border border-slate-200 rounded-sm min-h-[1122px] w-[794px] mx-auto mb-12 flex flex-col items-center justify-center p-12 print:shadow-none print:border-none print:m-0 print:mb-0">
+                                    <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8 no-print">2. POÇT MARKASI</p>
                                     <div className="w-full flex-1 flex items-center justify-center rounded-[2rem] overflow-hidden">
                                         <img src={postageFile.content} alt="Postage" className="max-w-full max-h-full object-contain" />
                                     </div>
@@ -2351,6 +2581,23 @@ function GenerateDocumentContent() {
                             )}
                         </div>
                     </div>
+
+                    {/* Hidden Print Iframe */}
+                    <iframe id="print-iframe" className="hidden no-print" style={{ display: 'none' }} />
+
+                    <style jsx global>{`
+                        @media print {
+                            body * {
+                                visibility: hidden !important;
+                            }
+                            #print-mount-point, #print-mount-point * {
+                                visibility: visible !important;
+                            }
+                            .no-print, [role="status"], [class*="sonner"], .sonner-toast {
+                                display: none !important;
+                            }
+                        }
+                    `}</style>
                 </div>
             </div>
         </AuthGuard>
