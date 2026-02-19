@@ -378,8 +378,53 @@ const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placehol
             ) : (
                 <input
                     value={value || ""}
-                    onFocus={() => onFocus?.(label)}
-                    onBlur={onBlur}
+                    onFocus={(e) => {
+                        onFocus?.(label);
+                        // Clear zero placeholder for financial fields
+                        const isFinancialField = label && (
+                            label.includes("qiyməti") ||
+                            label.includes("məbləğ") ||
+                            label.includes("rüsum") ||
+                            label.includes("Rüsumu") ||
+                            label.includes("Cərimə") ||
+                            label.includes("Borc") ||
+                            label.includes("Ödənilmiş") ||
+                            label.includes("Ödənilən") ||
+                            label.includes("İlkin") ||
+                            label.includes("Aylıq") ||
+                            isPrice
+                        );
+                        if (isFinancialField) {
+                            const v = (value || "").toString().trim();
+                            if (v === "0" || v === "0.00" || v === "0.0") {
+                                onChange("");
+                            }
+                        }
+                        e.target.select();
+                    }}
+                    onBlur={(e) => {
+                        onBlur?.();
+                        // Restore zero display for empty financial fields
+                        const isFinancialField = label && (
+                            label.includes("qiyməti") ||
+                            label.includes("məbləğ") ||
+                            label.includes("rüsum") ||
+                            label.includes("Rüsumu") ||
+                            label.includes("Cərimə") ||
+                            label.includes("Borc") ||
+                            label.includes("Ödənilmiş") ||
+                            label.includes("Ödənilən") ||
+                            label.includes("İlkin") ||
+                            label.includes("Aylıq") ||
+                            isPrice
+                        );
+                        if (isFinancialField) {
+                            const v = (value || "").toString().trim();
+                            if (v === "" || v === "0") {
+                                onChange("0.00");
+                            }
+                        }
+                    }}
                     onChange={(e) => {
                         let val = e.target.value;
                         if (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label)) {

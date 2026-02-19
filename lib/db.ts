@@ -123,6 +123,18 @@ export async function updateUserRole(email: string, role: string, permissions?: 
     }
 }
 
+export async function deleteUser(email: string, userEmail: string = "system") {
+    try {
+        const userRef = doc(db, USERS_COLLECTION, email);
+        await deleteDoc(userRef);
+        await addAuditLog("USER_DELETE", `${email} istifadəçisi silindi`, userEmail, "USER", { targetUser: email });
+        return true;
+    } catch (e) {
+        console.error("deleteUser error:", e);
+        throw e;
+    }
+}
+
 
 
 // Customer Logic

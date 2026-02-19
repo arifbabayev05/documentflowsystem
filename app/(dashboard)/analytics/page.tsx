@@ -386,10 +386,14 @@ export default function AnalyticsPage() {
 
         filteredCustomers.forEach(c => {
             const status = c.process_status || "INSPECTOR_ENTERED";
-            const principal = parseFloat((c.details?.unpaidAmount || "0").toString().replace(',', '.'));
+            // Use details fields first, fall back to top-level debtAmount
+            const principal = parseFloat((c.details?.unpaidAmount || c.details?.totalUnpaid || "0").toString().replace(',', '.'));
             const penalty = parseFloat((c.details?.penalty || "0").toString().replace(',', '.'));
             const fees = parseFloat((c.details?.fee || "0").toString().replace(',', '.'));
-            const totalUnpaid = principal + penalty + fees;
+            // If no breakdown available, use top-level debtAmount directly
+            const hasBreakdown = !isNaN(principal) && (principal > 0 || penalty > 0 || fees > 0);
+            const topLevelDebt = parseFloat((c.debtAmount || "0").toString().replace(',', '.'));
+            const totalUnpaid = hasBreakdown ? (principal + penalty + fees) : (isNaN(topLevelDebt) ? 0 : topLevelDebt);
 
             const isCompleted = status === "COMPLETED";
             const isDocReady = ["ARCHIVE_UPLOADED", "COMPLETED"].includes(status);
@@ -480,19 +484,35 @@ export default function AnalyticsPage() {
                 }
             }
 
-            // Efficiency
-            const handlers = Array.from(new Set([c.assignedTo, c.createdBy].filter(u => u && u.includes('@'))));
-            handlers.forEach(u => {
-                if (!inspectorMap[u]) inspectorMap[u] = { count: 0, totalSpeed: 0 };
-                inspectorMap[u].count++;
-                if (isDocReady) {
-                    const cDateVal = parseDate(c.assignedAt || c.createdAt || c.statusHistory?.[0]?.timestamp);
-                    const uDateVal = parseDate(c.printedAt || c.updatedAt || c.createdAt || (c.statusHistory && c.statusHistory[c.statusHistory.length - 1]?.timestamp));
-                    if (cDateVal && uDateVal) {
-                        inspectorMap[u].totalSpeed += Math.max(0, (uDateVal.getTime() - cDateVal.getTime()) / (1000 * 60 * 60 * 24));
-                    }
+            // Processing time: use statusHistory first→last, or createdAt→printedAt/updatedAt
+            {
+                let startDate: Date | null = null;
+                let endDate: Date | null = null;
+
+                if (c.statusHistory && c.statusHistory.length >= 2) {
+                    const sorted = [...c.statusHistory].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                    startDate = parseDate(sorted[0].timestamp);
+                    endDate = parseDate(sorted[sorted.length - 1].timestamp);
+                } else {
+                    startDate = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+                    endDate = parseDate(c.printedAt || c.updatedAt);
                 }
-            });
+
+                if (startDate && endDate && endDate > startDate) {
+                    const diffDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+                    const handlers = Array.from(new Set([c.assignedTo, c.createdBy].filter((u: any) => u && u.includes('@'))));
+                    const key = handlers[0] || '__all__';
+                    if (!inspectorMap[key]) inspectorMap[key] = { count: 0, totalSpeed: 0 };
+                    inspectorMap[key].count++;
+                    inspectorMap[key].totalSpeed += Math.max(0, diffDays);
+                } else {
+                    // Still count the case so avgProcessingDays denominator is correct
+                    const handlers = Array.from(new Set([c.assignedTo, c.createdBy].filter((u: any) => u && u.includes('@'))));
+                    const key = handlers[0] || '__all__';
+                    if (!inspectorMap[key]) inspectorMap[key] = { count: 0, totalSpeed: 0 };
+                    inspectorMap[key].count++;
+                }
+            }
 
             // Regions & Demographics
             const g = (c.details?.gender || c.gender || "").toLowerCase();
@@ -602,7 +622,9 @@ export default function AnalyticsPage() {
         initial.timeSavingsData = timeSavingsData;
         const totalSavedHours = timeSavingsData.reduce((acc, d) => acc + d.saved, 0);
         initial.totalSavedHours = totalSavedHours;
-        initial.avgProcessingDays = initial.totalCases > 0 ? Object.values(inspectorMap).reduce((acc, curr) => acc + curr.totalSpeed, 0) / initial.totalCases : 0;
+        const totalSpeed = Object.values(inspectorMap).reduce((acc, curr) => acc + curr.totalSpeed, 0);
+        const totalSpeedCount = Object.values(inspectorMap).reduce((acc, curr) => acc + curr.count, 0);
+        initial.avgProcessingDays = totalSpeedCount > 0 ? totalSpeed / totalSpeedCount : 0;
         initial.legalFeesProjection = initial.readyForCourtCount * FEE_PER_CASE;
 
         initial.topBadStores = Object.entries(storeMap)
@@ -728,12 +750,12 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatWorkTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
+                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatDetailedTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
                                     Prosesdə ən çox ləngimə <span className="underline decoration-indigo-400 font-bold">{maxDwell.label}</span> mərhələsində qeydə alınıb.
                                 </p>
                                 <div className="flex items-center gap-3">
                                     <span className="px-3 py-1 bg-white/10 rounded-full text-[9px] font-black uppercase tracking-widest">
-                                        Status: {stats.avgProcessingDays < 5 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
+                                        Status: {stats.avgProcessingDays * 24 < 8 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
                                     </span>
                                 </div>
                             </motion.div>
@@ -917,9 +939,11 @@ export default function AnalyticsPage() {
                             İşlərin Orta İcra Müddəti
                             <InfoTooltip title="İcra Sürəti" text="İşin daxil olmasından sənədlərin hazır olmasına qədər keçən orta müddət." />
                         </div>
-                        <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">{stats.avgProcessingDays.toFixed(1)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Gün</span></h2>
+                        <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">
+                            {formatDetailedTime(stats.avgProcessingDays * 24)}
+                        </h2>
                         <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase text-emerald-500">
-                            Status: {stats.avgProcessingDays < 5 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
+                            Status: {stats.avgProcessingDays * 24 < 8 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
                         </div>
                     </motion.div>
 

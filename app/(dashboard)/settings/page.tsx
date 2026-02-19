@@ -17,6 +17,8 @@ import {
     ArrowLeft,
     MoreHorizontal,
     Edit,
+    Trash2,
+    AlertTriangle,
     Mail,
     Calendar,
     Settings,
@@ -27,7 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 import { AVAILABLE_PERMISSIONS, PermissionID } from "@/lib/permissions";
-import { getAllUsers, updateUserRole, getRolePermissions } from "@/lib/db";
+import { getAllUsers, updateUserRole, getRolePermissions, deleteUser } from "@/lib/db";
 
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
@@ -78,6 +80,8 @@ export default function UsersPage() {
     const [selectedRole, setSelectedRole] = useState<UserDoc["role"]>("PENDING");
     const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
     const [openPermsId, setOpenPermsId] = useState<string | null>(null);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [userToDelete, setUserToDelete] = useState<UserDoc | null>(null);
     const router = useRouter();
 
     useEffect(() => {
@@ -143,8 +147,28 @@ export default function UsersPage() {
             await updateUserRole(editingUser.id, selectedRole, finalPermissions);
             toast.success("Məlumatlar yadda saxlanıldı");
             setIsModalOpen(false);
+            fetchUsers();
         } catch (e) {
             toast.error("Xəta baş verdi");
+        }
+    };
+
+    const handleDeleteUser = async (user: UserDoc) => {
+        setUserToDelete(user);
+        setIsDeleteModalOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!userToDelete) return;
+
+        try {
+            await deleteUser(userToDelete.id, currentUser?.email || "system");
+            toast.success("İstifadəçi silindi");
+            setIsDeleteModalOpen(false);
+            setUserToDelete(null);
+            fetchUsers();
+        } catch (e) {
+            toast.error("Silinmə zamanı xəta baş verdi");
         }
     };
 
@@ -245,14 +269,14 @@ export default function UsersPage() {
                 {/* Table Section */}
                 <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm">
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1500px] border-collapse">
+                        <table className="w-full border-collapse">
                             <thead>
                                 <tr className="bg-slate-50/50 border-b border-slate-100">
-                                    <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">İstifadəçi</th>
-                                    <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Rol</th>
-                                    <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">İcazələr</th>
-                                    <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Son Giriş</th>
-                                    <th className="px-8 py-5 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Əməliyyat</th>
+                                    <th className="px-3 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">İstifadəçi</th>
+                                    <th className="px-3 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Rol</th>
+                                    <th className="px-3 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">İcazələr</th>
+                                    <th className="px-3 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Son Giriş</th>
+                                    <th className="px-3 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Əməliyyat</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -282,20 +306,20 @@ export default function UsersPage() {
                                             openPermsId === u.id ? "relative z-[60] bg-slate-50/50" : "relative z-10"
                                         )}
                                     >
-                                        <td className="px-8 py-10">
-                                            <div className="flex items-center gap-5">
+                                        <td className="px-3 py-5">
+                                            <div className="flex items-center gap-4">
                                                 <div className="flex flex-col">
-                                                    <span className="font-bold text-slate-900 group-hover:text-primary transition-colors">{u.displayName}</span>
-                                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
-                                                        <Mail size={12} className="opacity-50" />
+                                                    <span className="text-sm font-bold text-slate-900 group-hover:text-primary transition-colors">{u.displayName}</span>
+                                                    <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400">
+                                                        <Mail size={10} className="opacity-50" />
                                                         {u.email}
                                                     </div>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-8 py-10">
+                                        <td className="px-3 py-5">
                                             <div className={cn(
-                                                "inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-[11px] font-black uppercase tracking-wider shadow-sm",
+                                                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm",
                                                 u.role === "SUPERADMIN" ? "bg-slate-900 text-white shadow-xl shadow-slate-900/10" :
                                                     u.role === "ADMIN" ? "bg-blue-50 text-blue-600 border border-blue-100" :
                                                         u.role === "MANAGER" ? "bg-purple-50 text-purple-600 border border-purple-100" :
@@ -306,14 +330,14 @@ export default function UsersPage() {
                                                 {ROLE_LABELS[u.role] || u.role}
                                             </div>
                                         </td>
-                                        <td className="px-8 py-10 perms-cell">
-                                            <div className="flex flex-wrap items-center gap-2 max-w-[400px]">
+                                        <td className="px-3 py-5 perms-cell">
+                                            <div className="flex flex-wrap items-center gap-1.5 max-w-[300px]">
                                                 {u.permissions && u.permissions.length > 0 ? (
                                                     <>
                                                         {u.permissions.slice(0, 2).map((pid) => {
                                                             const p = AVAILABLE_PERMISSIONS.find(ap => ap.id === pid);
                                                             return p ? (
-                                                                <span key={pid} className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-2xl text-[11px] font-black text-slate-800 whitespace-nowrap uppercase tracking-tight">
+                                                                <span key={pid} className="px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-black text-slate-800 whitespace-nowrap uppercase tracking-tight">
                                                                     {p.label}
                                                                 </span>
                                                             ) : null;
@@ -366,10 +390,10 @@ export default function UsersPage() {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-8 py-10">
+                                        <td className="px-3 py-5">
                                             <div className="flex flex-col">
-                                                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                                                    <Calendar size={12} className="text-slate-400" />
+                                                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-700">
+                                                    <Calendar size={10} className="text-slate-400" />
                                                     {mounted && u.lastLogin ? (
                                                         (() => {
                                                             const date = new Date(u.lastLogin);
@@ -384,19 +408,30 @@ export default function UsersPage() {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-8 py-6 text-right">
-                                            <button
-                                                onClick={() => {
-                                                    setEditingUser(u);
-                                                    setSelectedRole(u.role);
-                                                    setSelectedPermissions(u.permissions || []);
-                                                    setIsModalOpen(true);
-                                                }}
-                                                className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-primary hover:text-primary hover:bg-primary/5 transition-all text-xs font-bold shadow-sm"
-                                            >
-                                                <Edit size={14} />
-                                                <span>Düzəliş</span>
-                                            </button>
+                                        <td className="px-3 py-4 text-right">
+                                            <div className="flex items-center justify-end gap-1.5">
+                                                <button
+                                                    onClick={() => {
+                                                        setEditingUser(u);
+                                                        setSelectedRole(u.role);
+                                                        setSelectedPermissions(u.permissions || []);
+                                                        setIsModalOpen(true);
+                                                    }}
+                                                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-primary hover:text-primary hover:bg-primary/5 transition-all text-[10px] font-black shadow-sm uppercase tracking-wider"
+                                                >
+                                                    <Edit size={12} />
+                                                    <span>Düzəliş</span>
+                                                </button>
+                                                {currentUser.role === 'SUPERADMIN' && u.id !== currentUser.email && (
+                                                    <button
+                                                        onClick={() => handleDeleteUser(u)}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-red-100 text-red-500 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all text-[10px] font-black shadow-sm uppercase tracking-wider"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                        <span>Sil</span>
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -505,6 +540,44 @@ export default function UsersPage() {
                                 >
                                     Yadda saxla
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Delete Confirmation Modal */}
+                {isDeleteModalOpen && userToDelete && (
+                    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
+                        <div className="bg-white rounded-[2.5rem] w-full max-w-md shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
+                            <div className="p-10 text-center space-y-6">
+                                <div className="mx-auto w-20 h-20 bg-red-50 rounded-3xl flex items-center justify-center animate-bounce-subtle">
+                                    <AlertTriangle size={40} className="text-red-500" />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Əminsiniz?</h3>
+                                    <p className="text-sm font-bold text-slate-500">
+                                        <span className="text-red-500">{userToDelete.displayName}</span> ({userToDelete.email}) istifadəçisini silmək istədiyinizə əminsiniz? Bu əməliyyat geri qaytarıla bilməz.
+                                    </p>
+                                </div>
+
+                                <div className="flex flex-col gap-3 pt-4">
+                                    <button
+                                        onClick={confirmDelete}
+                                        className="w-full py-4 bg-red-500 text-white rounded-2xl text-sm font-black shadow-xl shadow-red-500/20 hover:bg-red-600 hover:scale-[1.02] active:scale-95 transition-all uppercase tracking-widest"
+                                    >
+                                        Bəli, Sil
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setIsDeleteModalOpen(false);
+                                            setUserToDelete(null);
+                                        }}
+                                        className="w-full py-4 bg-slate-100 text-slate-500 rounded-2xl text-sm font-black hover:bg-slate-200 transition-all uppercase tracking-widest"
+                                    >
+                                        Ləğv et
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
