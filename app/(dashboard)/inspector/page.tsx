@@ -27,7 +27,7 @@ const EMPTY_ROW: EntryRow = {
 
 const COLUMNS: { key: keyof EntryRow; label: string; width: string; uppercase?: boolean; maxLen?: number }[] = [
     { key: "customer_code", label: "Müştəri Kodu", width: "180px" },
-    { key: "full_name", label: "Müştəri (Soyad, Ad, Ata adı)", width: "0.98fr", uppercase: true },
+    { key: "full_name", label: "Müştəri (Soyad, Ad, Ata adı)", width: "0.98fr" },
     { key: "fin", label: "FİN", width: "180px", uppercase: true, maxLen: 7 },
     { key: "serial_number", label: "Seriya", width: "180px", uppercase: true },
     { key: "total_debt", label: "Borc (AZN)", width: "180px" },
@@ -724,7 +724,7 @@ export default function InspectorPage() {
                                     })()}
 
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-900 flex items-center">{row.customerCode || "-"}</div>
-                                    <div className="px-4 py-4 text-[14px] font-black text-slate-900 uppercase flex items-center truncate">{row.fullName || "-"}</div>
+                                    <div className="px-4 py-4 text-[14px] font-black text-slate-900 flex items-center truncate">{row.fullName || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>

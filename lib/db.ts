@@ -69,6 +69,7 @@ export async function getRolePermissions(role: string) {
     if (role === "ADMIN") return ["page_customers"];
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
+    if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers"];
     if (role === "DEP_HEAD") return ["page_analytics", "page_parameters"];
     if (role === "AUDIT_LEAD") return ["page_analytics", "page_audit_logs", "page_parameters", "page_users"];
     return []; // PENDING or others have no default permissions
@@ -317,6 +318,10 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
         } else if (data.assignedTo && oldData?.assignedTo !== data.assignedTo) {
             action = "ASSIGN";
             detail = `Müfəttiş təyin edildi: ${data.assignedTo}`;
+        } else if (data.archiveAssignedTo && oldData?.archiveAssignedTo !== data.archiveAssignedTo) {
+            action = "ARCHIVE_ASSIGN";
+            detail = `Arxivçi təyin edildi: ${data.archiveAssignedTo}`;
+            category = "ARCHIVE";
         }
 
         if (action !== "UPDATE") {
@@ -386,6 +391,34 @@ export async function getAuditLogs(limitCount: number = 200) {
         return querySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (e) {
         return [];
+    }
+}
+
+export async function deleteAuditLogsBeforeDate(date: Date, userEmail: string = "system") {
+    try {
+        const q = query(collection(db, AUDIT_COLLECTION), where("createdAt", "<=", date));
+        const querySnap = await getDocs(q);
+        const docs = querySnap.docs;
+
+        if (docs.length === 0) return 0;
+
+        let deletedCount = 0;
+        const batchSize = 500;
+        for (let i = 0; i < docs.length; i += batchSize) {
+            const batch = writeBatch(db);
+            const chunk = docs.slice(i, i + batchSize);
+            chunk.forEach(d => {
+                batch.delete(d.ref);
+                deletedCount++;
+            });
+            await batch.commit();
+        }
+
+        await addAuditLog("SYSTEM_CLEANUP", `${deletedCount} köhnə loq təmizləndi (Tarix <= ${date.toLocaleDateString()})`, userEmail, "SYSTEM");
+        return deletedCount;
+    } catch (e) {
+        console.error("deleteAuditLogsBeforeDate error:", e);
+        throw e;
     }
 }
 

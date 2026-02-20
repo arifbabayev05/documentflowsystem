@@ -210,6 +210,33 @@ function getAllProducts(invoices: any[]): string {
     return products.join(", ");
 }
 
+/**
+ * Returns short version: keeps only IMEI number + phone model (first 2 comma-separated parts).
+ * Example: "İMEİ: 358635144505014, IPHONE 16 PRO, 072 PAKET XXXL, QIZIL ZƏMANƏT ULTRA 1 IL"
+ *       => "İMEİ: 358635144505014, IPHONE 16 PRO"
+ */
+function getAllImeiProductsShort(invoices: any[]): string {
+    const allImeiItems: string[] = [];
+    (invoices || []).forEach((inv: any) => {
+        (inv.orders || []).forEach((ord: any) => {
+            const hasExplicitImei = ord.hasImieFee === true;
+            const desc = ord.productDescription || "";
+            const normalized = desc.replace(/İ/g, 'i').toLowerCase();
+            const hasImeiInDesc = normalized.includes("imei");
+
+            if (hasExplicitImei || hasImeiInDesc) {
+                // Take only the first 2 comma-separated parts: "İMEİ: XXXXXXX" + "PHONE MODEL"
+                const parts = desc.split(",");
+                const shortDesc = parts.slice(0, 2).map((p: string) => p.trim()).join(", ");
+                if (shortDesc && !allImeiItems.includes(shortDesc)) {
+                    allImeiItems.push(shortDesc);
+                }
+            }
+        });
+    });
+    return allImeiItems.join("; ");
+}
+
 function getAllImeiProducts(invoices: any[]): string {
     const allImeiItems: string[] = [];
     (invoices || []).forEach((inv: any) => {
@@ -283,10 +310,7 @@ function buildInvoiceData(
     }
 
     // If there is only 1 invoice, the global fee input is the authoritative source for this invoice's fee.
-    // Otherwise, calculate it from orders but fallback to globalFee if zero (for first invoice).
     if (totalInvoices === 1 && globalFee !== undefined) {
-        invIlmFee = globalFee;
-    } else if (invIlmFee === 0 && invIndex === 0 && globalFee && globalFee > 0) {
         invIlmFee = globalFee;
     }
 
@@ -618,6 +642,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
                     BUTUN_MEHSULLAR: getAllProducts(invoices),
                     BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
+                    BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
 
                     UMUMI_BORC: totalDebt.toFixed(2),
                     UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
@@ -628,6 +653,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
 
                     MUQAVILE_TARIXI: customer.details?.contractDate || "",
                     MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices),
+                    MEHSUL_IMEI_SIYAHI_QISA: getAllImeiProductsShort(invoices),
                     MEHSUL_SIYAHI: getAllProducts(invoices),
                     ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
                     ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
@@ -1710,7 +1736,7 @@ function GenerateDocumentContent() {
         }
 
         for (const inv of invoices) {
-            if (!inv.invoiceNumber && !isWarningOnly || !isWarning) {
+            if (!inv.invoiceNumber && !isWarningOnly && !isWarning) {
                 toast.error("Əskik doldurulan məlumat var: Faktura və Sifariş (Faktura №) xanasını doldurun.");
                 return false;
             }
@@ -1862,7 +1888,9 @@ function GenerateDocumentContent() {
                 BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
                 BUTUN_MEHSULLAR: getAllProducts(invoices),
                 BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
+                BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
                 MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices), // Alias for user template compatibility
+                MEHSUL_IMEI_SIYAHI_QISA: getAllImeiProductsShort(invoices), // Short version: IMEI + model only
 
                 UMUMI_BORC: totalDebt.toFixed(2),
                 UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),

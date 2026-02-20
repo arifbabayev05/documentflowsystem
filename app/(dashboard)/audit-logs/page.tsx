@@ -28,9 +28,10 @@ import {
     Check,
     Users
 } from "lucide-react";
-import { getAuditLogs, getSystemErrors, getAllUsers } from "@/lib/db";
+import { getAuditLogs, getSystemErrors, getAllUsers, deleteAuditLogsBeforeDate } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { toast } from "sonner";
 
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
@@ -97,6 +98,26 @@ export default function AuditLogsPage() {
     const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
     const [userSearchTerm, setUserSearchTerm] = useState("");
     const [isUserFilterOpen, setIsUserFilterOpen] = useState(false);
+    const [showCleanupModal, setShowCleanupModal] = useState(false);
+    const [cleaning, setCleaning] = useState(false);
+
+    const handleBulkDelete = async () => {
+        if (!user) return;
+        setCleaning(true);
+        try {
+            // User requested 19.02.2026 and earlier
+            const targetDate = new Date(2026, 1, 19, 23, 59, 59); // Feb 19, 2026
+            const count = await deleteAuditLogsBeforeDate(targetDate, user.email || "system");
+            toast.success(`${count} köhnə loq uğurla silindi`);
+            setShowCleanupModal(false);
+            fetchLogs();
+        } catch (error) {
+            toast.error("Silinmə zamanı xəta baş verdi");
+            console.error(error);
+        } finally {
+            setCleaning(false);
+        }
+    };
 
     const fetchLogs = async () => {
         setLoadingLogs(true);
@@ -195,7 +216,6 @@ export default function AuditLogsPage() {
                             </div>
                             <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Əməliyyat Tarixçəsi</h1>
                         </div>
-                        <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] pl-1">Audit və Təhlükəsizlik Monitorinqi Paneli</p>
                     </div>
 
                     <div className="flex flex-col sm:flex-row items-center gap-3">
@@ -210,22 +230,6 @@ export default function AuditLogsPage() {
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-
-                        {/* Filter Select */}
-                        <div className="relative w-full sm:w-[220px]">
-                            <select
-                                value={selectedAction}
-                                onChange={(e) => setSelectedAction(e.target.value)}
-                                className="appearance-none bg-white border border-slate-200 rounded-2xl pl-6 pr-12 py-3.5 text-xs font-black uppercase tracking-wider outline-none focus:border-slate-900 hover:border-slate-300 shadow-sm cursor-pointer w-full transition-all"
-                            >
-                                <option value="all">BÜTÜN NÖVLƏR</option>
-                                {actionsList.map(act => (
-                                    <option key={act} value={act}>{ACTION_CONFIG[act]?.label || act}</option>
-                                ))}
-                            </select>
-                            <Filter size={14} className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                        </div>
-
                         {/* User Multi-select Filter */}
                         <div className="relative w-full sm:w-[250px]">
                             <button
@@ -311,8 +315,49 @@ export default function AuditLogsPage() {
                                 </>
                             )}
                         </div>
+                        {/* Cleanup Button (SUPERADMIN only)
+                        {user.role === "SUPERADMIN" && (
+                            <button
+                                onClick={() => setShowCleanupModal(true)}
+                                className="h-12 px-6 bg-red-50 text-red-600 rounded-2xl border border-red-100 font-black text-[10px] uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center gap-2 shadow-sm"
+                            >
+                                <Trash2 size={16} /> Loqları Təmizlə
+                            </button>
+                        )} */}
                     </div>
                 </div>
+
+                {/* Cleanup Modal */}
+                {showCleanupModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !cleaning && setShowCleanupModal(false)} />
+                        <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 duration-200 border border-slate-200">
+                            <div className="h-20 w-20 rounded-3xl bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-6">
+                                <AlertTriangle size={40} />
+                            </div>
+                            <h3 className="text-xl font-black text-slate-900 text-center uppercase tracking-tight mb-2">Loqların Təmizlənməsi</h3>
+                            <p className="text-slate-500 text-center text-sm font-medium mb-8">
+                                <span className="text-red-600 font-bold block mb-1">19.02.2026</span> və daha öncəki bütün əməliyyat tarixçəsi <span className="font-bold underline">qalib gəlməyəcək şəkildə</span> silinəcək. Bu əməliyyatı təsdiqləyirsiniz?
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setShowCleanupModal(false)}
+                                    disabled={cleaning}
+                                    className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-slate-200 transition-all disabled:opacity-50"
+                                >
+                                    Ləğv Et
+                                </button>
+                                <button
+                                    onClick={handleBulkDelete}
+                                    disabled={cleaning}
+                                    className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-red-700 transition-all shadow-xl shadow-red-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    {cleaning ? <Loader2 className="animate-spin" size={16} /> : "Təsdiqlə və Sil"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Tabs UI */}
                 <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-[2rem] w-fit border border-slate-200 shadow-inner">
@@ -462,9 +507,7 @@ export default function AuditLogsPage() {
                             Göstərilən: <span className="text-slate-900">{filteredLogs.length} Əməliyyat</span>
                         </div>
                     </div>
-                    <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest italic flex items-center gap-2">
-                        <Shield size={10} /> Protected by Legal12 Compliance Engine v2.5
-                    </div>
+
                 </div>
             </div>
         </AuthGuard>

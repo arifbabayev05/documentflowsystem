@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
     Search,
     Loader2,
@@ -11,24 +11,27 @@ import {
     User,
     Box,
     X,
-    ArrowRight,
     FileArchive,
     SearchX,
-    CreditCard,
-    ChevronRight,
-    ExternalLink,
     CheckCircle2,
-    Calendar
+    Calendar,
+    ChevronDown,
+    UserCheck,
+    Clock,
+    AlertCircle,
+    Check,
+    FolderOpen,
+    ExternalLink,
+    RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, updateCustomer } from "@/lib/db";
+import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
 import { ProcessStatus } from "../dashboard/page";
 
-/** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
 interface Invoice {
@@ -46,412 +49,492 @@ interface CustomerRow {
     fullName: string;
     debtAmount: string;
     process_status: ProcessStatus;
-    details?: {
-        invoices?: Invoice[];
-    };
+    details?: { invoices?: Invoice[] };
     updatedAt?: any;
     statusHistory?: any[];
+    archiveAssignedTo?: string;
+    archiveAssignedAt?: string;
 }
 
 export default function ArchiveDocumentsPage() {
     const { user, can } = useAuth();
+    const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN";
+
     const [customers, setCustomers] = useState<CustomerRow[]>([]);
+    const [archivers, setArchivers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
-    const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
-    const [uploading, setUploading] = useState(false);
-    const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
+    const [uploadingId, setUploadingId] = useState<string | null>(null);
+    const [sideTab, setSideTab] = useState<"tasks" | "stats">("tasks");
+    const [filter, setFilter] = useState<"all" | "pending" | "done" | "unassigned">("all");
 
-    const fetchCustomers = useCallback(async () => {
+    const [assignOpen, setAssignOpen] = useState(false);
+    const [dropdownSearch, setDropdownSearch] = useState("");
+    const [keyboardIndex, setKeyboardIndex] = useState(-1);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const data = await getCustomers();
-            const filtered = (data as CustomerRow[]).filter(c =>
-                c.process_status === 'COMPLETED' ||
-                c.process_status === 'ARCHIVE_UPLOADED' ||
-                c.process_status === 'WAITING_FOR_ARCHIVE' ||
-                (c.details?.invoices && c.details.invoices.some(inv => inv.archiveUrl || (inv as any).archiveRequested))
+            const [custData, userData] = await Promise.all([getCustomers(), getAllUsers()]);
+            const archiveRequired = (custData as CustomerRow[]).filter(c =>
+                c.details?.invoices?.some(inv => (inv as any).archiveRequested || inv.archiveUrl)
             );
-            setCustomers(filtered);
-        } catch (e) {
+            setCustomers(archiveRequired);
+            setArchivers((userData as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+        } catch {
             toast.error("Məlumatlar yüklənmədi");
         } finally {
             setLoading(false);
         }
     }, []);
 
+    useEffect(() => { fetchData(); }, [fetchData]);
+
     useEffect(() => {
-        fetchCustomers();
-    }, [fetchCustomers]);
+        if (assignOpen) {
+            setDropdownSearch("");
+            setKeyboardIndex(-1);
+            setTimeout(() => searchInputRef.current?.focus(), 100);
+        }
+    }, [assignOpen]);
 
     const handleUpload = async (file: File, invoiceId: string) => {
         if (!selectedCustomer) return;
-        if (!file.name.endsWith(".pdf")) {
-            toast.error("Yalnız PDF faylları yüklənə bilər");
-            return;
-        }
-
+        if (!file.name.endsWith(".pdf")) { toast.error("Yalnız PDF formatı!"); return; }
         try {
-            setUploading(true);
-            setSelectedInvoiceId(invoiceId);
-            const storagePath = `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`;
-            const storageRef = ref(storage, storagePath);
+            setUploadingId(invoiceId);
+            const storageRef = ref(storage, `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`);
             const snapshot = await uploadBytes(storageRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
-
-            const updatedInvoices = [...(selectedCustomer.details?.invoices || [])];
-            const invIdx = updatedInvoices.findIndex(i => i.id === invoiceId);
-
-            if (invIdx !== -1) {
-                updatedInvoices[invIdx] = {
-                    ...updatedInvoices[invIdx],
-                    archiveUrl: downloadURL,
-                    archiveName: file.name
-                };
-            }
-
-            const updatedCustomer = {
-                ...selectedCustomer,
-                process_status: 'ARCHIVE_UPLOADED' as ProcessStatus,
-                details: { ...selectedCustomer.details, invoices: updatedInvoices }
-            };
-
-            await updateCustomer(selectedCustomer.id, updatedCustomer, user?.email || "system");
-
-            setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? updatedCustomer : c));
-            setSelectedCustomer(updatedCustomer);
-            toast.success("Sənəd yükləndi");
-        } catch (err) {
-            toast.error("Xəta baş verdi");
-        } finally {
-            setUploading(false);
-            setSelectedInvoiceId(null);
-        }
+            const url = await getDownloadURL(snapshot.ref);
+            const invoices = [...(selectedCustomer.details?.invoices || [])];
+            const idx = invoices.findIndex(i => i.id === invoiceId);
+            if (idx !== -1) invoices[idx] = { ...invoices[idx], archiveUrl: url, archiveName: file.name };
+            const updated = { ...selectedCustomer, process_status: 'ARCHIVE_UPLOADED' as ProcessStatus, details: { ...selectedCustomer.details, invoices } };
+            await updateCustomer(selectedCustomer.id, updated, user?.email || "system");
+            setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? updated : c));
+            setSelectedCustomer(updated);
+            toast.success("Sənəd uğurla yükləndi");
+        } catch { toast.error("Yükləmə zamanı xəta baş verdi"); }
+        finally { setUploadingId(null); }
     };
 
-    const handleRemoveFile = async (customer: CustomerRow, invoiceId: string) => {
+    const handleRemoveFile = async (invoiceId: string) => {
+        if (!selectedCustomer) return;
         try {
-            const storageRef = ref(storage, `UploadedPDFs/${customer.id}/${invoiceId}.pdf`);
+            const storageRef = ref(storage, `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`);
             await deleteObject(storageRef).catch(() => { });
-
-            const updatedInvoices = [...(customer.details?.invoices || [])];
-            const invIdx = updatedInvoices.findIndex(i => i.id === invoiceId);
-
-            if (invIdx !== -1) {
-                updatedInvoices[invIdx] = {
-                    ...updatedInvoices[invIdx],
-                    archiveUrl: "",
-                    archiveName: ""
-                };
-            }
-
-            const updatedCustomer = {
-                ...customer,
-                details: { ...customer.details, invoices: updatedInvoices }
-            };
-
-            await updateCustomer(customer.id, updatedCustomer, user?.email || "system");
-            setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
-            if (selectedCustomer?.id === customer.id) {
-                setSelectedCustomer(updatedCustomer);
-            }
+            const invoices = [...(selectedCustomer.details?.invoices || [])];
+            const idx = invoices.findIndex(i => i.id === invoiceId);
+            if (idx !== -1) invoices[idx] = { ...invoices[idx], archiveUrl: "", archiveName: "" };
+            const updated = { ...selectedCustomer, details: { ...selectedCustomer.details, invoices } };
+            await updateCustomer(selectedCustomer.id, updated, user?.email || "system");
+            setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? updated : c));
+            setSelectedCustomer(updated);
             toast.success("Sənəd silindi");
-        } catch (err) {
-            toast.error("Xəta baş verdi");
-        }
+        } catch { toast.error("Silinmə zamanı xəta baş verdi"); }
     };
+
+    const handleAssign = async (archiverEmail: string) => {
+        if (!selectedCustomer) return;
+        try {
+            const updated = {
+                ...selectedCustomer,
+                archiveAssignedTo: archiverEmail || "",
+                archiveAssignedAt: archiverEmail ? new Date().toISOString() : ""
+            };
+            await updateCustomer(selectedCustomer.id, updated, user?.email || "system");
+            setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? updated : c));
+            setSelectedCustomer(updated);
+            setAssignOpen(false);
+            toast.success(archiverEmail ? "Tapşırıq təyin edildi" : "Təyinat ləğv edildi");
+        } catch { toast.error("Xəta baş verdi"); }
+    };
+
+    const isCustomerDone = (c: CustomerRow) => {
+        const rel = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
+        return rel.length > 0 && rel.every(inv => !!inv.archiveUrl);
+    };
+
+    const visibleCustomers = useMemo(() => {
+        return customers.filter(c => isManager || c.archiveAssignedTo === user?.email);
+    }, [customers, isManager, user?.email]);
 
     const filteredCustomers = useMemo(() => {
         const s = searchTerm.toLowerCase();
-        return customers
-            .filter(c => {
-                const relevantInvoices = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
-                if (relevantInvoices.length === 0) return false;
+        return visibleCustomers.filter(c => {
+            const nameMatch = c.fullName.toLowerCase().includes(s) || (c.customerCode || "").toLowerCase().includes(s);
+            if (!nameMatch) return false;
+            if (filter === "pending" && (isCustomerDone(c) || !c.archiveAssignedTo)) return false;
+            if (filter === "done" && !isCustomerDone(c)) return false;
+            if (filter === "unassigned" && c.archiveAssignedTo) return false;
+            return true;
+        });
+    }, [visibleCustomers, searchTerm, filter]);
 
-                const allUploaded = relevantInvoices.every(inv => !!inv.archiveUrl);
+    const filterStats = useMemo(() => {
+        return {
+            all: visibleCustomers.length,
+            unassigned: visibleCustomers.filter(c => !c.archiveAssignedTo).length,
+            pending: visibleCustomers.filter(c => c.archiveAssignedTo && !isCustomerDone(c)).length,
+            done: visibleCustomers.filter(c => isCustomerDone(c)).length
+        };
+    }, [visibleCustomers]);
 
-                if (activeTab === 'pending') return !allUploaded;
-                return allUploaded;
-            })
-            .filter(c =>
-                c.fullName.toLowerCase().includes(s) ||
-                (c.customerCode || "").toLowerCase().includes(s)
-            );
-    }, [customers, searchTerm, activeTab]);
+    const archiverWorkloads = useMemo(() => {
+        return archivers.map(a => {
+            const assigned = customers.filter(c => c.archiveAssignedTo === a.email);
+            const completed = assigned.filter(c => isCustomerDone(c));
+            return { ...a, count: assigned.length, done: completed.length };
+        }).sort((a, b) => b.count - a.count);
+    }, [customers, archivers]);
 
-    const formatDateTime = (dateVal: any) => {
-        if (!dateVal) return "---";
-        const d = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
-        return d.toLocaleString('az-AZ', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
-        }).replace(/\//g, '.');
+    const filteredArchivers = useMemo(() => {
+        const s = dropdownSearch.toLowerCase();
+        return archivers.filter(a => a.displayName?.toLowerCase().includes(s) || a.email?.toLowerCase().includes(s));
+    }, [archivers, dropdownSearch]);
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (!assignOpen) return;
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setKeyboardIndex(prev => (prev < filteredArchivers.length - 1 ? prev + 1 : prev));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setKeyboardIndex(prev => (prev > 0 ? prev - 1 : prev));
+        } else if (e.key === "Enter" && keyboardIndex >= 0) {
+            e.preventDefault();
+            handleAssign(filteredArchivers[keyboardIndex].email);
+        } else if (e.key === "Escape") {
+            setAssignOpen(false);
+        }
     };
 
-    const getRequestInfo = (c: CustomerRow) => {
-        const lastRequest = [...(c.statusHistory || [])].reverse().find(h => h.action === 'ARCHIVE_REQUEST' || h.action === 'STATUS_CHANGE' && h.label.includes('Arxiv'));
-        if (lastRequest?.timestamp) return formatDateTime(lastRequest.timestamp);
-        return formatDateTime(c.updatedAt);
-    };
-
-    if (!user || (!can('page_archiver') && user.role !== 'SUPERADMIN')) {
-        return (
-            <AuthGuard>
-                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
-                        <FileArchive size={32} className="text-red-400" />
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
-                </div>
-            </AuthGuard>
-        );
+    if (!user || (!can("page_archiver") && !can("page_archive_manager") && user.role !== "SUPERADMIN")) {
+        return <AuthGuard><div className="h-[60vh] flex flex-col items-center justify-center opacity-40"><FileArchive size={40} /><h2 className="mt-4 font-bold">Girişə icazə yoxdur</h2></div></AuthGuard>;
     }
 
     return (
         <AuthGuard>
-            <div className="flex bg-[#fcfdfe] h-[calc(100vh-64px)] overflow-hidden">
-
-                {/* ═══ SİDEBAR ═══ */}
-                <div className="w-[340px] border-r border-slate-200 bg-white flex flex-col shrink-0 relative z-10 transition-all">
-                    <div className="p-6 pb-4 shrink-0">
-
-                        {/* Tabs Navigation */}
-                        <div className="flex p-1 bg-slate-100 rounded-2xl mb-6">
-                            <button
-                                onClick={() => { setActiveTab('pending'); setSelectedCustomer(null); }}
-                                className={cn(
-                                    "flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
-                                    activeTab === 'pending' ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                                )}
-                            >
-                                Gözləmədə
-                            </button>
-                            <button
-                                onClick={() => { setActiveTab('completed'); setSelectedCustomer(null); }}
-                                className={cn(
-                                    "flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
-                                    activeTab === 'completed' ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                                )}
-                            >
-                                Tamamlandı
-                            </button>
-                        </div>
-
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
-                                {activeTab === 'pending' ? 'Gözləyən İşlər' : 'Yüklənmiş Sənədlər'}
-                            </h2>
-                            <div className="h-5 px-2 bg-slate-100 text-slate-500 rounded-lg flex items-center justify-center text-[9px] font-black border border-slate-200">
-                                {filteredCustomers.length}
+            <div className="flex bg-[#F8FAFC] h-[calc(100vh-64px)] overflow-hidden">
+                {/* Sidebar */}
+                <div className="w-[320px] bg-white border-r border-slate-300 flex flex-col shrink-0 shadow-sm z-20">
+                    <div className="p-6 pb-4 space-y-5 shrink-0">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="h-9 w-9 bg-slate-900 rounded-xl flex items-center justify-center shadow-lg">
+                                    <FileArchive size={18} className="text-white" />
+                                </div>
+                                <div>
+                                    <h1 className="text-[13px] font-bold text-slate-900 uppercase tracking-tight leading-none">Arxiv Paneli</h1>
+                                    <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-wider">İdarəetmə</p>
+                                </div>
                             </div>
+                            <button onClick={fetchData} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
+                                <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                            </button>
                         </div>
 
-                        <div className="relative group mb-2">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={16} />
-                            <input
-                                type="text"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                placeholder="Axtar..."
-                                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-900 outline-none focus:bg-white focus:border-slate-400 transition-all"
-                            />
-                        </div>
+                        {isManager && (
+                            <div className="flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                                <button onClick={() => setSideTab("tasks")}
+                                    className={cn("flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                                        sideTab === "tasks" ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-500")}>
+                                    Tapşırıqlar
+                                </button>
+                                <button onClick={() => setSideTab("stats")}
+                                    className={cn("flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                                        sideTab === "stats" ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-500")}>
+                                    İş Yükü
+                                </button>
+                            </div>
+                        )}
+
+                        {sideTab === "tasks" && (
+                            <div className="space-y-4">
+                                <div className="relative">
+                                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                                        placeholder="Müştəri axtar..."
+                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-[13px] font-bold outline-none focus:bg-white focus:border-slate-500 transition-all placeholder:text-slate-400" />
+                                </div>
+
+                                {isManager && (
+                                    <div className="flex gap-1.5 overflow-x-auto pb-1.5 custom-scrollbar">
+                                        {(["all", "unassigned", "pending", "done"] as const).map(f => {
+                                            const labels = { all: "Hamısı", unassigned: "Yeni", pending: "İşlənilir", done: "Tamamlanıb" };
+                                            const count = filterStats[f];
+                                            return (
+                                                <button key={f} onClick={() => setFilter(f)}
+                                                    className={cn("h-8 px-3.5 rounded-xl text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border transition-all flex items-center gap-1.5",
+                                                        filter === f ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-600 border-slate-300 hover:border-slate-500")}>
+                                                    {labels[f]} <span className={cn("text-[9px] font-black", filter === f ? "text-white/60" : "text-slate-400")}>({count})</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
-                    <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-1 scrollbar-thin scrollbar-thumb-slate-200">
+                    <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-2.5 custom-scrollbar">
                         {loading ? (
-                            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-300" size={24} /></div>
-                        ) : filteredCustomers.length === 0 ? (
-                            <div className="text-center py-20 opacity-40">
-                                <SearchX size={24} className="mx-auto text-slate-300 mb-2" />
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Nəticə yoxdur</p>
-                            </div>
-                        ) : (
-                            filteredCustomers.map(c => {
-                                const isSelected = selectedCustomer?.id === c.id;
-                                const relevantInvoices = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
-                                const isFullyUploaded = relevantInvoices.length > 0 && relevantInvoices.every(inv => !!inv.archiveUrl);
-
-                                return (
-                                    <button
-                                        key={c.id}
-                                        onClick={() => {
-                                            setSelectedCustomer(c);
-                                            setSelectedInvoiceId(null);
-                                        }}
-                                        className={cn(
-                                            "w-full p-4 rounded-xl text-left transition-all relative group outline-none border",
-                                            isSelected
-                                                ? "bg-slate-900 border-slate-900 shadow-lg shadow-slate-200"
-                                                : "bg-white border-slate-400 hover:bg-slate-50"
-                                        )}
-                                    >
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div className="min-w-0 flex-1">
-                                                <p className={cn(
-                                                    "text-[13px] font-black uppercase leading-tight truncate mb-0.5",
-                                                    isSelected ? "text-white" : "text-slate-900 group-hover:text-primary"
-                                                )}>
-                                                    {c.fullName}
-                                                </p>
-                                                <div className="flex items-center gap-2">
-                                                    <span className={cn("text-[9px] font-bold tracking-wider", isSelected ? "text-slate-500" : "text-slate-400")}>#{c.customerCode || "---"}</span>
-                                                    <div className={cn("w-0.5 h-0.5 rounded-full", isSelected ? "bg-slate-700" : "bg-slate-300")} />
-                                                    <span className={cn("text-[9px] font-black tracking-wider uppercase", isSelected ? "text-white/40" : "text-red-600/70")}>{getRequestInfo(c)}</span>
-                                                </div>
+                            <div className="flex flex-col items-center py-16 opacity-30"><Loader2 className="animate-spin mb-2" size={24} /><p className="text-[11px] font-bold uppercase tracking-widest">Yüklənir</p></div>
+                        ) : sideTab === "stats" ? (
+                            <div className="space-y-3">
+                                {archiverWorkloads.map((a, i) => (
+                                    <div key={a.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-300">
+                                        <div className="flex items-center gap-3.5 mb-3.5">
+                                            <div className="h-10 w-10 rounded-xl bg-white flex items-center justify-center text-[13px] font-bold text-slate-700 border border-slate-300 shadow-sm">
+                                                {a.displayName?.[0]?.toUpperCase()}
                                             </div>
-                                            {isFullyUploaded && (
-                                                <div className={cn(
-                                                    "h-7 w-7 rounded-lg flex items-center justify-center transition-all",
-                                                    isSelected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-600"
-                                                )}>
-                                                    <FileArchive size={12} />
+                                            <div className="min-w-0 flex-1">
+                                                <div className="text-[12px] font-bold text-slate-900 truncate tracking-tight">{a.displayName}</div>
+                                                <div className="text-[10px] text-slate-500 truncate mt-0.5 font-medium">{a.email}</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between text-[10px] font-bold uppercase mb-2 px-0.5">
+                                            <span className="text-slate-400 tracking-wider">İcra Faizi</span>
+                                            <span className="text-slate-900">{a.done} / {a.count}</span>
+                                        </div>
+                                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden border border-slate-300/30">
+                                            <div className="h-full bg-slate-900 transition-all duration-1000 ease-out" style={{ width: a.count > 0 ? `${(a.done / a.count) * 100}%` : '0%' }} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : filteredCustomers.map(c => {
+                            const isSelected = selectedCustomer?.id === c.id;
+                            const invoices = c.details?.invoices?.filter(i => (i as any).archiveRequested || i.archiveUrl) || [];
+                            const done = invoices.filter(i => !!i.archiveUrl).length;
+                            const total = invoices.length;
+                            const isDone = done === total && total > 0;
+                            const archiverName = archivers.find(a => a.email === c.archiveAssignedTo)?.displayName;
+                            const assignDate = c.archiveAssignedAt ? new Date(c.archiveAssignedAt).toLocaleDateString('az-AZ', { day: '2-digit', month: '2-digit', year: 'numeric' }) : null;
+
+                            return (
+                                <button key={c.id} onClick={() => setSelectedCustomer(c)}
+                                    className={cn("w-full p-4 rounded-2xl text-left border transition-all group overflow-hidden relative",
+                                        isSelected ? "bg-slate-900 border-slate-900 shadow-xl scale-[1.02] z-10" : "bg-white border-slate-200 hover:bg-slate-50 hover:border-slate-400")}>
+                                    <div className="flex items-start justify-between gap-3 mb-3">
+                                        <div className="min-w-0 flex-1">
+                                            <h3 className={cn("text-[13px] font-bold uppercase truncate tracking-tight", isSelected ? "text-white" : "text-slate-900")}>{c.fullName}</h3>
+                                            <p className={cn("text-[10px] font-bold mt-1 tracking-wider opacity-60", isSelected ? "text-slate-400" : "text-slate-500")}>#{c.customerCode}</p>
+                                        </div>
+                                        <div className={cn("text-[10px] font-black px-2 py-1 rounded-lg border", isSelected ? "bg-white/10 text-white border-white/20" : "bg-slate-100 text-slate-600 border-slate-200")}>
+                                            {done}/{total}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className={cn("h-1.5 rounded-full overflow-hidden", isSelected ? "bg-white/10" : "bg-slate-100 border border-slate-200/50")}>
+                                            <div className={cn("h-full transition-all duration-500", isDone ? "bg-emerald-500" : isSelected ? "bg-white" : "bg-slate-800")} style={{ width: total > 0 ? `${(done / total) * 100}%` : '0%' }} />
+                                        </div>
+
+                                        <div className="flex items-center justify-between">
+                                            {c.archiveAssignedTo ? (
+                                                <div className={cn("flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-tight", isSelected ? "text-slate-400" : "text-slate-500")}>
+                                                    <UserCheck size={10} className="shrink-0" />
+                                                    <span className="truncate max-w-[120px]">{archiverName || c.archiveAssignedTo}</span>
+                                                    {assignDate && <span className="opacity-80">• {assignDate}</span>}
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-1.5 text-[9px] font-black text-rose-500 uppercase tracking-tight">
+                                                    <AlertCircle size={10} className="shrink-0" /> Təyinat Yoxdur
                                                 </div>
                                             )}
                                         </div>
-                                    </button>
-                                );
-                            })
-                        )}
+                                    </div>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
 
-                {/* ═══ WORKSPACE ═══ */}
-                <div className="flex-1 overflow-y-auto bg-white scrollbar-thin scrollbar-thumb-slate-200">
+                {/* Main Content */}
+                <div className="flex-1 overflow-y-auto bg-white relative custom-scrollbar">
                     {!selectedCustomer ? (
-                        <div className="h-full flex flex-col items-center justify-center opacity-20">
-                            <Box size={48} strokeWidth={1.5} className="text-slate-400 mb-4" />
-                            <p className="text-[10px] font-black tracking-[0.5em] text-slate-500 uppercase italic">Müştəri Seçin</p>
+                        <div className="h-full flex flex-col items-center justify-center opacity-40 text-center p-12">
+                            <Box size={50} strokeWidth={1} className="text-slate-400 mb-8" />
+                            <h2 className="text-2xl font-bold text-slate-900 uppercase tracking-tight italic">Tapşırıq Seçilməyib</h2>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-[0.3em] mt-3">Məlumatları görmək üçün sol siyahıdan müştəri seçin</p>
                         </div>
                     ) : (
-                        <div className="max-w-[1000px] mx-auto py-12 px-8 animate-in fade-in duration-500">
-
-                            {/* Simple Header */}
-                            <div className="flex items-center justify-between mb-12 border-b border-slate-100 pb-8">
-                                <div className="flex items-center gap-6">
-                                    <div className="h-16 w-16 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-xl shadow-slate-200">
-                                        <User size={28} />
+                        <div className="max-w-5xl mx-auto py-12 px-10 animate-in fade-in duration-500">
+                            {/* Header */}
+                            <div className="flex items-center justify-between mb-12 pb-8 border-b border-slate-200">
+                                <div className="flex items-center gap-8">
+                                    <div className="h-16 w-16 rounded-[1.25rem] bg-slate-900 flex items-center justify-center text-white shadow-2xl ring-4 ring-slate-50">
+                                        <User size={30} />
                                     </div>
                                     <div>
-                                        <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-2 leading-none">{selectedCustomer.fullName}</h2>
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-[12px] font-black text-slate-700 uppercase tracking-[0.2em]">Müştəri Kodu: {selectedCustomer.customerCode}</span>
+                                        <h2 className="text-3xl font-bold text-slate-900 uppercase tracking-tighter leading-none">{selectedCustomer.fullName}</h2>
+                                        <div className="flex items-center gap-5 text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-3.5">
+                                            <span className="flex items-center gap-2"><FolderOpen size={13} className="text-slate-400" /> {selectedCustomer.customerCode}</span>
+                                            <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                                            <span className="text-slate-800">ARXİV SƏNƏDLƏRİNİN İDARƏEDİLMƏSİ</span>
                                         </div>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={() => setSelectedCustomer(null)}
-                                    className="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                                >
-                                    <X size={20} />
+                                <button onClick={() => setSelectedCustomer(null)} className="h-12 w-12 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition-all border border-transparent hover:border-rose-100">
+                                    <X size={26} />
                                 </button>
                             </div>
 
-                            {/* Invoices: The Single Column Stream */}
-                            <div className="space-y-6">
-                                <div className="flex items-center gap-3 mb-2">
-                                    <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Fakturalar Və Sənədlər</h3>
-                                </div>
+                            {/* Assignment & Control Section */}
+                            {isManager && (
+                                <div className="mb-12 p-7 bg-[#F8FAFC] rounded-3xl border border-slate-300 flex items-center justify-between gap-8 shadow-sm">
+                                    <div className="flex items-center gap-6 min-w-0">
+                                        <div className="h-12 w-12 bg-white rounded-2xl border border-slate-300 flex items-center justify-center text-slate-500 shadow-sm">
+                                            <UserCheck size={24} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Məsul Arxivçi</p>
+                                            <div className="flex items-center gap-3">
+                                                <p className={cn("text-[15px] font-bold uppercase truncate tracking-tight", selectedCustomer.archiveAssignedTo ? "text-slate-900" : "text-rose-500 italic")}>
+                                                    {selectedCustomer.archiveAssignedTo ? (archivers.find(a => a.email === selectedCustomer.archiveAssignedTo)?.displayName || selectedCustomer.archiveAssignedTo) : "Hələ təyin edilməyib"}
+                                                </p>
+                                                {selectedCustomer.archiveAssignedAt && (
+                                                    <span className="text-[10px] font-bold text-slate-400 bg-white px-2 py-0.5 rounded border border-slate-200 uppercase">
+                                                        {new Date(selectedCustomer.archiveAssignedAt).toLocaleDateString('az-AZ')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
 
+                                    <div className="relative" onKeyDown={handleKeyDown}>
+                                        {selectedCustomer.archiveAssignedTo ? (
+                                            <button onClick={() => handleAssign("")}
+                                                className="h-11 px-7 bg-white text-rose-600 border border-rose-300 rounded-xl text-[11px] font-bold uppercase tracking-widest hover:bg-rose-600 hover:text-white transition-all shadow-sm flex items-center gap-3 active:scale-95">
+                                                <Trash2 size={14} /> Təyinatı Ləğv Et
+                                            </button>
+                                        ) : (
+                                            <>
+                                                <button onClick={() => setAssignOpen(!assignOpen)}
+                                                    className="h-11 px-8 bg-slate-900 text-white rounded-xl text-[11px] font-bold uppercase tracking-widest hover:bg-black transition-all shadow-lg flex items-center gap-3 active:scale-95">
+                                                    Tapşırıq Ver <ChevronDown size={18} className={cn("transition-transform duration-300", assignOpen && "rotate-180")} />
+                                                </button>
+
+                                                {assignOpen && (
+                                                    <>
+                                                        <div className="fixed inset-0 z-40" onClick={() => setAssignOpen(false)} />
+                                                        <div ref={dropdownRef} className="absolute top-full right-0 mt-3 w-72 bg-white border border-slate-300 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200">
+                                                            <div className="relative mb-3">
+                                                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                                                <input ref={searchInputRef} type="text" placeholder="Arxivçi axtar..." value={dropdownSearch} onChange={e => { setDropdownSearch(e.target.value); setKeyboardIndex(-1); }}
+                                                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-[12px] font-bold outline-none focus:bg-white focus:border-slate-500 transition-all font-sans" />
+                                                            </div>
+                                                            <div className="max-h-72 overflow-y-auto custom-scrollbar space-y-1">
+                                                                {filteredArchivers.length === 0 ? (
+                                                                    <div className="py-6 text-center text-[11px] text-slate-400 font-bold uppercase italic tracking-widest">Nəticə tapılmadı</div>
+                                                                ) : filteredArchivers.map((a, i) => (
+                                                                    <button key={a.id} onClick={() => handleAssign(a.email)} onMouseEnter={() => setKeyboardIndex(i)}
+                                                                        className={cn("w-full p-3 rounded-xl flex items-center gap-4 text-left transition-all", keyboardIndex === i ? "bg-slate-900" : "hover:bg-slate-50")}>
+                                                                        <div className={cn("h-8 w-8 rounded-lg flex items-center justify-center text-[12px] font-black shrink-0 border transition-colors", keyboardIndex === i ? "bg-white/10 text-white border-white/20" : "bg-white text-slate-700 border-slate-200")}>
+                                                                            {a.displayName?.[0]}
+                                                                        </div>
+                                                                        <div className="min-w-0 flex-1">
+                                                                            <p className={cn("text-[12px] font-bold truncate tracking-tight", keyboardIndex === i ? "text-white" : "text-slate-900")}>{a.displayName}</p>
+                                                                            <p className={cn("text-[10px] truncate font-medium", keyboardIndex === i ? "text-slate-400" : "text-slate-400")}>{a.email}</p>
+                                                                        </div>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Section Title */}
+                            <div className="flex items-center gap-5 mb-8">
+                                <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.4em] italic shrink-0">Fakturalar Və Sənəd Arxivləri</h3>
+                                <div className="flex-1 h-[1px] bg-slate-200" />
+                            </div>
+
+                            {/* Invoices List */}
+                            <div className="space-y-6">
                                 {(selectedCustomer.details?.invoices || [])
                                     .filter(inv => (inv as any).archiveRequested || inv.archiveUrl)
                                     .map((inv, idx) => {
                                         const isUploaded = !!inv.archiveUrl;
-                                        const isCurrentUploading = uploading && selectedInvoiceId === inv.id;
+                                        const isMyUpload = uploadingId === inv.id;
 
                                         return (
                                             <div key={inv.id} className={cn(
-                                                "bg-white rounded-3xl border p-6 transition-all relative overflow-hidden group",
-                                                isUploaded ? "border-slate-200" : "border-slate-900 shadow-xl shadow-slate-100"
+                                                "p-8 rounded-[2rem] border transition-all relative group shadow-sm",
+                                                isUploaded ? "bg-emerald-50/5 border-emerald-500/30" : "bg-white border-slate-300 hover:border-slate-500"
                                             )}>
-                                                <div className="flex items-center justify-between gap-8">
-                                                    <div className="flex items-center gap-5 min-w-0">
+                                                <div className="flex items-center justify-between gap-10">
+                                                    <div className="flex items-center gap-8 min-w-0">
                                                         <div className={cn(
-                                                            "h-12 w-12 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors",
-                                                            isUploaded ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-900 text-white"
+                                                            "h-12 w-12 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 transition-all duration-500 border",
+                                                            isUploaded ? "bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-slate-50 text-slate-400 border-slate-200"
                                                         )}>
-                                                            {isUploaded ? <CheckCircle2 size={20} /> : idx + 1}
+                                                            {isUploaded ? <Check size={22} strokeWidth={4} /> : idx + 1}
                                                         </div>
-                                                        <div className="min-w-0">
-                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 leading-none">Faktura №</p>
-                                                            <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tight truncate mb-3 leading-none">
-                                                                {inv.invoiceNumber || "---"}
-                                                            </h4>
-                                                            {inv.orders && inv.orders.length > 0 && (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="flex items-center gap-2.5 bg-slate-100 text-slate-600 px-3.5 py-1.5 rounded-xl border border-slate-200/60 shadow-sm">
-                                                                        <Calendar size={14} className="text-slate-400" />
-                                                                        <span className="text-[11px] font-black uppercase tracking-wider">
-                                                                            Müqavilə: {inv.orders[0].contractDate || "---"}
-                                                                        </span>
-                                                                    </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1.5 opacity-60">Faktura İdentifikatoru</div>
+                                                            <h4 className="text-xl font-bold text-slate-900 tracking-tight truncate leading-none mb-3">{inv.invoiceNumber || "Faktura qeyd edilməyib"}</h4>
+                                                            {inv.orders && inv.orders[0] && (
+                                                                <div className="inline-flex items-center gap-3 px-3 py-1.5 bg-slate-100/80 border border-slate-200 rounded-xl text-[10px] font-bold text-slate-600 uppercase tracking-tight">
+                                                                    <Calendar size={12} className="text-slate-400" /> {inv.orders[0].contractDate || "00.00.0000"}
                                                                 </div>
                                                             )}
                                                         </div>
                                                     </div>
 
-                                                    <div className="flex items-center gap-3 shrink-0">
+                                                    <div className="shrink-0 flex items-center gap-4">
                                                         {isUploaded ? (
                                                             <>
-                                                                <a
-                                                                    href={inv.archiveUrl}
-                                                                    target="_blank"
-                                                                    className="h-11 px-6 flex items-center gap-2.5 bg-slate-50 text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-900 hover:text-white transition-all border border-slate-200"
-                                                                >
-                                                                    Sənədə Bax <ExternalLink size={14} className="opacity-40" />
+                                                                <a href={inv.archiveUrl} target="_blank"
+                                                                    className="h-11 px-6 bg-white text-slate-900 border border-slate-300 rounded-xl text-[11px] font-bold uppercase tracking-widest hover:bg-slate-900 hover:text-white transition-all shadow-sm flex items-center gap-3">
+                                                                    Sənədə Bax <ExternalLink size={14} />
                                                                 </a>
-                                                                <button
-                                                                    onClick={() => handleRemoveFile(selectedCustomer, inv.id)}
-                                                                    className="h-11 w-11 flex items-center justify-center text-red-400 bg-white border border-slate-200 hover:bg-red-500 hover:text-white rounded-xl transition-all"
-                                                                    title="Sənədi Sil"
-                                                                >
-                                                                    <Trash2 size={18} />
-                                                                </button>
+                                                                {(isManager || selectedCustomer.archiveAssignedTo === user?.email) && (
+                                                                    <button onClick={() => handleRemoveFile(inv.id)}
+                                                                        className="h-11 w-11 flex items-center justify-center bg-white text-rose-500 border border-rose-200 hover:bg-rose-600 hover:text-white rounded-xl transition-all shadow-sm active:scale-95 group-hover:border-rose-300">
+                                                                        <Trash2 size={18} />
+                                                                    </button>
+                                                                )}
                                                             </>
                                                         ) : (
-                                                            <label className={cn(
-                                                                "h-11 px-8 flex items-center gap-3 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all shadow-md group-hover:scale-[1.02] active:scale-95",
-                                                                isCurrentUploading ? "bg-slate-200 text-slate-500 pointer-events-none" : "bg-slate-900 text-white hover:bg-black"
-                                                            )}>
-                                                                {isCurrentUploading ? (
-                                                                    <Loader2 size={14} className="animate-spin" />
-                                                                ) : (
-                                                                    <>Sənəd Yüklə <FileUp size={14} /></>
-                                                                )}
-                                                                <input
-                                                                    type="file"
-                                                                    className="hidden"
-                                                                    accept=".pdf"
-                                                                    disabled={uploading}
-                                                                    onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], inv.id)}
-                                                                />
-                                                            </label>
+                                                            (isManager || selectedCustomer.archiveAssignedTo === user?.email) && (
+                                                                <label className={cn(
+                                                                    "h-11 px-8 bg-slate-900 text-white rounded-xl text-[11px] font-bold uppercase tracking-widest cursor-pointer transition-all shadow-lg hover:bg-black active:scale-95 flex items-center gap-3",
+                                                                    isMyUpload && "opacity-50 pointer-events-none"
+                                                                )}>
+                                                                    {isMyUpload ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} />}
+                                                                    {isMyUpload ? "Yüklənir..." : "Sənədi Yüklə"}
+                                                                    <input type="file" className="hidden" accept=".pdf" disabled={!!uploadingId}
+                                                                        onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0], inv.id)} />
+                                                                </label>
+                                                            )
+                                                        )}
+
+                                                        {!isUploaded && !isManager && selectedCustomer.archiveAssignedTo !== user?.email && (
+                                                            <div className="h-11 px-6 bg-slate-50 text-slate-400 rounded-xl text-[10px] font-bold uppercase border border-slate-300 flex items-center gap-3 italic tracking-wider">
+                                                                <Clock size={16} className="opacity-50" /> Yükləmə Gözlənilir
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
-
                                                 {isUploaded && (
-                                                    <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2">
-                                                        <FileText size={12} className="text-slate-300" />
-                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate max-w-[400px]">
-                                                            {inv.archiveName}
-                                                        </span>
+                                                    <div className="mt-6 pt-5 border-t border-emerald-500/10 flex items-center gap-3 text-[10px] font-bold text-slate-500 italic tracking-tight animate-in slide-in-from-bottom-1 duration-300">
+                                                        <FileText size={12} className="text-emerald-500 shrink-0" />
+                                                        <span className="truncate max-w-lg">{inv.archiveName}</span>
                                                     </div>
                                                 )}
                                             </div>
                                         );
                                     })}
-
-                                {selectedCustomer.details?.invoices?.length === 0 && (
-                                    <div className="py-20 text-center border-2 border-dashed border-slate-100 rounded-3xl">
-                                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic">Heç bir faktura tapılmadı</p>
-                                    </div>
-                                )}
                             </div>
                         </div>
                     )}

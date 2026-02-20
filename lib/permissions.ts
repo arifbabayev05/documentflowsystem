@@ -4,6 +4,7 @@ export type PermissionID =
     | "page_inspector"
     | "page_archive_customers"
     | "page_archiver"
+    | "page_archive_manager"
     | "page_audit_logs"
     | "page_parameters"
     | "page_users"
@@ -28,6 +29,7 @@ export const AVAILABLE_PERMISSIONS: Permission[] = [
     { id: "page_inspector", label: "Müfəttiş Paneli", group: "SƏHİFƏLƏR" },
     { id: "page_archive_customers", label: "Arxiv Müştərilər", group: "SƏHİFƏLƏR" },
     { id: "page_archiver", label: "Arxivçi", group: "SƏHİFƏLƏR" },
+    { id: "page_archive_manager", label: "Arxiv Rəhbəri", group: "SƏHİFƏLƏR" },
     { id: "page_audit_logs", label: "Audit Loqları", group: "SƏHİFƏLƏR" },
     { id: "page_letter_list", label: "Məktub Siyahısı", group: "SƏHİFƏLƏR" },
     { id: "page_parameters", label: "Parametrlər", group: "SƏHİFƏLƏR" },

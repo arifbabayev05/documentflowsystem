@@ -60,7 +60,7 @@ export async function POST(req: Request) {
         } catch (apiErr: any) {
             console.error("Sessiya Xətası:", apiErr.message);
             return NextResponse.json({
-                error: "ƏMAS-a sadəcə daxil olub, yenidən məlumatları gətirməyə cəhd edin",
+                error: "ƏMAS-a daxil olub, yenidən məlumatları gətirməyə cəhd edin",
                 details: apiErr.message
             }, { status: 401 });
         }

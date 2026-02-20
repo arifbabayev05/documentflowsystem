@@ -60,6 +60,8 @@ interface CustomerRow {
         user: string;
     }>;
     archivedAt?: string;
+    archiveAssignedTo?: string;
+    archiveAssignedAt?: string;
     createdBy?: string;
     updatedAt?: string;
     details?: {
@@ -672,8 +674,15 @@ export default function ArchivedCustomersPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
+        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN";
+
         return rows.filter(c => {
             if (!c.isArchived) return false;
+
+            // Archiver restriction
+            if (!isManager && user?.role === "ARCHIVER") {
+                if (c.archiveAssignedTo !== user.email) return false;
+            }
 
             // Search filter
             const matchesSearch = !searchTerm ||
@@ -696,7 +705,7 @@ export default function ArchivedCustomersPage() {
 
             return true;
         });
-    }, [rows, searchTerm, startDate, endDate]);
+    }, [rows, searchTerm, startDate, endDate, user]);
 
     if (!user || !can('page_archive_customers')) {
         return (

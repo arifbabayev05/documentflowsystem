@@ -38,7 +38,7 @@ interface UserDoc {
     id: string;
     email: string;
     displayName: string;
-    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "INSPECTOR_LEAD" | "ARCHIVER" | "DEP_HEAD" | "AUDIT_LEAD" | "PENDING";
+    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "INSPECTOR_LEAD" | "ARCHIVER" | "ARCHIVE_MANAGER" | "DEP_HEAD" | "AUDIT_LEAD" | "PENDING";
     lastLogin: string;
     permissions?: string[];
 }
@@ -50,6 +50,7 @@ const ROLE_LABELS: Record<UserDoc["role"], string> = {
     INSPECTOR_LEAD: "Müfəttiş rəhbəri",
     INSPECTOR: "Müfəttiş",
     ARCHIVER: "Arxivçi",
+    ARCHIVE_MANAGER: "Arxiv Rəhbəri",
     DEP_HEAD: "Dep Rəhbəri",
     AUDIT_LEAD: "AUDİT",
     PENDING: "Gözləmədə"
@@ -265,6 +266,7 @@ export default function UsersPage() {
                                         <option value="INSPECTOR_LEAD">Müfəttiş Rəhbəri</option>
                                         <option value="INSPECTOR">Müfəttiş</option>
                                         <option value="ARCHIVER">Arxivçi</option>
+                                        <option value="ARCHIVE_MANAGER">Arxiv Rəhbəri</option>
                                         <option value="PENDING">Gözləmədə</option>
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-text-main pointer-events-none" size={18} />
@@ -335,7 +337,8 @@ export default function UsersPage() {
                                                                 u.role === "PENDING" ? "bg-red-50 text-red-600 border border-red-100 animate-pulse" :
                                                                     u.role === "DEP_HEAD" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
                                                                         u.role === "AUDIT_LEAD" ? "bg-rose-50 text-rose-600 border border-rose-100" :
-                                                                            "bg-slate-50 text-slate-500 border border-slate-200"
+                                                                            u.role === "ARCHIVE_MANAGER" ? "bg-indigo-50 text-indigo-600 border border-indigo-100" :
+                                                                                "bg-slate-50 text-slate-500 border border-slate-200"
                                             )}>
                                                 {ROLE_LABELS[u.role] || u.role}
                                             </div>
