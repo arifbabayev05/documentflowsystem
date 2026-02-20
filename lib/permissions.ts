@@ -13,7 +13,9 @@ export type PermissionID =
     | "fields_invoice"
     | "action_status_change"
     | "archive_manage"
-    | "action_assignment";
+    | "action_assignment"
+    | "page_letter_list"
+    | "page_inspectors";
 
 export interface Permission {
     id: PermissionID;
@@ -27,10 +29,11 @@ export const AVAILABLE_PERMISSIONS: Permission[] = [
     { id: "page_archive_customers", label: "Arxiv Müştərilər", group: "SƏHİFƏLƏR" },
     { id: "page_archiver", label: "Arxivçi", group: "SƏHİFƏLƏR" },
     { id: "page_audit_logs", label: "Audit Loqları", group: "SƏHİFƏLƏR" },
+    { id: "page_letter_list", label: "Məktub Siyahısı", group: "SƏHİFƏLƏR" },
     { id: "page_parameters", label: "Parametrlər", group: "SƏHİFƏLƏR" },
     { id: "page_analytics", label: "Statistika", group: "SƏHİFƏLƏR" },
     { id: "page_users", label: "İstifadəçilər", group: "SƏHİFƏLƏR" },
-    { id: "page_reports", label: "Hesabatlar (Şablonlar)", group: "SƏHİFƏLƏR" }
+    { id: "page_inspectors", label: "Müfəttiş İdarəsi", group: "SƏHİFƏLƏR" }
 ];
 
 /**
@@ -45,7 +48,9 @@ export const PATH_TO_PERMISSION_MAP: Record<string, PermissionID[]> = {
     "/reports": ["page_reports"], // Only SuperAdmin
     "/reports/generate": [], // Open to all as requested
     "/audit-logs": ["page_audit_logs"],
+    "/letter-list": ["page_letter_list"],
     "/settings": ["page_users"],
     "/parameters": ["page_parameters"],
-    "/analytics": ["page_analytics"]
+    "/analytics": ["page_analytics"],
+    "/inspectors": ["page_inspectors"]
 };

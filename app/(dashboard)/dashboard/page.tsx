@@ -130,8 +130,8 @@ export const STATUS_ORDER: ProcessStatus[] = [
 
 export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string, bg: string }> = {
     INSPECTOR_ENTERED: { label: 'Müfəttiş Daxil Etdi', color: 'text-blue-600', bg: 'bg-blue-50' },
-    ASSIGNED_BY_MANAGER: { label: 'Xəbərdarlıq', color: 'text-amber-600', bg: 'bg-amber-50' },
-    FILLED_BY_ADMIN: { label: 'Məfəttiş doldurdu', color: 'text-purple-600', bg: 'bg-purple-50' },
+    ASSIGNED_BY_MANAGER: { label: 'Xəbərdarlıq göndərildi', color: 'text-amber-600', bg: 'bg-amber-50' },
+    FILLED_BY_ADMIN: { label: 'Müfəttiş doldurdu', color: 'text-purple-600', bg: 'bg-purple-50' },
     WAITING_FOR_ARCHIVE: { label: 'Arxivdən sənəd istənilib', color: 'text-orange-600', bg: 'bg-orange-50' },
     ARCHIVE_UPLOADED: { label: 'Arxiv faylı əlavə olundu', color: 'text-slate-600', bg: 'bg-slate-100' },
     COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' }
@@ -177,6 +177,120 @@ const isKarabakhAddress = (address: string | undefined) => {
     const v = normalizeAZ(address || "");
     if (v.includes("qarabag") || v.includes("qarabaq")) return true;
     return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
+};
+
+/**
+ * Searchable User Select Component
+ */
+const UserSelect = ({ users, workload, value, onChange }: any) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [search, setSearch] = useState("");
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    const selectedUser = users.find((u: any) => u.id === value);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const filteredUsers = users.filter((u: any) =>
+        (u.displayName || u.email || "").toLowerCase().includes(search.toLowerCase())
+    );
+
+    return (
+        <div className="relative w-full" ref={dropdownRef}>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={cn(
+                    "w-full flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all text-left",
+                    isOpen ? "ring-2 ring-primary/10 border-primary/40" : "hover:border-slate-300 shadow-sm"
+                )}
+            >
+                <div className="flex flex-col min-w-0 pr-1">
+                    <span className={cn(
+                        "text-[10px] font-bold truncate leading-tight",
+                        selectedUser ? "text-slate-900" : "text-slate-400"
+                    )}>
+                        {selectedUser ? selectedUser.displayName : "Seçilməyib"}
+                    </span>
+                    {selectedUser && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                            <div className={cn(
+                                "h-1 w-1 rounded-full",
+                                (workload[selectedUser.id] || 0) === 0 ? "bg-emerald-500" : (workload[selectedUser.id] || 0) <= 3 ? "bg-amber-500" : "bg-red-500"
+                            )} />
+                            <span className="text-[8px] font-medium text-slate-500">{workload[selectedUser.id] || 0} iş</span>
+                        </div>
+                    )}
+                </div>
+                <ChevronDown size={12} className={cn("text-slate-400 transition-transform shrink-0", isOpen && "rotate-180")} />
+            </button>
+
+            {isOpen && (
+                <div className="absolute z-[100] top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="p-1.5 border-b border-slate-50 bg-slate-50/50">
+                        <div className="relative">
+                            <Search size={10} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                autoFocus
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Axtar..."
+                                className="w-full bg-white border border-slate-200 rounded-md pl-7 pr-2 py-1 text-[10px] outline-none focus:border-primary/30"
+                            />
+                        </div>
+                    </div>
+                    <div className="max-h-[180px] overflow-y-auto scrollbar-none">
+                        <button
+                            onClick={() => { onChange(""); setIsOpen(false); setSearch(""); }}
+                            className="w-full text-left px-3 py-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-widest hover:bg-slate-50 border-b border-slate-50"
+                        >
+                            Seçimi təmizlə
+                        </button>
+                        {filteredUsers.length === 0 ? (
+                            <div className="p-3 text-center text-[9px] font-bold text-slate-400 uppercase">Yoxdur</div>
+                        ) : (
+                            filteredUsers.map((u: any) => {
+                                const active = workload[u.id] ?? 0;
+                                const isSelected = u.id === value;
+                                return (
+                                    <button
+                                        key={u.id}
+                                        onClick={() => { onChange(u.id); setIsOpen(false); setSearch(""); }}
+                                        className={cn(
+                                            "w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-primary/5 transition-all",
+                                            isSelected && "bg-primary/[0.03] border-l-2 border-primary"
+                                        )}
+                                    >
+                                        <div className="flex flex-col min-w-0 pr-2">
+                                            <span className={cn(
+                                                "text-[10px] font-bold truncate",
+                                                isSelected ? "text-primary" : "text-slate-700"
+                                            )}>
+                                                {u.displayName}
+                                            </span>
+                                        </div>
+                                        <div className={cn(
+                                            "px-1.5 py-0.5 rounded text-[8px] font-bold",
+                                            active === 0 ? "bg-emerald-50 text-emerald-600" : active <= 3 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"
+                                        )}>
+                                            {active}
+                                        </div>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
 };
 
 interface CustomerRow {
@@ -238,6 +352,7 @@ interface CustomerRow {
                 initialPayment: string;
                 paidAmount: string;
                 totalPrice: string;
+                hasImieFee?: boolean;
             }>;
         }>;
     };
@@ -372,6 +487,7 @@ const CustomerCard = memo(({
     // New rows start expanded and editing
     const [isEditing, setIsEditing] = useState(!row.id);
     const [isExpanded, setIsExpanded] = useState(!row.id);
+    const [showMore, setShowMore] = useState(false);
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
     const [openStoreDropdownId, setOpenStoreDropdownId] = useState<string | null>(null);
     const [storeSearch, setStoreSearch] = useState("");
@@ -422,7 +538,8 @@ const CustomerCard = memo(({
                         monthlyPayment: prev.details?.monthlyPayment || "",
                         initialPayment: prev.details?.initialPayment || "",
                         paidAmount: prev.details?.paidAmount || "0.00",
-                        totalPrice: prev.details?.totalPrice || "0.00"
+                        totalPrice: prev.details?.totalPrice || "0.00",
+                        hasImieFee: undefined
                     }]
                 };
 
@@ -477,7 +594,17 @@ const CustomerCard = memo(({
                 if (baseFields.includes(detailField)) {
                     const totalPrice = (period * monthly) + initial;
                     const unpaidAmount = Math.max(0, totalPrice - paid);
-                    let fee = hasImei ? phoneCount * 23.6 : 0;
+                    let fee = 0;
+                    if (details.invoices && details.invoices.length > 0) {
+                        details.invoices.forEach(inv => {
+                            inv.orders?.forEach(o => {
+                                if (o.hasImieFee === true) fee += 23.6;
+                            });
+                        });
+                    } else {
+                        // If no invoices yet (materialization hasn't happened), use legacy logic or 0
+                        fee = hasImei ? phoneCount * 23.6 : 0;
+                    }
                     const penalty = unpaidAmount * 0.10;
                     const totalUnpaid = unpaidAmount + fee + penalty;
                     const discount = Math.max(0, unpaidAmount - penalty);
@@ -492,6 +619,10 @@ const CustomerCard = memo(({
                     newData.debtAmount = totalUnpaid.toFixed(2);
                 } else if (detailField === 'totalUnpaid') {
                     newData.debtAmount = value;
+                } else if (detailField === 'warningDate') {
+                    if (value && (!newData.process_status || newData.process_status === 'INSPECTOR_ENTERED')) {
+                        newData.process_status = 'ASSIGNED_BY_MANAGER';
+                    }
                 }
             } else {
                 (newData as any)[path] = value;
@@ -586,7 +717,13 @@ const CustomerCard = memo(({
 
                 // Recalculate global debt fields
                 const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid);
-                const fee = hasAnyImei ? totalPhoneCount * 23.6 : 0;
+                let aggregatedFee = 0;
+                newData.details.invoices?.forEach(inv => {
+                    inv.orders?.forEach(o => {
+                        if (o.hasImieFee === true) aggregatedFee += 23.6;
+                    });
+                });
+                const fee = aggregatedFee;
                 const penalty = unpaid * 0.10;
                 const totalDebt = unpaid + fee + penalty;
                 const discount = Math.max(0, unpaid - penalty);
@@ -631,7 +768,8 @@ const CustomerCard = memo(({
                         monthlyPayment: prev.details?.monthlyPayment || "",
                         initialPayment: prev.details?.initialPayment || "",
                         paidAmount: prev.details?.paidAmount || "0.00",
-                        totalPrice: prev.details?.totalPrice || "0.00"
+                        totalPrice: prev.details?.totalPrice || "0.00",
+                        hasImieFee: undefined
                     }]
                 }];
             }
@@ -649,7 +787,8 @@ const CustomerCard = memo(({
                     monthlyPayment: "",
                     initialPayment: "",
                     paidAmount: "0.00",
-                    totalPrice: "0.00"
+                    totalPrice: "0.00",
+                    hasImieFee: undefined
                 }]
             };
             toast.success("Yeni faktura üçün hissə yaradıldı");
@@ -672,7 +811,8 @@ const CustomerCard = memo(({
                 monthlyPayment: "",
                 initialPayment: "",
                 paidAmount: "0.00",
-                totalPrice: "0.00"
+                totalPrice: "0.00",
+                hasImieFee: undefined
             };
 
             invoices[idx] = { ...invoices[idx], orders: [newOrder, ...(invoices[idx].orders || [])] };
@@ -742,10 +882,6 @@ const CustomerCard = memo(({
         const personalInfo = {
             "Ad Soyad": localData.fullName,
             "Cins": localData.details?.gender,
-            "Doğum Tarixi": localData.details?.birthDate,
-            "FİN": localData.details?.fin,
-            "Seriya №": localData.details?.passportSeries,
-            "Telefon": localData.details?.phone
         };
         for (const [fieldName, val] of Object.entries(personalInfo)) {
             if (isEmpty(val)) {
@@ -803,6 +939,11 @@ const CustomerCard = memo(({
                     isWarningSent: true
                 }
             };
+
+            // Auto-update status to "Warning Sent" if it's in the initial state
+            if (!updatedData.process_status || updatedData.process_status === 'INSPECTOR_ENTERED') {
+                updatedData.process_status = 'ASSIGNED_BY_MANAGER';
+            }
 
             setLocalData(updatedData);
             const savePromise = onSave(updatedData);
@@ -1330,23 +1471,41 @@ const CustomerCard = memo(({
                                     <CustomerField label="SOYAD AD ATA ADI" path="fullName" value={localData.fullName || ""} onChange={handleFieldChange} isEditing={isEditing} />
 
                                     <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
-                                        <CustomerField label="Cins" isSelect={true} path="details.gender" value={getValue("details.gender")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-3" />
-                                        <CustomerField label="Doğum Tarixi" path="details.birthDate" value={getValue("details.birthDate")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
-                                        <CustomerField
-                                            label="FİN"
-                                            path="details.fin"
-                                            value={getValue("details.fin")}
-                                            onChange={handleFieldChange}
-                                            isEditing={isEditing}
-                                            isFin={true}
-                                            maxLength={7}
-                                            className="lg:col-span-4"
-                                        />
+                                        <CustomerField label="Cins" isSelect={true} path="details.gender" value={getValue("details.gender")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-12" />
                                     </div>
 
-                                    <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
-                                        <CustomerField label="Seriya Nömrəsi" path="details.passportSeries" value={getValue("details.passportSeries")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
-                                        <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="0501234567" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-7" />
+                                    {/* SECONDARY INFO - COLLAPSIBLE */}
+                                    <div className="space-y-4 pt-2 border-t border-slate-100">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setShowMore(!showMore); }}
+                                            className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-primary transition-all"
+                                        >
+                                            {showMore ? <Minus size={12} /> : <Plus size={12} />}
+                                            {showMore ? "Əlavə məlumatları gizlə" : "Əlavə məlumatlar (FİN, Doğum Tarixi, Tel...)"}
+                                        </button>
+
+                                        {showMore && (
+                                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
+                                                    <CustomerField label="Doğum Tarixi" path="details.birthDate" value={getValue("details.birthDate")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-6" />
+                                                    <CustomerField
+                                                        label="FİN"
+                                                        path="details.fin"
+                                                        value={getValue("details.fin")}
+                                                        onChange={handleFieldChange}
+                                                        isEditing={isEditing}
+                                                        isFin={true}
+                                                        maxLength={7}
+                                                        className="lg:col-span-6"
+                                                    />
+                                                </div>
+
+                                                <div className="grid grid-cols-2 lg:grid-cols-12 gap-4">
+                                                    <CustomerField label="Seriya Nömrəsi" path="details.passportSeries" value={getValue("details.passportSeries")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-5" />
+                                                    <CustomerField label="Telefon Nömrəsi" path="details.phone" placeholder="0501234567" value={getValue("details.phone")} onChange={handleFieldChange} isEditing={isEditing} className="lg:col-span-7" />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Address info merged inside personal block as requested */}
@@ -1431,7 +1590,8 @@ const CustomerCard = memo(({
                                         monthlyPayment: getValue("details.monthlyPayment"),
                                         initialPayment: getValue("details.initialPayment"),
                                         paidAmount: getValue("details.paidAmount") || "0.00",
-                                        totalPrice: getValue("details.totalPrice")
+                                        totalPrice: getValue("details.totalPrice"),
+                                        hasImieFee: undefined
                                     }]
                                 }]).map((inv, idx) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
@@ -1640,6 +1800,28 @@ const CustomerCard = memo(({
                                                                 className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                 placeholder="Məhsul adı..."
                                                             />
+                                                            <div className="mt-1.5 flex justify-start">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        if (!isEditing) setIsEditing(true);
+                                                                        const newValue = ord.hasImieFee === true ? false : true;
+                                                                        updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                    }}
+                                                                    className={cn(
+                                                                        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                        ord.hasImieFee === true
+                                                                            ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                            : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                    )}
+                                                                >
+                                                                    <Smartphone size={14} />
+                                                                    {ord.hasImieFee === true
+                                                                        ? "İMEİ aktiv"
+                                                                        : ord.hasImieFee === false
+                                                                            ? "İMEİ deaktiv"
+                                                                            : "İMEİ yoxla"}
+                                                                </button>
+                                                            </div>
                                                         </div>
 
                                                         {/* Müqavilə Tarixi */}
@@ -1781,42 +1963,27 @@ const CustomerCard = memo(({
                             <UserPlus size={10} />
                             <span className="text-[8px] font-bold uppercase tracking-wider">Təyinat</span>
                         </div>
-                        <div className="relative group/sel">
-                            <select
-                                value={localData.assignedTo || ""}
-                                onChange={async (e) => {
-                                    const selectedId = e.target.value;
-                                    const now = new Date().toISOString();
-                                    const updated = {
-                                        ...localData,
-                                        assignedTo: selectedId,
-                                        assignedAt: selectedId ? now : localData.assignedAt,
-                                        process_status: (selectedId ? 'ASSIGNED_BY_MANAGER' : localData.process_status) as ProcessStatus
-                                    };
-                                    setLocalData(updated);
+                        <UserSelect
+                            users={appUsers}
+                            workload={userWorkload}
+                            value={localData.assignedTo || ""}
+                            onChange={async (selectedId: string) => {
+                                const now = new Date().toISOString();
+                                const updated = {
+                                    ...localData,
+                                    assignedTo: selectedId,
+                                    assignedAt: selectedId ? now : localData.assignedAt,
+                                    process_status: (selectedId ? 'ASSIGNED_BY_MANAGER' : localData.process_status) as ProcessStatus
+                                };
+                                setLocalData(updated);
 
-                                    // Auto-save logic for assignment
-                                    toast.promise(onSave(updated), {
-                                        loading: 'Təyinat qeyd edilir...',
-                                        success: 'Müfəttiş təyin edildi',
-                                        error: 'Xəta baş verdi'
-                                    });
-                                }}
-                                className="w-full bg-slate-50 text-[10px] font-bold text-slate-700 outline-none appearance-none cursor-pointer pr-6 pl-2.5 py-2 rounded-lg border border-slate-200 hover:border-slate-300 transition-all shadow-sm focus:border-purple-400"
-                            >
-                                <option value="">Seçilməyib</option>
-                                {appUsers.map((u: any) => {
-                                    const active = userWorkload[u.id] ?? 0;
-                                    const badge = active === 0 ? '✅ 0' : active <= 3 ? `🟢 ${active}` : `🔴 ${active}`;
-                                    return (
-                                        <option key={u.id} value={u.id}>
-                                            {u.displayName || u.email} — {badge} iş
-                                        </option>
-                                    );
-                                })}
-                            </select>
-                            <ChevronDown size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
-                        </div>
+                                toast.promise(onSave(updated), {
+                                    loading: 'Təyinat qeyd edilir...',
+                                    success: 'Müfəttiş təyin edildi',
+                                    error: 'Xəta baş verdi'
+                                });
+                            }}
+                        />
                     </div>
                 )}
 
@@ -1943,10 +2110,10 @@ export default function DashboardPage() {
 
     useEffect(() => {
         fetchCustomers(true);
-        if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') {
+        if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD') {
             getAllUsers().then(users => {
-                const admins = users.filter((u: any) => u.role === 'ADMIN');
-                setAppUsers(admins);
+                const assignable = users.filter((u: any) => ['ADMIN', 'INSPECTOR', 'INSPECTOR_LEAD'].includes(u.role));
+                setAppUsers(assignable);
             });
         }
         getStores().then(setStores);
@@ -2022,7 +2189,7 @@ export default function DashboardPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER';
+        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD';
 
         return rows.filter(c => {
             // Archive filter

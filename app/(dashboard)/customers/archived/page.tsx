@@ -629,6 +629,8 @@ export default function ArchivedCustomersPage() {
     const [rows, setRows] = useState<CustomerRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({ isOpen: false, index: null });
     const [stores, setStores] = useState<any[]>([]);
 
@@ -672,9 +674,29 @@ export default function ArchivedCustomersPage() {
         const lowSearch = searchTerm.toLowerCase();
         return rows.filter(c => {
             if (!c.isArchived) return false;
-            return !searchTerm || c.fullName.toLowerCase().includes(lowSearch) || (c.customerCode || "").toLowerCase().includes(lowSearch);
+
+            // Search filter
+            const matchesSearch = !searchTerm ||
+                c.fullName.toLowerCase().includes(lowSearch) ||
+                (c.customerCode || "").toLowerCase().includes(lowSearch) ||
+                (c.details?.fin || "").toLowerCase().includes(lowSearch);
+
+            if (!matchesSearch) return false;
+
+            // Date filter
+            const archTime = c.archivedAt ? new Date(c.archivedAt).getTime() : 0;
+            if (startDate) {
+                const s = new Date(startDate).getTime();
+                if (archTime < s) return false;
+            }
+            if (endDate) {
+                const e = new Date(endDate).setHours(23, 59, 59, 999);
+                if (archTime > e) return false;
+            }
+
+            return true;
         });
-    }, [rows, searchTerm]);
+    }, [rows, searchTerm, startDate, endDate]);
 
     if (!user || !can('page_archive_customers')) {
         return (
@@ -701,9 +723,53 @@ export default function ArchivedCustomersPage() {
                     </div>
                 </div>
 
-                <div className="mb-8 relative max-w-2xl">
-                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                    <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Arxivdə axtar (Ad, Kod, FİN)..." className="w-full pl-14 pr-6 py-5 bg-white border border-slate-200 rounded-3xl text-sm font-bold text-slate-800 outline-none focus:border-slate-400 focus:ring-8 focus:ring-slate-100 transition-all shadow-sm" />
+                <div className="flex flex-col lg:flex-row items-center gap-4 mb-8">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Arxivdə axtar (Ad, Kod, FİN)..."
+                            className="w-full pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
+                        />
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-200/60 shadow-inner">
+                        <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 transition-colors border-r border-slate-100">
+                                <Calendar size={14} className="text-slate-400" />
+                                <input
+                                    type="date"
+                                    value={startDate}
+                                    onChange={(e) => setStartDate(e.target.value)}
+                                    className="bg-transparent text-[13px] font-bold outline-none text-slate-700 cursor-pointer w-[120px]"
+                                />
+                            </div>
+                            <div className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 transition-colors">
+                                <Calendar size={14} className="text-slate-400" />
+                                <input
+                                    type="date"
+                                    value={endDate}
+                                    onChange={(e) => setEndDate(e.target.value)}
+                                    className="bg-transparent text-[13px] font-bold outline-none text-slate-700 cursor-pointer w-[120px]"
+                                />
+                            </div>
+                            {(startDate || endDate) && (
+                                <button
+                                    onClick={() => { setStartDate(""); setEndDate(""); }}
+                                    className="p-2.5 text-slate-400 hover:text-red-500 transition-colors border-l border-slate-100"
+                                >
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm whitespace-nowrap">
+                            <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">Cəmi:</span>
+                            <span className="text-sm font-black text-slate-900">{filteredRows.length}</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="space-y-4">

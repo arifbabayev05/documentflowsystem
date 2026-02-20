@@ -38,7 +38,7 @@ interface UserDoc {
     id: string;
     email: string;
     displayName: string;
-    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "ARCHIVER" | "PENDING";
+    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "INSPECTOR_LEAD" | "ARCHIVER" | "DEP_HEAD" | "AUDIT_LEAD" | "PENDING";
     lastLogin: string;
     permissions?: string[];
 }
@@ -47,8 +47,11 @@ const ROLE_LABELS: Record<UserDoc["role"], string> = {
     SUPERADMIN: "Super Admin",
     ADMIN: "İnzibatçı",
     MANAGER: "Bölmə rəhbəri",
+    INSPECTOR_LEAD: "Müfəttiş rəhbəri",
     INSPECTOR: "Müfəttiş",
     ARCHIVER: "Arxivçi",
+    DEP_HEAD: "Dep Rəhbəri",
+    AUDIT_LEAD: "AUDİT",
     PENDING: "Gözləmədə"
 };
 
@@ -56,7 +59,7 @@ export default function UsersPage() {
     const { user: currentUser, can, isLoading } = useAuth();
     const [users, setUsers] = useState<UserDoc[]>([]);
 
-    if (!isLoading && (!currentUser || currentUser.role !== 'SUPERADMIN')) {
+    if (!isLoading && (!currentUser || (currentUser.role !== 'SUPERADMIN' && currentUser.role !== 'MANAGER' && currentUser.role !== 'INSPECTOR_LEAD'))) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -179,8 +182,10 @@ export default function UsersPage() {
     };
 
     const filteredUsers = users.filter(u => {
-        // Manager only sees PENDING users. SuperAdmin sees all.
-        const canSeeUser = currentUser.role === 'SUPERADMIN' ? true : (currentUser.role === 'MANAGER' ? u.role === 'PENDING' : false);
+        // Manager only sees PENDING and ADMIN users. Inspector Lead sees PENDING and INSPECTOR users. SuperAdmin sees all.
+        const canSeeUser = currentUser.role === 'SUPERADMIN' ? true :
+            (currentUser.role === 'MANAGER' ? (u.role === 'PENDING' || u.role === 'ADMIN') :
+                (currentUser.role === 'INSPECTOR_LEAD' ? (u.role === 'PENDING' || u.role === 'INSPECTOR') : false));
         if (!canSeeUser) return false;
 
         const matchesSearch = u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -255,6 +260,9 @@ export default function UsersPage() {
                                         <option value="SUPERADMIN">Super Admin</option>
                                         <option value="ADMIN">İnzibatçı</option>
                                         <option value="MANAGER">Bölmə Rəhbəri</option>
+                                        <option value="DEP_HEAD">Dep Rəhbəri</option>
+                                        <option value="AUDIT_LEAD">AUDİT</option>
+                                        <option value="INSPECTOR_LEAD">Müfəttiş Rəhbəri</option>
                                         <option value="INSPECTOR">Müfəttiş</option>
                                         <option value="ARCHIVER">Arxivçi</option>
                                         <option value="PENDING">Gözləmədə</option>
@@ -325,7 +333,9 @@ export default function UsersPage() {
                                                         u.role === "MANAGER" ? "bg-purple-50 text-purple-600 border border-purple-100" :
                                                             u.role === "INSPECTOR" ? "bg-amber-50 text-amber-600 border border-amber-100" :
                                                                 u.role === "PENDING" ? "bg-red-50 text-red-600 border border-red-100 animate-pulse" :
-                                                                    "bg-slate-50 text-slate-500 border border-slate-200"
+                                                                    u.role === "DEP_HEAD" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
+                                                                        u.role === "AUDIT_LEAD" ? "bg-rose-50 text-rose-600 border border-rose-100" :
+                                                                            "bg-slate-50 text-slate-500 border border-slate-200"
                                             )}>
                                                 {ROLE_LABELS[u.role] || u.role}
                                             </div>
@@ -491,37 +501,39 @@ export default function UsersPage() {
                                 <div className="space-y-4">
                                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Səhifə Girişləri</h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        {AVAILABLE_PERMISSIONS.map((p) => (
-                                            <label
-                                                key={p.id}
-                                                className={cn(
-                                                    "flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer group",
-                                                    selectedPermissions.includes(p.id)
-                                                        ? "bg-primary/5 border-primary/20"
-                                                        : "bg-white border-slate-100 hover:border-slate-300"
-                                                )}
-                                            >
-                                                <span className={cn(
-                                                    "text-[13px] font-black transition-colors uppercase tracking-tight",
-                                                    selectedPermissions.includes(p.id) ? "text-primary" : "text-slate-700"
-                                                )}>
-                                                    {p.label}
-                                                </span>
-                                                <div className="relative flex items-center justify-center h-6 w-6">
-                                                    <input
-                                                        type="checkbox"
-                                                        className="peer h-6 w-6 appearance-none border-2 border-slate-200 rounded-lg checked:bg-primary checked:border-primary transition-all cursor-pointer bg-white shadow-sm"
-                                                        checked={selectedPermissions.includes(p.id)}
-                                                        onChange={() => {
-                                                            setSelectedPermissions(prev =>
-                                                                prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
-                                                            );
-                                                        }}
-                                                    />
-                                                    <Check size={14} className="absolute text-white scale-0 peer-checked:scale-100 transition-transform pointer-events-none" strokeWidth={4} />
-                                                </div>
-                                            </label>
-                                        ))}
+                                        {AVAILABLE_PERMISSIONS
+                                            .filter(p => currentUser?.role === 'SUPERADMIN' || !['page_analytics', 'page_audit_logs'].includes(p.id))
+                                            .map((p) => (
+                                                <label
+                                                    key={p.id}
+                                                    className={cn(
+                                                        "flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer group",
+                                                        selectedPermissions.includes(p.id)
+                                                            ? "bg-primary/5 border-primary/20"
+                                                            : "bg-white border-slate-100 hover:border-slate-300"
+                                                    )}
+                                                >
+                                                    <span className={cn(
+                                                        "text-[13px] font-black transition-colors uppercase tracking-tight",
+                                                        selectedPermissions.includes(p.id) ? "text-primary" : "text-slate-700"
+                                                    )}>
+                                                        {p.label}
+                                                    </span>
+                                                    <div className="relative flex items-center justify-center h-6 w-6">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="peer h-6 w-6 appearance-none border-2 border-slate-200 rounded-lg checked:bg-primary checked:border-primary transition-all cursor-pointer bg-white shadow-sm"
+                                                            checked={selectedPermissions.includes(p.id)}
+                                                            onChange={() => {
+                                                                setSelectedPermissions(prev =>
+                                                                    prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
+                                                                );
+                                                            }}
+                                                        />
+                                                        <Check size={14} className="absolute text-white scale-0 peer-checked:scale-100 transition-transform pointer-events-none" strokeWidth={4} />
+                                                    </div>
+                                                </label>
+                                            ))}
                                     </div>
                                 </div>
                             </div>

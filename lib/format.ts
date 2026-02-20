@@ -80,3 +80,24 @@ export function formatDateInput(value: string): string {
 
     return res;
 }
+/**
+ * Formats a phone number as (XXX) XXX-XX-XX as the user types.
+ */
+export function formatPhoneInput(value: string): string {
+    const digits = value.replace(/\D/g, '').slice(0, 10);
+    let res = "";
+
+    if (digits.length > 0) {
+        if (digits.length <= 3) {
+            res = `(${digits}`;
+        } else if (digits.length <= 6) {
+            res = `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+        } else if (digits.length <= 8) {
+            res = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+        } else {
+            res = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 8)}-${digits.slice(8, 10)}`;
+        }
+    }
+
+    return res;
+}

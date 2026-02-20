@@ -15,6 +15,7 @@ export const metadata: Metadata = {
 
 import { AuthProvider } from "@/components/providers/SessionProvider";
 import { Toaster } from "sonner";
+import ErrorTracker from "@/components/shared/ErrorTracker";
 
 export default function RootLayout({
   children,
@@ -28,6 +29,7 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <AuthProvider>
+          <ErrorTracker />
           {children}
           <Toaster position="top-right" richColors />
         </AuthProvider>

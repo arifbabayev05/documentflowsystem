@@ -44,7 +44,8 @@ import {
     updateCustomer,
     addAuditLog,
     getCourts,
-    getGlobalSettings
+    getGlobalSettings,
+    getAllUsers
 } from "@/lib/db";
 import { toast } from "sonner";
 import PizZip from "pizzip";
@@ -52,7 +53,7 @@ import Docxtemplater from "docxtemplater";
 import { saveAs } from "file-saver";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
-import { numberToAzerbaijaniFinancialWords, formatDateInput } from "@/lib/format";
+import { numberToAzerbaijaniFinancialWords, formatDateInput, formatPhoneInput } from "@/lib/format";
 import { storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -154,6 +155,7 @@ interface Customer {
                 initialPayment: string;
                 paidAmount: string;
                 totalPrice: string;
+                hasImieFee?: boolean;
             }>;
         }>;
     };
@@ -212,21 +214,22 @@ function getAllImeiProducts(invoices: any[]): string {
     const allImeiItems: string[] = [];
     (invoices || []).forEach((inv: any) => {
         (inv.orders || []).forEach((ord: any) => {
+            // Check if product has explicit IMEI fee OR if description contains imei (legacy support)
+            const hasExplicitImei = ord.hasImieFee === true;
             const desc = ord.productDescription || "";
-            // Split by comma to inspect individual items in a single description string
-            const parts = desc.split(",");
-            parts.forEach((p: string) => {
-                const trimmed = p.trim();
-                if (!trimmed) return;
-                // Robust check for 'imei' including Azerbaijani 'İ'
-                const normalized = trimmed.replace(/İ/g, 'i').toLowerCase();
-                if (normalized.includes("imei")) {
+            const normalized = desc.replace(/İ/g, 'i').toLowerCase();
+            const hasImeiInDesc = normalized.includes("imei");
+
+            if (hasExplicitImei || hasImeiInDesc) {
+                const parts = desc.split(",");
+                parts.forEach((p: string) => {
+                    const trimmed = p.trim();
+                    if (!trimmed) return;
                     allImeiItems.push(trimmed);
-                }
-            });
+                });
+            }
         });
     });
-    // Remove potential duplicates and join
     return Array.from(new Set(allImeiItems)).join(", ");
 }
 
@@ -236,7 +239,8 @@ function buildInvoiceData(
     totalInvoices: number,
     globalPaidAmount: number,
     globalTotalPrice: number,
-    customerName: string
+    customerName: string,
+    globalFee?: number
 ) {
     const orders = inv.orders || [];
 
@@ -270,10 +274,21 @@ function buildInvoiceData(
     const actualInvoicePaid = invPaidSum;
     const invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
     const invPenalty = invUnpaid * 0.10;
-
     // İLM rüsumu
-    const hasImei = productNames.some(p => p.toLowerCase().replace(/İ/g, 'i').includes("imei"));
-    const invIlmFee = hasImei ? invPhoneCount * 23.6 : 0;
+    let invIlmFee = 0;
+    for (const ord of orders) {
+        if (ord.hasImieFee === true || ord.hasImieFee === 'true') {
+            invIlmFee += 23.6;
+        }
+    }
+
+    // If there is only 1 invoice, the global fee input is the authoritative source for this invoice's fee.
+    // Otherwise, calculate it from orders but fallback to globalFee if zero (for first invoice).
+    if (totalInvoices === 1 && globalFee !== undefined) {
+        invIlmFee = globalFee;
+    } else if (invIlmFee === 0 && invIndex === 0 && globalFee && globalFee > 0) {
+        invIlmFee = globalFee;
+    }
 
     const invTotal = invUnpaid + invPenalty + invIlmFee;
 
@@ -283,11 +298,11 @@ function buildInvoiceData(
     // Əsas bölmə separator (Məhkəmə Ərizəsi body loop)
     let separator = "";
     if (totalInvoices === 1) {
-        separator = " miqdarında borc yaranmışdır.";
+        separator = "pulu borcu yaranmışdır.";
     } else if (invIndex < totalInvoices - 1) {
         separator = ";";
     } else {
-        separator = " miqdarında borc yaranmışdır.";
+        separator = "pulu borcu yaranmışdır.";
     }
 
     // XAHİŞ bölməsi separator
@@ -331,6 +346,10 @@ function buildInvoiceData(
         guzest_index: String(invIndex + 1),
         guzest_meblegi: invDiscount.toFixed(2),
         guzest_separator: guzestSeparator,
+
+        // IMEI Rüsumu keywordu (invoice bazasında)
+        imei_rusum: invIlmFee > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${invIlmFee.toFixed(2)} (${numberToAzerbaijaniFinancialWords(invIlmFee)}) manat rüsum,` : "",
+        IMEI_RUSUM: invIlmFee > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${invIlmFee.toFixed(2)} (${numberToAzerbaijaniFinancialWords(invIlmFee)}) manat rüsum,` : "",
     };
 }
 
@@ -430,6 +449,9 @@ const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placehol
                         if (["Müq. Tarixi", "Sənədin Verilmə Tarixi", "Xəbərdarlıq Tarixi", "Doğum Tarixi"].includes(label)) {
                             val = formatDateInput(val);
                         }
+                        if (["Telefon Nömrəsi", "Mobil"].includes(label)) {
+                            val = formatPhoneInput(val);
+                        }
 
                         // Clear zero prefix for financial/numeric fields
                         const isFinancial = label && (
@@ -478,7 +500,7 @@ const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placehol
 });
 CustomerField.displayName = "CustomerField";
 
-const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating, user, focusedField }: any) => {
+const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating, user, focusedField, allUsers }: any) => {
     const [isRendering, setIsRendering] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const viewerRef = useRef<HTMLDivElement>(null);
@@ -528,9 +550,18 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 const totalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.')) || 0;
                 const paidAmount = parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.')) || 0;
 
+                const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+                const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
+                const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
+                const extraCosts = penaltyVal + feeVal;
+
                 const invoicesData = invoices.map((inv: any, idx: number) =>
-                    buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "")
+                    buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
                 );
+
+                const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
+                const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
+                const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
 
                 // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
                 const xahisItems = invoicesData.map((invData: any) => ({
@@ -545,11 +576,13 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     guzest_separator: invData.guzest_separator,
                 }));
 
-                const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
-                const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
-                const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
-                const extraCosts = penaltyVal + feeVal;
-                const totalDebt = unpaidVal + extraCosts;
+                const totalDebt = totalBorcFromInvoices;
+
+                // Find inspector phone numbers
+                const inspectorName = customer.details?.executorName || "";
+                const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
+                const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
+                const inspectorPhone2 = "012 310 07 75";
 
                 const data = {
                     invoices: invoicesData,
@@ -570,7 +603,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
                     CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
                     CAVABDEH_UNVAN: customer.details?.address || "",
-                    CAVABDEH_MOBIL: customer.details?.phone || "",
+                    CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
                     CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
                     CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
                     CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress !== customer.details.address)
@@ -601,22 +634,29 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     TAKSIT_AY: customer.details?.paymentPeriod || "",
                     AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                     ILKIN_ODENIS: customer.details?.initialPayment || "",
-                    ODENILMEMIS_HISSE: unpaidVal.toFixed(2),
-                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(unpaidVal),
+                    ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
+                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
                     CERIME_ODENEN: extraCosts.toFixed(2),
                     CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
                     ILM_RUSUM: feeVal.toFixed(2),
                     ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
-                    DEBBE_PULU: penaltyVal.toFixed(2),
-                    DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(penaltyVal),
+                    imei_rusum: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+                    IMEI_RUSUM: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+                    DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
+                    DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
+                    DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
                     GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
+
+                    QOSMA: feeVal > 0
+                        ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
+                        : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
 
                     currentDate: new Date().toLocaleDateString("az-AZ"),
                     ERIZE_GUN: `${new Date().getDate()}`,
                     ERIZE_AY: AZ_MONTHS[new Date().getMonth()],
                     ERIZE_IL: new Date().getFullYear().toString(),
                     TARIX: `${new Date().getDate()}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
-                    ELAQE_TEL1: "050 280 11 90",
+                    ELAQE_TEL1: inspectorPhone1,
                     ELAQE_TEL2: "012 310 07 75",
                     NUMAYENDE_IMZA: "Süleymanlı.R.X",
                     ICRACI_AD_SOYAD: customer.details?.executorName || "",
@@ -678,8 +718,8 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         "ODENILMEMIS_HISSE", "ODENILMEMIS_HISSE_SOZLE", "unpaid_amount",
                         "odenilmemis_hisse", "odenilmemis_hisse_sozle", "unpaidAmount", "remaining"
                     ],
-                    "İnnovativ Layihələr Mərkəzi Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU"],
-                    "İDM Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU"],
+                    "İnnovativ Layihələr Mərkəzi Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU", "imei_rusum", "IMEI_RUSUM"],
+                    "İDM Rüsumu": ["ILM_RUSUM", "ILM_RUSUM_SOZLE", "fee", "inv_ilm_fee", "ILM_RUSUMU", "imei_rusum", "IMEI_RUSUM"],
                     "Dövlət Rüsumu": ["DOVLET_RUSUMU", "court_fee", "courtFee"],
                     "Cərimə": ["DEBBE_PULU", "DEBBE_PULU_SOZLE", "penalty", "debbe_pulu", "debbe_pulu_sozle", "CERIME_ODENEN", "penalty_amount"],
                     "Dəbbə Pulu": ["DEBBE_PULU", "DEBBE_PULU_SOZLE", "penalty", "debbe_pulu", "debbe_pulu_sozle", "CERIME_ODENEN", "penalty_amount"],
@@ -882,12 +922,14 @@ function GenerateDocumentContent() {
     const [allTemplates, setAllTemplates] = useState<Template[]>([]);
     const [courts, setCourts] = useState<Court[]>([]);
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null);
+    const [allUsers, setAllUsers] = useState<any[]>([]);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [activeDocId, setActiveDocId] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState<string | null>(null);
     const [focusedField, setFocusedField] = useState<string | null>(null);
+    const [showMore, setShowMore] = useState(false);
 
     const isWarningOnly = useMemo(() => {
         const t = searchParams.get('template');
@@ -927,11 +969,12 @@ function GenerateDocumentContent() {
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [custData, tempData, courtsData, settingsData] = await Promise.all([
+            const [custData, tempData, courtsData, settingsData, usersData] = await Promise.all([
                 getCustomer(id as string),
                 getTemplates(),
                 getCourts(),
-                getGlobalSettings()
+                getGlobalSettings(),
+                getAllUsers()
             ]);
 
             if (custData) {
@@ -960,6 +1003,7 @@ function GenerateDocumentContent() {
 
                 setCustomer(typedCust);
                 setAllTemplates(tempData as Template[]);
+                setAllUsers(usersData);
                 setCourts(courtsData as Court[]);
                 setCompanyInfo(settingsData as CompanyInfo);
 
@@ -974,12 +1018,17 @@ function GenerateDocumentContent() {
 
                 if (tempData.length > 0) {
                     const requestedTemplate = searchParams.get('template');
+                    const validTemps = (tempData as Template[]).filter(t => {
+                        const nl = t.name.toLowerCase();
+                        return !(nl.includes("103_siyahisi") || nl.includes("103_siyahısı"));
+                    });
+
                     if (requestedTemplate) {
-                        const found = (tempData as Template[]).find(t => t.name.includes(requestedTemplate));
+                        const found = validTemps.find(t => t.name.includes(requestedTemplate));
                         if (found) setActiveDocId(found.id);
-                        else setActiveDocId(tempData[0].id);
-                    } else {
-                        setActiveDocId(tempData[0].id);
+                        else if (validTemps.length > 0) setActiveDocId(validTemps[0].id);
+                    } else if (validTemps.length > 0) {
+                        setActiveDocId(validTemps[0].id);
                     }
                 }
 
@@ -1014,14 +1063,9 @@ function GenerateDocumentContent() {
         if (!customer) return [];
         const requestedTemplate = searchParams.get('template');
 
-        // Check if ANY product in ANY invoice contains 'imei'
-        const invoices = customer.details?.invoices || [];
-        const hasImeiAnywhere = invoices.some(inv =>
-            (inv.orders || []).some(ord => {
-                const desc = (ord.productDescription || "").replace(/İ/g, 'i').toLowerCase();
-                return desc.includes("imei");
-            })
-        );
+        // ILM Fee Check: If fee > 0, imei docs are required
+        const feeValTotal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+        const hasImeiAnywhere = feeValTotal > 0;
 
         // Calculate totalDebt the same way as final reports
         const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
@@ -1029,30 +1073,61 @@ function GenerateDocumentContent() {
         const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
         const totalDebtVal = unpaidVal + penaltyVal + feeVal;
 
-        // Strict restriction if 'template' param is present
+        // Helper to decide if a template should be shown based on IMEI and Debt
+        const shouldShowTemplate = (tName: string) => {
+            const nl = tName.toLowerCase();
+            const hasPlus = nl.includes("+");
+            const hasMinus = nl.includes("-");
+
+            if (hasPlus || hasMinus) {
+                const isNoImeiTemplate = nl.includes("no-imei");
+
+                // Case 1: IMEI exists
+                if (hasImeiAnywhere) {
+                    if (isNoImeiTemplate) return false;
+                }
+                // Case 2: No IMEI
+                else {
+                    if (!isNoImeiTemplate) {
+                        const baseCategory = nl.replace("+", "").replace("-", "").replace(".docx", "").trim();
+                        const hasNoImeiVariant = allTemplates.some(at => {
+                            const an = at.name.toLowerCase();
+                            return an.includes(baseCategory) && an.includes("no-imei");
+                        });
+                        if (hasNoImeiVariant) return false;
+                    }
+                }
+
+                // Debt check
+                if (totalDebtVal <= 5000) return hasMinus;
+                return hasPlus;
+            }
+            return true;
+        };
+
+        // 1. Strict restriction if 'template' param is present
         if (requestedTemplate) {
-            return allTemplates.filter(t => t.name.includes(requestedTemplate));
+            return allTemplates.filter(t => {
+                const nl = t.name.toLowerCase();
+                const is103 = nl.includes("103_siyahisi") || nl.includes("103_siyahısı");
+                if (is103) return false;
+                if (!t.name.includes(requestedTemplate)) return false;
+
+                return shouldShowTemplate(t.name);
+            });
         }
 
         const sorted = allTemplates.filter(t => {
             const nameLower = t.name.toLowerCase();
 
-            // 1. Hide 'Arayış' templates if NO IMEI found in any invoice
+            // 0. Hide Letter List Template from general use
+            if (nameLower.includes("103_siyahisi") || nameLower.includes("103_siyahısı")) return false;
+
+            // 1. Hide 'Arayış' templates if NO IMEI found
             if (nameLower.includes("arayış") && !hasImeiAnywhere) return false;
 
-            // 2. Debt-based +/- suffix filter
-            const hasPlus = t.name.includes("+");
-            const hasMinus = t.name.includes("-");
-
-            if (hasPlus || hasMinus) {
-                if (totalDebtVal <= 5000) {
-                    return hasMinus;
-                } else {
-                    return hasPlus;
-                }
-            }
-
-            return true;
+            // 2. Main Logic
+            return shouldShowTemplate(t.name);
         });
 
         // 3. APPLY PRIORITY SORTING
@@ -1229,7 +1304,8 @@ function GenerateDocumentContent() {
                             monthlyPayment: prev.details?.monthlyPayment || "",
                             initialPayment: prev.details?.initialPayment || "",
                             paidAmount: prev.details?.paidAmount || "0.00",
-                            totalPrice: prev.details?.totalPrice || "0.00"
+                            totalPrice: prev.details?.totalPrice || "0.00",
+                            hasImieFee: false
                         }
                     ]
                 }];
@@ -1247,7 +1323,8 @@ function GenerateDocumentContent() {
                     monthlyPayment: "",
                     initialPayment: "",
                     paidAmount: "0.00",
-                    totalPrice: "0.00"
+                    totalPrice: "0.00",
+                    hasImieFee: false
                 }]
             };
             setIsModified(true);
@@ -1271,7 +1348,8 @@ function GenerateDocumentContent() {
                 monthlyPayment: "",
                 initialPayment: "",
                 paidAmount: "0.00",
-                totalPrice: "0.00"
+                totalPrice: "0.00",
+                hasImieFee: false
             };
             invoices[idx] = { ...invoices[idx], orders: [...(invoices[idx].orders || []), newOrd] };
             setIsModified(true);
@@ -1343,13 +1421,20 @@ function GenerateDocumentContent() {
             const uploadedDocs = (await Promise.all(docUploads)).filter(d => d !== null);
             (details as any).generatedDocs = uploadedDocs;
 
-            await updateCustomer(customer.id, {
+            const updateData: any = {
                 fullName: customer.fullName,
                 debtAmount: (details as any).totalUnpaid || customer.debtAmount,
                 details,
                 fullData: true,
                 courtName: selectedCourt?.name || ""
-            }, user?.email);
+            };
+
+            // Auto-update status if warning date is set
+            if (details.warningDate && (!customer.process_status || customer.process_status === 'INSPECTOR_ENTERED')) {
+                updateData.process_status = 'ASSIGNED_BY_MANAGER';
+            }
+
+            await updateCustomer(customer.id, updateData, user?.email);
 
             // Sync local customer state
             setCustomer(prev => prev ? { ...prev, courtName: selectedCourt?.name || "" } : null);
@@ -1465,17 +1550,16 @@ function GenerateDocumentContent() {
         const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
 
         // 3. IDM Fee (İLM Rüsumu)
-        // If there are IMEI products, the fee should be count * 23.60
+        // Aggregated from per-product İMEİ yoxla buttons
         const currentFee = parseFloat((customer.details?.fee || "0").toString().replace(',', '.'));
-        let calculatedFee = currentFee;
-        if (totalPhoneCount > 0) {
-            // Auto-calculate if it's currently 0 or if we have a mismatch in count
-            if (currentFee === 0 || Math.abs(currentFee - (totalPhoneCount * 23.6)) > 0.01) {
-                calculatedFee = totalPhoneCount * 23.6;
-            }
-        } else {
-            calculatedFee = 0;
-        }
+        let calculatedFee = 0;
+        updatedInvoices.forEach(inv => {
+            (inv.orders || []).forEach(ord => {
+                if (ord.hasImieFee === true) {
+                    calculatedFee += 23.6;
+                }
+            });
+        });
 
         // 4. Penalty (Cərimə)
         const calculatedPenalty = calculatedUnpaid * 0.10;
@@ -1571,15 +1655,22 @@ function GenerateDocumentContent() {
             "Şəxsi Məlumatlar": {
                 "Ad Soyad": "fullName",
                 "Cins": "details.gender",
-                "Doğum Tarixi": "details.birthDate",
-                "FİN": "details.fin",
-                "Telefon": "details.phone",
-                "Seriya №": "details.passportSeries"
             },
             "Ünvan Məlumatları": {
                 "Qeydiyyat Ünvanı": "details.address",
             },
         };
+
+        // Add additional mandatory fields for non-warning documents
+        if (!isWarning) {
+            sections["Şəxsi Məlumatlar"] = {
+                ...sections["Şəxsi Məlumatlar"],
+                "Doğum Tarixi": "details.birthDate",
+                "FİN": "details.fin",
+                "Telefon": "details.phone",
+                "Seriya №": "details.passportSeries"
+            };
+        }
 
         if (!isWarning) {
             sections["Maliyyə Hesabatı"] = { "Ödənilən məbləğ": "details.paidAmount" };
@@ -1607,7 +1698,7 @@ function GenerateDocumentContent() {
             }
         }
 
-        if (isEmpty(customer.store) && !isWarningOnly) {
+        if (isEmpty(customer.store) && !isWarning && !isWarningOnly) {
             toast.error("Faktura və Sifariş Detalları bölməsində, sifarişin \"Mağaza\" xanasını doldurun.");
             return false;
         }
@@ -1619,7 +1710,7 @@ function GenerateDocumentContent() {
         }
 
         for (const inv of invoices) {
-            if (!inv.invoiceNumber) {
+            if (!inv.invoiceNumber && !isWarningOnly || !isWarning) {
                 toast.error("Əskik doldurulan məlumat var: Faktura və Sifariş (Faktura №) xanasını doldurun.");
                 return false;
             }
@@ -1631,7 +1722,7 @@ function GenerateDocumentContent() {
                 const isProductOk = !!ord.productDescription && !!ord.contractDate;
                 const isPricingOk = !!ord.paymentPeriod && !!ord.monthlyPayment && !!ord.initialPayment;
 
-                if (isWarning) {
+                if (isWarning || isWarningOnly) {
                     if (!isProductOk) {
                         toast.error("Xəbərdarlıq üçün əskik məlumat: [Faktura və Sifariş] detallarında məhsul adı və müqavilə tarixi doldurulmalıdır.");
                         return false;
@@ -1710,8 +1801,13 @@ function GenerateDocumentContent() {
             const totalPrice = parseFloat(customer.details?.totalPrice || "0");
             const paidAmount = parseFloat(customer.details?.paidAmount || "0");
 
+            const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+            const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
+            const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
+            const extraCosts = penaltyVal + feeVal;
+
             const invoicesData = invoices.map((inv: any, idx: number) =>
-                buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "")
+                buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
             );
 
             // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
@@ -1727,14 +1823,20 @@ function GenerateDocumentContent() {
                 guzest_separator: invData.guzest_separator,
             }));
 
+            const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
+            const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
+            const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
+
             const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
             const now = new Date();
 
-            const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
-            const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
-            const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
-            const extraCosts = penaltyVal + feeVal;
-            const totalDebt = unpaidVal + extraCosts;
+            const totalDebt = totalBorcFromInvoices;
+
+            // Find inspector phone numbers
+            const inspectorName = customer.details?.executorName || "";
+            const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
+            const inspectorPhone1 = inspector?.phone1 || "050 280 11 90";
+            const inspectorPhone2 = inspector?.phone2 || "012 310 07 75";
 
             const data = {
                 MEHKEME_ADI: selectedCourt?.name || "",
@@ -1776,22 +1878,29 @@ function GenerateDocumentContent() {
                 TAKSIT_AY: customer.details?.paymentPeriod || "",
                 AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
                 ILKIN_ODENIS: customer.details?.initialPayment || "",
-                ODENILMEMIS_HISSE: unpaidVal.toFixed(2),
-                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(unpaidVal),
+                ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
+                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
                 CERIME_ODENEN: extraCosts.toFixed(2),
                 CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
                 ILM_RUSUM: feeVal.toFixed(2),
                 ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
-                DEBBE_PULU: penaltyVal.toFixed(2),
-                DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(penaltyVal),
+                imei_rusum: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+                IMEI_RUSUM: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+                DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
+                DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
+                DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
                 GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
+
+                QOSMA: feeVal > 0
+                    ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
+                    : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
 
                 ERIZE_GUN: `${now.getDate()}`,
                 ERIZE_AY: AZ_MONTHS_CAP[now.getMonth()],
                 ERIZE_IL: now.getFullYear().toString(),
                 TARIX: `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`,
                 NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                ELAQE_TEL1: "050 280 11 90",
+                ELAQE_TEL1: inspectorPhone1,
                 ELAQE_TEL2: "012 310 07 75",
                 ICRACI_AD_SOYAD: customer.details?.executorName || "",
                 MUHASIB_IMZA: "S.İsmayılova",
@@ -2261,47 +2370,70 @@ function GenerateDocumentContent() {
                                 </div>
                                 <div className="space-y-3">
                                     <CustomerField label="SOYAD AD ATA ADI" icon={User} value={customer.fullName} onFocus={setFocusedField} onBlur={() => setFocusedField(null)} onChange={(v: string) => handleFieldChange("fullName", v)} />
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <CustomerField
-                                            label="Cins"
-                                            isSelect={true}
-                                            options={[{ label: "Kişi", value: "Kişi" }, { label: "Qadın", value: "Qadın" }]}
-                                            value={customer.details?.gender}
-                                            onFocus={setFocusedField}
-                                            onBlur={() => setFocusedField(null)}
-                                            onChange={(v: string) => handleFieldChange("details.gender", v)}
-                                        />
-                                        {!isWarningOnly && (
-                                            <CustomerField
-                                                label="FİN"
-                                                isFin={true}
-                                                value={customer.details?.fin}
-                                                onFocus={setFocusedField}
-                                                onBlur={() => setFocusedField(null)}
-                                                onChange={(v: string) => handleFieldChange("details.fin", v)}
-                                                placeholder="7 Simvollu"
-                                            />
-                                        )}
-                                    </div>
-                                    {!isWarningOnly && (
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <CustomerField
-                                                label="Doğum Tarixi"
-                                                value={customer.details?.birthDate}
-                                                onFocus={setFocusedField}
-                                                onBlur={() => setFocusedField(null)}
-                                                onChange={(v: string) => handleFieldChange("details.birthDate", v)}
-                                                placeholder="GG.AA.İİİİ"
-                                            />
-                                            <CustomerField
-                                                label="Telefon Nömrəsi"
-                                                value={customer.details?.phone}
-                                                onFocus={setFocusedField}
-                                                onBlur={() => setFocusedField(null)}
-                                                onChange={(v: string) => handleFieldChange("details.phone", v)}
-                                                placeholder="0501234567"
-                                            />
+
+                                    <CustomerField
+                                        label="Cins"
+                                        isSelect={true}
+                                        options={[{ label: "Kişi", value: "Kişi" }, { label: "Qadın", value: "Qadın" }]}
+                                        value={customer.details?.gender}
+                                        onFocus={setFocusedField}
+                                        onBlur={() => setFocusedField(null)}
+                                        onChange={(v: string) => handleFieldChange("details.gender", v)}
+                                    />
+
+                                    {/* SECONDARY INFO - COLLAPSIBLE FOR WARNING */}
+                                    {isWarningOnly && (
+                                        <div className="pt-2 border-t border-slate-100">
+                                            <button
+                                                onClick={() => setShowMore(!showMore)}
+                                                className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-primary transition-all"
+                                            >
+                                                {showMore ? <Minus size={12} /> : <Plus size={12} />}
+                                                {showMore ? "Əlavə məlumatları gizlə" : "Əlavə məlumatlar (FİN, Doğum Tarixi, Tel...)"}
+                                            </button>
                                         </div>
+                                    )}
+
+                                    {(showMore || !isWarningOnly) && (
+                                        <>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <CustomerField
+                                                    label="FİN"
+                                                    isFin={true}
+                                                    value={customer.details?.fin}
+                                                    onFocus={setFocusedField}
+                                                    onBlur={() => setFocusedField(null)}
+                                                    onChange={(v: string) => handleFieldChange("details.fin", v)}
+                                                    placeholder="7 Simvollu"
+                                                />
+                                                <CustomerField
+                                                    label="Seriya Nömrəsi"
+                                                    value={customer.details?.passportSeries}
+                                                    onFocus={setFocusedField}
+                                                    onBlur={() => setFocusedField(null)}
+                                                    onChange={(v: string) => handleFieldChange("details.passportSeries", v)}
+                                                    placeholder="AA0000000"
+                                                />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <CustomerField
+                                                    label="Doğum Tarixi"
+                                                    value={customer.details?.birthDate}
+                                                    onFocus={setFocusedField}
+                                                    onBlur={() => setFocusedField(null)}
+                                                    onChange={(v: string) => handleFieldChange("details.birthDate", v)}
+                                                    placeholder="GG.AA.İİİİ"
+                                                />
+                                                <CustomerField
+                                                    label="Telefon Nömrəsi"
+                                                    value={customer.details?.phone}
+                                                    onFocus={setFocusedField}
+                                                    onBlur={() => setFocusedField(null)}
+                                                    onChange={(v: string) => handleFieldChange("details.phone", v)}
+                                                    placeholder="0501234567"
+                                                />
+                                            </div>
+                                        </>
                                     )}
                                 </div>
                             </div>
@@ -2393,15 +2525,40 @@ function GenerateDocumentContent() {
                                                         <div className="flex items-center justify-between gap-3">
                                                             <div className="flex-1">
                                                                 <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-1 mb-1.5 block">MƏHSUL ADI</label>
-                                                                <textarea
-                                                                    rows={4}
-                                                                    value={ord.productDescription}
-                                                                    onFocus={() => setFocusedField("MƏHSUL ADI")}
-                                                                    onBlur={() => setFocusedField(null)}
-                                                                    onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
-                                                                    className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2.5 rounded-xl font-bold text-[12px] outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/5 transition-all resize-none scrollbar-none"
-                                                                    placeholder="Məs: iPhone 13 (IMEI: ...), Kabro, Adapter"
-                                                                />
+                                                                <div className="relative">
+                                                                    <textarea
+                                                                        rows={2}
+                                                                        value={ord.productDescription}
+                                                                        onFocus={() => setFocusedField("MƏHSUL ADI")}
+                                                                        onBlur={() => setFocusedField(null)}
+                                                                        onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
+                                                                        className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2.5 rounded-xl font-bold text-[12px] outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/5 transition-all resize-none scrollbar-none"
+                                                                        placeholder="Məs: iPhone 13 (IMEI: ...), Kabro, Adapter"
+                                                                    />
+                                                                    <div className="mt-2">
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.preventDefault();
+                                                                                const newValue = ord.hasImieFee === true ? false : true;
+                                                                                updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                            }}
+                                                                            type="button"
+                                                                            className={cn(
+                                                                                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                ord.hasImieFee === true
+                                                                                    ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                            )}
+                                                                        >
+                                                                            <Smartphone size={14} />
+                                                                            {ord.hasImieFee === true
+                                                                                ? "İMEİ aktiv"
+                                                                                : ord.hasImieFee === false
+                                                                                    ? "İMEİ deaktiv"
+                                                                                    : "İMEİ yoxla"}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
                                                             </div>
                                                             {inv.orders.length > 1 && (
                                                                 <button
@@ -2642,6 +2799,7 @@ function GenerateDocumentContent() {
                                     isGenerating={isGenerating}
                                     user={user}
                                     focusedField={focusedField}
+                                    allUsers={allUsers}
                                 />
                             ))}
 

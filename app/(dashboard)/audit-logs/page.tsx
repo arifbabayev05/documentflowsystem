@@ -22,9 +22,13 @@ import {
     Mail,
     RefreshCw,
     FileText,
-    Shield
+    Shield,
+    AlertTriangle,
+    ChevronDown,
+    Check,
+    Users
 } from "lucide-react";
-import { getAuditLogs } from "@/lib/db";
+import { getAuditLogs, getSystemErrors, getAllUsers } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 
@@ -54,6 +58,7 @@ const ACTION_CONFIG: Record<string, { label: string, icon: any, color: string, b
     GENERATE_DOC: { label: "Sənəd Yaradıldı", icon: FileText, color: "text-indigo-600", bg: "bg-indigo-50" },
     ASSIGN: { label: "Təyinat", icon: UserCheck, color: "text-purple-600", bg: "bg-purple-50" },
     UPDATE_ROLE: { label: "Rol Dəyişimi", icon: ShieldCheck, color: "text-red-700", bg: "bg-red-50" },
+    SYSTEM_ERROR: { label: "Sistem Xətası", icon: AlertTriangle, color: "text-red-600", bg: "bg-red-50" },
     DEFAULT: { label: "Digər", icon: Activity, color: "text-slate-400", bg: "bg-slate-50" }
 };
 
@@ -63,7 +68,8 @@ const TABS = [
     { id: "ARCHIVE", label: "Arxiv", icon: Archive },
     { id: "DOCUMENT", label: "Sənədlər", icon: FileText },
     { id: "SYSTEM", label: "Sistem", icon: ShieldCheck },
-    { id: "USER", label: "İstifadəçilər", icon: Mail }
+    { id: "USER", label: "İstifadəçilər", icon: Mail },
+    { id: "ERRORS", label: "Xətalar", icon: AlertTriangle }
 ];
 
 export default function AuditLogsPage() {
@@ -87,12 +93,35 @@ export default function AuditLogsPage() {
     const [loadingLogs, setLoadingLogs] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedAction, setSelectedAction] = useState<string>("all");
+    const [users, setUsers] = useState<any[]>([]);
+    const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+    const [userSearchTerm, setUserSearchTerm] = useState("");
+    const [isUserFilterOpen, setIsUserFilterOpen] = useState(false);
 
     const fetchLogs = async () => {
         setLoadingLogs(true);
         try {
-            const logData = await getAuditLogs(400);
-            setAuditLogs(logData as AuditLog[]);
+            const [auditData, errorData, usersData]: [any[], any[], any[]] = await Promise.all([
+                getAuditLogs(400),
+                activeTab === "ERRORS" || activeTab === "all" ? getSystemErrors(100) : Promise.resolve([]),
+                getAllUsers()
+            ]);
+
+            setUsers(usersData);
+
+            const normalizedErrors = errorData.map(e => ({
+                ...e,
+                action: "SYSTEM_ERROR",
+                category: "ERRORS",
+                details: `${e.context}: ${e.message}`,
+                metadata: { ...e.metadata, stack: e.stack, url: e.url }
+            }));
+
+            setAuditLogs([...auditData, ...normalizedErrors].sort((a, b) => {
+                const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                return dateB - dateA;
+            }) as AuditLog[]);
         } catch (error) {
             console.error("Error fetching audit logs:", error);
         } finally {
@@ -102,7 +131,7 @@ export default function AuditLogsPage() {
 
     useEffect(() => {
         if (user) fetchLogs();
-    }, [user]);
+    }, [user, activeTab]);
 
     const getLogCategory = (log: AuditLog) => {
         if (log.category) return log.category;
@@ -114,6 +143,7 @@ export default function AuditLogsPage() {
         if (["GENERATE_DOC"].includes(action)) return "DOCUMENT";
         if (["SETTINGS_UPDATE", "COURT_ADD", "COURT_UPDATE", "COURT_DELETE", "STORE_ADD", "STORE_UPDATE", "STORE_DELETE", "TEMPLATE_ADD", "TEMPLATE_UPDATE", "TEMPLATE_DELETE"].includes(action)) return "SYSTEM";
         if (["UPDATE_ROLE"].includes(action)) return "USER";
+        if (action === "SYSTEM_ERROR") return "ERRORS";
         return "SYSTEM";
     };
 
@@ -127,10 +157,11 @@ export default function AuditLogsPage() {
 
             const matchesAction = selectedAction === "all" || log.action === selectedAction;
             const matchesTab = activeTab === "all" || category === activeTab;
+            const matchesUser = selectedUsers.length === 0 || selectedUsers.includes(log.userEmail);
 
-            return matchesSearch && matchesAction && matchesTab;
+            return matchesSearch && matchesAction && matchesTab && matchesUser;
         });
-    }, [auditLogs, searchTerm, selectedAction, activeTab]);
+    }, [auditLogs, searchTerm, selectedAction, activeTab, selectedUsers]);
 
     const actionsList = useMemo(() => {
         const set = new Set(auditLogs.filter(l => activeTab === 'all' || getLogCategory(l) === activeTab).map(l => l.action));
@@ -195,12 +226,91 @@ export default function AuditLogsPage() {
                             <Filter size={14} className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                         </div>
 
-                        <button
-                            onClick={fetchLogs}
-                            className="h-12.5 w-12.5 flex items-center justify-center bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-900 hover:text-white transition-all shadow-sm active:scale-95"
-                        >
-                            <RefreshCw size={18} className={loadingLogs ? "animate-spin" : ""} />
-                        </button>
+                        {/* User Multi-select Filter */}
+                        <div className="relative w-full sm:w-[250px]">
+                            <button
+                                onClick={() => setIsUserFilterOpen(!isUserFilterOpen)}
+                                className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-2xl pl-6 pr-5 py-3.5 text-xs font-black uppercase tracking-wider outline-none focus:border-slate-900 hover:border-slate-300 shadow-sm transition-all"
+                            >
+                                <span className="truncate">
+                                    {selectedUsers.length === 0
+                                        ? "BÜTÜN İSTİFADƏÇİLƏR"
+                                        : `${selectedUsers.length} İSTİFADƏÇİ`}
+                                </span>
+                                <ChevronDown size={14} className={cn("text-slate-400 transition-transform", isUserFilterOpen ? "rotate-180" : "")} />
+                            </button>
+
+                            {isUserFilterOpen && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-10"
+                                        onClick={() => setIsUserFilterOpen(false)}
+                                    />
+                                    <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-20 animate-in fade-in slide-in-from-top-2 duration-200 min-w-[280px]">
+                                        <div className="relative mb-3">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                            <input
+                                                type="text"
+                                                placeholder="İstifadəçi axtar..."
+                                                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold outline-none focus:bg-white focus:border-slate-900 transition-all font-mono"
+                                                value={userSearchTerm}
+                                                onChange={(e) => setUserSearchTerm(e.target.value)}
+                                                autoFocus
+                                            />
+                                        </div>
+                                        <div className="max-h-[200px] overflow-y-auto space-y-1 custom-scrollbar pr-1">
+                                            {users.filter(u =>
+                                                u.displayName?.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+                                                u.email?.toLowerCase().includes(userSearchTerm.toLowerCase())
+                                            ).length === 0 ? (
+                                                <p className="text-[10px] text-slate-400 font-bold text-center py-4 uppercase">Nəticə yoxdur</p>
+                                            ) : (
+                                                users
+                                                    .filter(u =>
+                                                        u.displayName?.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+                                                        u.email?.toLowerCase().includes(userSearchTerm.toLowerCase())
+                                                    )
+                                                    .map(u => (
+                                                        <button
+                                                            key={u.id}
+                                                            onClick={() => {
+                                                                setSelectedUsers(prev =>
+                                                                    prev.includes(u.email)
+                                                                        ? prev.filter(e => e !== u.email)
+                                                                        : [...prev, u.email]
+                                                                );
+                                                            }}
+                                                            className={cn(
+                                                                "w-full flex items-center justify-between p-2.5 rounded-xl transition-all group",
+                                                                selectedUsers.includes(u.email) ? "bg-slate-900 text-white" : "hover:bg-slate-50 text-slate-600"
+                                                            )}
+                                                        >
+                                                            <div className="flex flex-col items-start min-w-0">
+                                                                <span className="text-[11px] font-black truncate w-full">{u.displayName}</span>
+                                                                <span className={cn(
+                                                                    "text-[9px] font-bold opacity-60 truncate w-full",
+                                                                    selectedUsers.includes(u.email) ? "text-slate-300" : "text-slate-400"
+                                                                )}>{u.email}</span>
+                                                            </div>
+                                                            {selectedUsers.includes(u.email) && <Check size={12} strokeWidth={4} />}
+                                                        </button>
+                                                    ))
+                                            )}
+                                        </div>
+                                        {selectedUsers.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-slate-100 flex justify-between">
+                                                <button
+                                                    onClick={() => setSelectedUsers([])}
+                                                    className="text-[9px] font-black uppercase text-red-500 hover:text-red-600 transition-colors"
+                                                >
+                                                    Təmizlə
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -301,6 +411,21 @@ export default function AuditLogsPage() {
                                                         <p className="text-[13px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors leading-snug">
                                                             {log.details}
                                                         </p>
+                                                        {log.metadata?.url && (
+                                                            <p className="text-[10px] text-blue-500 font-mono mt-1 opacity-70 truncate italic">
+                                                                URL: {log.metadata.url}
+                                                            </p>
+                                                        )}
+                                                        {log.metadata?.stack && (
+                                                            <div className="mt-2 group/stack">
+                                                                <button
+                                                                    onClick={() => alert(log.metadata.stack)}
+                                                                    className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors flex items-center gap-1"
+                                                                >
+                                                                    Stack Trace Gör <ArrowUpDown size={10} />
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                         {log.metadata?.targetName && (
                                                             <span className="text-[9px] font-black text-slate-400 uppercase mt-1.5 flex items-center gap-1">
                                                                 <User size={10} /> {log.metadata.targetName}

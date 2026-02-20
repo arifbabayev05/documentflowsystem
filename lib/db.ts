@@ -26,6 +26,30 @@ const SETTINGS_COLLECTION = "GlobalSettings";
 const COURTS_COLLECTION = "Courts";
 const STORES_COLLECTION = "Stores";
 const TEMPLATES_COLLECTION = "Templates";
+const ERRORS_COLLECTION = "SystemErrors";
+
+// --- Helpers ---
+/**
+ * Recursively removes undefined values from an object or array.
+ * Firebase doesn't allow 'undefined' as a value.
+ */
+function sanitizeFirebaseData(data: any): any {
+    if (data === undefined) return null;
+    if (data === null || typeof data !== 'object') return data;
+
+    if (Array.isArray(data)) {
+        return data.map(v => sanitizeFirebaseData(v));
+    }
+
+    const cleaned: any = {};
+    Object.keys(data).forEach(key => {
+        const value = data[key];
+        if (value !== undefined) {
+            cleaned[key] = sanitizeFirebaseData(value);
+        }
+    });
+    return cleaned;
+}
 
 // Permissions Logic
 export async function getRolePermissions(role: string) {
@@ -40,21 +64,24 @@ export async function getRolePermissions(role: string) {
     }
 
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
-    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "action_assignment"];
+    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list"];
+    if (role === "INSPECTOR_LEAD") return ["page_inspector", "page_inspectors", "page_users"];
     if (role === "ADMIN") return ["page_customers"];
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
+    if (role === "DEP_HEAD") return ["page_analytics", "page_parameters"];
+    if (role === "AUDIT_LEAD") return ["page_analytics", "page_audit_logs", "page_parameters", "page_users"];
     return []; // PENDING or others have no default permissions
 }
 
 export async function updateRolePermissions(role: string, paths: string[]) {
     const docRef = doc(db, PERMISSIONS_COLLECTION, role);
-    return await setDoc(docRef, {
+    return await setDoc(docRef, sanitizeFirebaseData({
         id: role,
         role,
         allowedPaths: paths,
         updatedAt: serverTimestamp()
-    }, { merge: true });
+    }), { merge: true });
 }
 
 // User Logic
@@ -71,7 +98,7 @@ export async function syncUser(user: { email: string; displayName?: string }) {
                 lastLogin: new Date().toISOString(),
                 displayName: userSnap.data().displayName || user.displayName || normalizedEmail.split('@')[0]
             };
-            await updateDoc(userRef, userDoc);
+            await updateDoc(userRef, sanitizeFirebaseData(userDoc));
         } else {
             const usersRef = collection(db, USERS_COLLECTION);
             const q = query(usersRef, limit(1));
@@ -87,7 +114,7 @@ export async function syncUser(user: { email: string; displayName?: string }) {
                 status: isFirstUser ? "ACTIVE" : "PENDING",
                 permissions: []
             };
-            await setDoc(userRef, userDoc);
+            await setDoc(userRef, sanitizeFirebaseData(userDoc));
         }
 
         if (!userDoc.permissions || userDoc.permissions.length === 0) {
@@ -119,6 +146,17 @@ export async function updateUserRole(email: string, role: string, permissions?: 
         return true;
     } catch (e) {
         console.error("updateUserRole error:", e);
+        throw e;
+    }
+}
+
+export async function updateUserData(email: string, data: any, userEmail: string = "system") {
+    try {
+        const userRef = doc(db, USERS_COLLECTION, email);
+        await updateDoc(userRef, sanitizeFirebaseData({ ...data, updatedAt: serverTimestamp() }));
+        return true;
+    } catch (e) {
+        console.error("updateUserData error:", e);
         throw e;
     }
 }
@@ -160,7 +198,7 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
                     }
                 ]
             };
-            batch.set(customerRef, data, { merge: true });
+            batch.set(customerRef, sanitizeFirebaseData(data), { merge: true });
             results.push(data);
         }
         await batch.commit();
@@ -291,7 +329,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
             cleanedData.statusHistory = statusHistory;
         }
 
-        await updateDoc(customerRef, { ...cleanedData, updatedAt: serverTimestamp() });
+        await updateDoc(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }));
 
         await addAuditLog(action, detail, userEmail, category, {
             targetId: id,
@@ -323,9 +361,37 @@ export async function addAuditLog(action: string, details: string, userEmail: st
     } catch (e) { }
 }
 
+export async function logError(error: any, context: string = "CLIENT", userEmail: string = "anonymous") {
+    try {
+        const logRef = doc(collection(db, ERRORS_COLLECTION));
+        await setDoc(logRef, sanitizeFirebaseData({
+            id: logRef.id,
+            message: error.message || String(error),
+            stack: error.stack || null,
+            context,
+            userEmail,
+            url: typeof window !== 'undefined' ? window.location.href : null,
+            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+            createdAt: serverTimestamp()
+        }));
+    } catch (e) {
+        console.error("Critical: Could not log error to Firestore", e);
+    }
+}
+
 export async function getAuditLogs(limitCount: number = 200) {
     try {
         const q = query(collection(db, AUDIT_COLLECTION), orderBy("createdAt", "desc"), limit(limitCount));
+        const querySnap = await getDocs(q);
+        return querySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+        return [];
+    }
+}
+
+export async function getSystemErrors(limitCount: number = 100) {
+    try {
+        const q = query(collection(db, ERRORS_COLLECTION), orderBy("createdAt", "desc"), limit(limitCount));
         const querySnap = await getDocs(q);
         return querySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (e) {
@@ -342,7 +408,7 @@ export async function getGlobalSettings() {
 
 export async function updateGlobalSettings(data: any, userEmail: string = "system") {
     try {
-        await setDoc(doc(db, SETTINGS_COLLECTION, "current"), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(doc(db, SETTINGS_COLLECTION, "current"), sanitizeFirebaseData({ ...data, updatedAt: serverTimestamp() }), { merge: true });
         await addAuditLog("SETTINGS_UPDATE", "Qlobal tənzimləmələr yeniləndi", userEmail, "SYSTEM", { company: data.companyName });
         return true;
     } catch (e) { throw e; }
@@ -359,13 +425,13 @@ export async function getCourts() {
 export async function addCourt(courtData: any, userEmail: string = "system") {
     const docRef = doc(collection(db, COURTS_COLLECTION));
     const data = { ...courtData, id: docRef.id, createdAt: serverTimestamp() };
-    await setDoc(docRef, data);
+    await setDoc(docRef, sanitizeFirebaseData(data));
     await addAuditLog("COURT_ADD", `Yeni məhkəmə əlavə edildi: ${courtData.name}`, userEmail, "SYSTEM", { targetId: docRef.id });
     return data;
 }
 
 export async function updateCourt(id: string, courtData: any, userEmail: string = "system") {
-    await updateDoc(doc(db, COURTS_COLLECTION, id), { ...courtData, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, COURTS_COLLECTION, id), sanitizeFirebaseData({ ...courtData, updatedAt: serverTimestamp() }));
     await addAuditLog("COURT_UPDATE", `Məhkəmə məlumatı yeniləndi: ${courtData.name}`, userEmail, "SYSTEM", { targetId: id });
 }
 
@@ -385,13 +451,13 @@ export async function getStores() {
 export async function addStore(name: string, userEmail: string = "system") {
     const docRef = doc(collection(db, STORES_COLLECTION));
     const data = { id: docRef.id, name, createdAt: serverTimestamp() };
-    await setDoc(docRef, data);
+    await setDoc(docRef, sanitizeFirebaseData(data));
     await addAuditLog("STORE_ADD", `Yeni mağaza əlavə edildi: ${name}`, userEmail, "SYSTEM", { targetId: docRef.id });
     return data;
 }
 
 export async function updateStore(id: string, name: string, userEmail: string = "system") {
-    await updateDoc(doc(db, STORES_COLLECTION, id), { name, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, STORES_COLLECTION, id), sanitizeFirebaseData({ name, updatedAt: serverTimestamp() }));
     await addAuditLog("STORE_UPDATE", `Mağaza nömrəsi yeniləndi: ${name}`, userEmail, "SYSTEM", { targetId: id });
 }
 
@@ -411,7 +477,7 @@ export async function getTemplates() {
 export async function addTemplate(data: any, userEmail: string = "system") {
     const docRef = doc(collection(db, TEMPLATES_COLLECTION));
     const finalData = { ...data, id: docRef.id, createdAt: serverTimestamp() };
-    await setDoc(docRef, finalData);
+    await setDoc(docRef, sanitizeFirebaseData(finalData));
     await addAuditLog("TEMPLATE_ADD", `Yeni şablon əlavə edildi: ${data.name}`, userEmail, "SYSTEM", { targetId: docRef.id });
     return docRef.id;
 }
@@ -422,6 +488,6 @@ export async function deleteTemplate(id: string, userEmail: string = "system") {
 }
 
 export async function updateTemplate(id: string, data: any, userEmail: string = "system") {
-    await updateDoc(doc(db, TEMPLATES_COLLECTION, id), { ...data, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, TEMPLATES_COLLECTION, id), sanitizeFirebaseData({ ...data, updatedAt: serverTimestamp() }));
     await addAuditLog("TEMPLATE_UPDATE", `Şablon yeniləndi: ${data.name}`, userEmail, "SYSTEM", { targetId: id });
 }

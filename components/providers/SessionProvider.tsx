@@ -11,7 +11,7 @@ import { toast } from "sonner";
 interface AppUser {
     email: string;
     displayName: string;
-    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "ARCHIVER" | "PENDING";
+    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "INSPECTOR_LEAD" | "ARCHIVER" | "DEP_HEAD" | "AUDIT_LEAD" | "PENDING";
     permissions: string[];
 }
 
@@ -87,6 +87,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const requiredPermissions = PATH_TO_PERMISSION_MAP[path] || [];
         if (requiredPermissions.length === 0) return true;
+
+        if (user.role === "MANAGER" && path === "/settings") return true;
 
         return user.permissions.some(p => requiredPermissions.includes(p as PermissionID));
     }, [user]);
