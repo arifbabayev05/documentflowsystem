@@ -60,7 +60,7 @@ export default function UsersPage() {
     const { user: currentUser, can, isLoading } = useAuth();
     const [users, setUsers] = useState<UserDoc[]>([]);
 
-    if (!isLoading && (!currentUser || (currentUser.role !== 'SUPERADMIN' && currentUser.role !== 'MANAGER' && currentUser.role !== 'INSPECTOR_LEAD'))) {
+    if (!isLoading && (!currentUser || (currentUser.role !== 'SUPERADMIN' && currentUser.role !== 'MANAGER' && currentUser.role !== 'INSPECTOR_LEAD' && currentUser.role !== 'ARCHIVE_MANAGER'))) {
         return (
             <AuthGuard>
                 <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -183,10 +183,11 @@ export default function UsersPage() {
     };
 
     const filteredUsers = users.filter(u => {
-        // Manager only sees PENDING and ADMIN users. Inspector Lead sees PENDING and INSPECTOR users. SuperAdmin sees all.
+        // Manager: ADMIN/PENDING, Inspector Lead: INSPECTOR/PENDING, Archive Manager: ARCHIVER/PENDING, SuperAdmin: all
         const canSeeUser = currentUser.role === 'SUPERADMIN' ? true :
             (currentUser.role === 'MANAGER' ? (u.role === 'PENDING' || u.role === 'ADMIN') :
-                (currentUser.role === 'INSPECTOR_LEAD' ? (u.role === 'PENDING' || u.role === 'INSPECTOR') : false));
+                (currentUser.role === 'INSPECTOR_LEAD' ? (u.role === 'PENDING' || u.role === 'INSPECTOR') :
+                    (currentUser.role === 'ARCHIVE_MANAGER' ? (u.role === 'PENDING' || u.role === 'ARCHIVER') : false)));
         if (!canSeeUser) return false;
 
         const matchesSearch = u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -435,7 +436,7 @@ export default function UsersPage() {
                                                     <Edit size={12} />
                                                     <span>Düzəliş</span>
                                                 </button>
-                                                {currentUser.role === 'SUPERADMIN' && u.id !== currentUser.email && (
+                                                {(currentUser.role === 'SUPERADMIN' || currentUser.role === 'ARCHIVE_MANAGER' || currentUser.role === 'MANAGER' || currentUser.role === 'INSPECTOR_LEAD') && u.id !== currentUser.email && (
                                                     <button
                                                         onClick={() => handleDeleteUser(u)}
                                                         className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-red-100 text-red-500 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all text-[10px] font-black shadow-sm uppercase tracking-wider"
@@ -491,7 +492,13 @@ export default function UsersPage() {
                                             className="w-full pl-14 pr-12 py-4 bg-gray-50 border border-slate-200 rounded-2xl text-[15px] font-black text-slate-900 outline-none focus:bg-white focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all appearance-none cursor-pointer"
                                         >
                                             {Object.entries(ROLE_LABELS)
-                                                .filter(([key]) => currentUser?.role === 'SUPERADMIN' ? true : key !== 'SUPERADMIN')
+                                                .filter(([key]) => {
+                                                    if (currentUser?.role === 'SUPERADMIN') return true;
+                                                    if (currentUser?.role === 'MANAGER') return key === 'ADMIN' || key === 'PENDING';
+                                                    if (currentUser?.role === 'INSPECTOR_LEAD') return key === 'INSPECTOR' || key === 'PENDING';
+                                                    if (currentUser?.role === 'ARCHIVE_MANAGER') return key === 'ARCHIVER' || key === 'PENDING';
+                                                    return false;
+                                                })
                                                 .map(([key, label]) => (
                                                     <option key={key} value={key}>{label}</option>
                                                 ))}

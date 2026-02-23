@@ -24,13 +24,14 @@ const menuItems = [
     { icon: LayoutDashboard, label: "Statistika", href: "/analytics" },
     { icon: UsersIcon, label: "Müştəri bazası", href: "/dashboard" },
     { icon: Mail, label: "Müştəri Məlumatı", href: "/letter-list" },
-    { icon: Briefcase, label: "Müfəttiş Paneli", href: "/inspector" },
     { icon: FolderArchive, label: "Arxiv Müştərilər", href: "/customers/archived" },
+    { icon: UsersIcon, label: "Müfəttiş İdarəsi", href: "/inspectors" },
+    { icon: Briefcase, label: "Müfəttiş Paneli", href: "/inspector" },
     { icon: FileText, label: "Arxivçi", href: "/archive" },
     { icon: History, label: "Audit Loqları", href: "/audit-logs" },
-    { icon: Settings, label: "Parametrlər", href: "/parameters" },
-    { icon: UsersIcon, label: "Müfəttiş İdarəsi", href: "/inspectors" },
     { icon: UsersIcon, label: "İstifadəçilər", href: "/settings" },
+    { icon: Settings, label: "Parametrlər", href: "/parameters" },
+
 ];
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {

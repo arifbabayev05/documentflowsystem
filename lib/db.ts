@@ -69,7 +69,7 @@ export async function getRolePermissions(role: string) {
     if (role === "ADMIN") return ["page_customers"];
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
-    if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers"];
+    if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers", "page_users"];
     if (role === "DEP_HEAD") return ["page_analytics", "page_parameters"];
     if (role === "AUDIT_LEAD") return ["page_analytics", "page_audit_logs", "page_parameters", "page_users"];
     return []; // PENDING or others have no default permissions

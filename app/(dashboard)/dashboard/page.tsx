@@ -488,6 +488,7 @@ const CustomerCard = memo(({
     const [isEditing, setIsEditing] = useState(!row.id);
     const [isExpanded, setIsExpanded] = useState(!row.id);
     const [showMore, setShowMore] = useState(false);
+    const [showActualAddress, setShowActualAddress] = useState(!!row.details?.actualAddress);
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
     const [openStoreDropdownId, setOpenStoreDropdownId] = useState<string | null>(null);
     const [storeSearch, setStoreSearch] = useState("");
@@ -822,10 +823,38 @@ const CustomerCard = memo(({
     };
 
     const removeInvoice = (id: string) => {
-        setLocalData(prev => ({
-            ...prev,
-            details: { ...prev.details, invoices: prev.details?.invoices?.filter(i => i.id !== id) }
-        }));
+        setLocalData(prev => {
+            const invoices = (prev.details?.invoices || []).filter(i => i.id !== id);
+            const newData = { ...prev, details: { ...prev.details, invoices } };
+
+            // Recalculate debt totals
+            let totalPrice = 0, totalPaid = 0, fee = 0;
+            invoices.forEach((inv: any) => {
+                (inv.orders || []).forEach((o: any) => {
+                    const p = parseFloat((o.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                    const m = parseFloat((o.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                    const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
+                    totalPrice += (p * m) + i;
+                    totalPaid += parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
+                    if (o.hasImieFee === true || o.hasImieFee === 'true') fee += 23.6;
+                });
+            });
+            const unpaid = Math.max(0, totalPrice - totalPaid);
+            const penalty = unpaid * 0.10;
+            const totalDebt = unpaid + fee + penalty;
+            const discount = unpaid + penalty;
+            if (newData.details) {
+                newData.details.totalPrice = totalPrice.toFixed(2);
+                newData.details.paidAmount = totalPaid.toFixed(2);
+                newData.details.unpaidAmount = unpaid.toFixed(2);
+                newData.details.fee = fee.toFixed(2);
+                newData.details.penalty = penalty.toFixed(2);
+                newData.details.totalUnpaid = totalDebt.toFixed(2);
+                newData.details.discountAmount = discount.toFixed(2);
+            }
+            newData.debtAmount = totalDebt.toFixed(2);
+            return newData;
+        });
     };
 
     const removeOrder = (invId: string, orderId: string) => {
@@ -838,7 +867,35 @@ const CustomerCard = memo(({
                 ...invoices[idx],
                 orders: (invoices[idx].orders || []).filter(o => o.id !== orderId)
             };
-            return { ...prev, details: { ...prev.details, invoices } };
+            const newData = { ...prev, details: { ...prev.details, invoices } };
+
+            // Recalculate debt totals
+            let totalPrice = 0, totalPaid = 0, fee = 0;
+            invoices.forEach((inv: any) => {
+                (inv.orders || []).forEach((o: any) => {
+                    const p = parseFloat((o.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                    const m = parseFloat((o.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                    const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
+                    totalPrice += (p * m) + i;
+                    totalPaid += parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
+                    if (o.hasImieFee === true || o.hasImieFee === 'true') fee += 23.6;
+                });
+            });
+            const unpaid = Math.max(0, totalPrice - totalPaid);
+            const penalty = unpaid * 0.10;
+            const totalDebt = unpaid + fee + penalty;
+            const discount = unpaid + penalty;
+            if (newData.details) {
+                newData.details.totalPrice = totalPrice.toFixed(2);
+                newData.details.paidAmount = totalPaid.toFixed(2);
+                newData.details.unpaidAmount = unpaid.toFixed(2);
+                newData.details.fee = fee.toFixed(2);
+                newData.details.penalty = penalty.toFixed(2);
+                newData.details.totalUnpaid = totalDebt.toFixed(2);
+                newData.details.discountAmount = discount.toFixed(2);
+            }
+            newData.debtAmount = totalDebt.toFixed(2);
+            return newData;
         });
     };
 
@@ -1225,15 +1282,42 @@ const CustomerCard = memo(({
                                                     prodCount += (inv.orders?.length || 0);
                                                 });
 
+                                                // Archive counts: requested vs uploaded
+                                                const requestedInvs = invoices.filter((inv: any) => inv.archiveRequested);
+                                                const uploadedInvs = requestedInvs.filter((inv: any) => inv.archiveUrl || inv.archiveBase64);
+                                                const archTotal = requestedInvs.length;
+                                                const archUploaded = uploadedInvs.length;
+                                                const archiveComplete = archTotal > 0 && archUploaded === archTotal;
+                                                const archivePartial = archTotal > 0 && archUploaded < archTotal;
+
                                                 if (invCount === 0) return null;
 
                                                 return (
-                                                    <div className="flex items-center gap-2 bg-slate-900/[0.03] text-slate-600 border border-slate-200/60 px-2.5 py-1 rounded-lg shrink-0">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span className="text-[10px] font-black uppercase tracking-wider">{invCount} Faktura</span>
-                                                            <div className="w-1 h-1 rounded-full bg-slate-300" />
-                                                            <span className="text-[10px] font-black uppercase tracking-wider">{prodCount} Məhsul</span>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        {/* Invoice / Product count */}
+                                                        <div className="flex items-center gap-2 bg-slate-900/[0.03] text-slate-600 border border-slate-200/60 px-2.5 py-1 rounded-lg shrink-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-[10px] font-black uppercase tracking-wider">{invCount} Faktura</span>
+                                                                <div className="w-1 h-1 rounded-full bg-slate-300" />
+                                                                <span className="text-[10px] font-black uppercase tracking-wider">{prodCount} Məhsul</span>
+                                                            </div>
                                                         </div>
+
+                                                        {/* Archive badge - partial */}
+                                                        {archivePartial && (
+                                                            <div className="flex items-center gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-lg shrink-0">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8v13H3V8" /><path d="M1 3h22v5H1z" /><path d="M10 12h4" /></svg>
+                                                                <span className="text-[10px] font-black uppercase tracking-wider">{archUploaded}/{archTotal} Arxiv Sənədi</span>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Archive badge - complete */}
+                                                        {archiveComplete && (
+                                                            <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg shrink-0">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                                                                <span className="text-[10px] font-black uppercase tracking-wider">Sənədlər tam hazırdır</span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })()}
@@ -1510,7 +1594,17 @@ const CustomerCard = memo(({
 
                                     {/* Address info merged inside personal block as requested */}
                                     <div className="pt-2 grid grid-cols-1 gap-4">
-
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Ünvan Məlumatları</span>
+                                            {isEditing && !showActualAddress && !isKarabakhAddress(getValue("details.address")) && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); setShowActualAddress(true); }}
+                                                    className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-all bg-orange-50 hover:bg-orange-100 border border-orange-200/50 px-2 py-1 rounded-lg"
+                                                >
+                                                    <Plus size={10} strokeWidth={3} /> Faktiki Ünvan
+                                                </button>
+                                            )}
+                                        </div>
                                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                             <CustomerField
                                                 label="Qeydiyyat Ünvanı"
@@ -1519,10 +1613,23 @@ const CustomerCard = memo(({
                                                 value={getValue("details.address")}
                                                 onChange={handleFieldChange}
                                                 isEditing={isEditing}
-                                                className={!isKarabakhAddress(getValue("details.address")) ? "lg:col-span-2" : ""}
+                                                className={!isKarabakhAddress(getValue("details.address")) && !showActualAddress ? "lg:col-span-2" : ""}
                                             />
-                                            {isKarabakhAddress(getValue("details.address")) && (
-                                                <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Şəhər, Rayon..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} className=" rounded-xl bg-orange-50/5" />
+                                            {(isKarabakhAddress(getValue("details.address")) || showActualAddress) && (
+                                                <div className="flex items-start gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                                                    <div className="flex-1">
+                                                        <CustomerField label="Faktiki Yaşayış" path="details.actualAddress" placeholder="Şəhər, Rayon..." value={getValue("details.actualAddress")} onChange={handleFieldChange} isEditing={isEditing} />
+                                                    </div>
+                                                    {isEditing && !isKarabakhAddress(getValue("details.address")) && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); setShowActualAddress(false); handleFieldChange("details.actualAddress", ""); }}
+                                                            className="mt-6 h-8 w-8 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-red-50 hover:text-red-500 text-slate-400 transition-all shrink-0"
+                                                            title="Faktiki ünvanı sil"
+                                                        >
+                                                            <X size={13} strokeWidth={2.5} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     </div>
@@ -1816,9 +1923,9 @@ const CustomerCard = memo(({
                                                                 >
                                                                     <Smartphone size={14} />
                                                                     {ord.hasImieFee === true
-                                                                        ? "İMEİ aktiv"
+                                                                        ? "İMEİ deaktiv"
                                                                         : ord.hasImieFee === false
-                                                                            ? "İMEİ deaktiv"
+                                                                            ? "İMEİ aktiv"
                                                                             : "İMEİ yoxla"}
                                                                 </button>
                                                             </div>
@@ -1922,7 +2029,7 @@ const CustomerCard = memo(({
                                                     <div className="mt-6 pt-5 border-t border-slate-500 flex items-center justify-between">
                                                         <div className="flex items-center gap-3">
                                                             <div className="h-2 w-2 rounded-full bg-primary/20 animate-pulse" />
-                                                            <span className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em]">CƏMİ MƏBLƏĞ</span>
+                                                            <span className="text-[11px] font-black text-slate-600 uppercase tracking-[0.2em]">ALQI SATQI QİYMƏTİ</span>
                                                         </div>
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-xl font-black text-slate-900 tracking-tighter">{ord.totalPrice || "0.00"}</span>
