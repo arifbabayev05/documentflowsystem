@@ -2,17 +2,45 @@
 
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter, usePathname } from "next/navigation";
-import { useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Loader2, UserCircle, Menu, Save, Phone, AlertCircle } from "lucide-react";
+import { formatPhoneInput } from "@/lib/format";
+import { toast } from "sonner";
 
 interface AuthGuardProps {
     children: React.ReactNode;
 }
 
 export default function AuthGuard({ children }: AuthGuardProps) {
-    const { user, isLoading } = useAuth();
+    const { user, isLoading, updateProfile } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
+
+    const [phoneValue, setPhoneValue] = useState("");
+    const [isUpdating, setIsUpdating] = useState(false);
+
+    useEffect(() => {
+        if (user?.phoneNumber) {
+            setPhoneValue(user.phoneNumber);
+        }
+    }, [user?.phoneNumber]);
+
+    const handleSavePhone = async () => {
+        if (!phoneValue.trim() || phoneValue.length < 10) {
+            toast.error("Zəhmət olmasa düzgün nömrə daxil edin");
+            return;
+        }
+        setIsUpdating(true);
+        try {
+            await updateProfile({ phoneNumber: phoneValue });
+            toast.success("Məlumatlar yeniləndi");
+            router.push("/inspector");
+        } catch (e) {
+            // Error toast handled in updateProfile
+        } finally {
+            setIsUpdating(false);
+        }
+    };
 
     useEffect(() => {
         if (!isLoading && !user) {
@@ -74,6 +102,66 @@ export default function AuthGuard({ children }: AuthGuardProps) {
                             Çıxış et
                         </button>
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Phone Number Blocking for Inspector
+    if (user.role === "INSPECTOR" && !user.phoneNumber?.trim()) {
+        return (
+            <div className="flex flex-col items-center justify-center h-[90vh] text-center p-6 space-y-12 animate-in fade-in zoom-in duration-700">
+                <div className="relative">
+                    <div className="w-32 h-32 bg-white rounded-[3rem] flex items-center justify-center border-4 border-slate-50 shadow-2xl relative z-10">
+                        <UserCircle size={64} className="text-primary" />
+                    </div>
+                    <div className="absolute -inset-4 bg-primary/5 rounded-[4rem] blur-2xl -z-0" />
+                    <div className="absolute -top-2 -right-2 bg-amber-500 text-white p-2 rounded-2xl shadow-lg animate-bounce">
+                        <AlertCircle size={24} />
+                    </div>
+                </div>
+
+                <div className="max-w-md space-y-6">
+                    <div className="space-y-2">
+                        <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">Profil Tamamlanmayıb</h2>
+                        <p className="text-slate-500 font-bold text-lg leading-relaxed">
+                            Hörmətli Müfəttiş, işə başlamaq üçün əlaqə nömrənizi daxil etməyiniz mütləqdir.
+                        </p>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-2xl shadow-slate-200/50 space-y-6">
+                        <div className="space-y-2 text-left">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Əlaqə nömrəsi</label>
+                            <div className="relative group">
+                                <Phone size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" />
+                                <input
+                                    type="text"
+                                    value={phoneValue}
+                                    onChange={(e) => setPhoneValue(formatPhoneInput(e.target.value))}
+                                    placeholder="(050) 000-00-00"
+                                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-5 text-lg font-black text-slate-700 outline-none focus:bg-white focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all placeholder:text-slate-200"
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSavePhone()}
+                                />
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleSavePhone}
+                            disabled={isUpdating || !phoneValue.trim()}
+                            className="w-full bg-primary text-white py-5 rounded-2xl font-black shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all text-sm uppercase tracking-widest flex items-center justify-center gap-3 disabled:opacity-50 disabled:hover:scale-100"
+                        >
+                            {isUpdating ? (
+                                <Loader2 size={18} className="animate-spin" />
+                            ) : (
+                                <Save size={18} />
+                            )}
+                            Məlumatları Yadda Saxla
+                        </button>
+                    </div>
+
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pt-4">
+                        Nömrəniz daxil etdiyiniz müştərilərin sənədlərində istifadə ediləcək.
+                    </p>
                 </div>
             </div>
         );

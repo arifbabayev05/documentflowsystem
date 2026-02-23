@@ -91,6 +91,27 @@ const isKarabakhAddress = (address: string | undefined) => {
     return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
 };
 
+const getImeisFromDescription = (description: string) => {
+    const parts = description.split(/[,;\n]/);
+    const results: { imei: string; name: string }[] = [];
+    parts.forEach(part => {
+        const imeiMatch = part.match(/\b\d{15}\b/);
+        if (imeiMatch) {
+            const imei = imeiMatch[0];
+            let name = part.replace(imei, '')
+                .replace(/imei\s*kod/gi, '')
+                .replace(/imei/gi, '')
+                .replace(/kod/gi, '')
+                .replace(/[():]/g, '')
+                .trim();
+            // Clean up leading/trailing dashes or symbols
+            name = name.replace(/^[-. ]+|[-. ]+$/g, '');
+            results.push({ imei, name: name || "Telefon" });
+        }
+    });
+    return results;
+};
+
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -156,6 +177,7 @@ interface Customer {
                 paidAmount: string;
                 totalPrice: string;
                 hasImieFee?: boolean;
+                checkedImeis?: string[];
             }>;
         }>;
     };
@@ -219,35 +241,33 @@ function getAllImeiProductsShort(invoices: any[]): string {
     const allImeiItems: string[] = [];
     (invoices || []).forEach((inv: any) => {
         (inv.orders || []).forEach((ord: any) => {
-            const isActive = ord.hasImieFee === true || ord.hasImieFee === 'true';
-            if (!isActive) return;
+            const checkedIds = ord.checkedImeis || [];
 
-            const desc = ord.productDescription || "";
-            // Find 15 or 16 digit IMEI
-            const imeiMatch = desc.match(/\d{15,16}/);
-
-            if (imeiMatch) {
-                const imei = imeiMatch[0];
-                const imeiIdx = desc.indexOf(imei);
-                const before = desc.substring(0, imeiIdx).trim();
-                const after = desc.substring(imeiIdx + imei.length);
-
-                // Split by comma and find the first non-empty segment which is the model name
-                const segments = after.split(",").map((s: string) => s.trim()).filter(Boolean);
-                const modelName = segments[0] || "";
-
-                // Construct clean short name: Label + IMEI + Model
-                const basic = `${before} ${imei} ${modelName}`.replace(/\s+/g, ' ').trim();
-
-                if (basic && !allImeiItems.includes(basic)) {
-                    allImeiItems.push(basic);
-                }
-            } else {
-                // Fallback: If no 15-digit number found but marked as IMEI, take first 2 segments
-                const segments = desc.split(",").map((s: string) => s.trim()).filter(Boolean);
-                const shortDesc = segments.slice(0, 2).join(" ");
-                if (shortDesc && !allImeiItems.includes(shortDesc)) {
-                    allImeiItems.push(shortDesc);
+            if (checkedIds.length > 0) {
+                const detected = getImeisFromDescription(ord.productDescription || "");
+                checkedIds.forEach((id: string) => {
+                    const match = detected.find(d => d.imei === id);
+                    if (match) {
+                        const clean = `İMEİ kod ${match.imei} ${match.name}`.replace(/\s+/g, ' ').trim();
+                        if (!allImeiItems.includes(clean)) allImeiItems.push(clean);
+                    }
+                });
+            } else if (ord.hasImieFee === true || ord.hasImieFee === 'true') {
+                const desc = ord.productDescription || "";
+                const imeiMatch = desc.match(/\d{15,16}/);
+                if (imeiMatch) {
+                    const imei = imeiMatch[0];
+                    const imeiIdx = desc.indexOf(imei);
+                    const before = desc.substring(0, imeiIdx).trim();
+                    const after = desc.substring(imeiIdx + imei.length);
+                    const segments = after.split(",").map((s: string) => s.trim()).filter(Boolean);
+                    const modelName = segments[0] || "";
+                    const basic = `${before} ${imei} ${modelName}`.replace(/\s+/g, ' ').trim();
+                    if (basic && !allImeiItems.includes(basic)) allImeiItems.push(basic);
+                } else {
+                    const segments = desc.split(",").map((s: string) => s.trim()).filter(Boolean);
+                    const shortDesc = segments.slice(0, 2).join(" ");
+                    if (shortDesc && !allImeiItems.includes(shortDesc)) allImeiItems.push(shortDesc);
                 }
             }
         });
@@ -256,7 +276,6 @@ function getAllImeiProductsShort(invoices: any[]): string {
     if (allImeiItems.length === 0) return "";
     if (allImeiItems.length === 1) return allImeiItems[0] + " markalı";
 
-    // Multiple items case: "İmei kod X MODEL markalı telefon üçün 23.6 (sozle) manat, İmei kod Y MODEL... olmaqla,"
     const feeValue = 23.6;
     const feeWords = numberToAzerbaijaniFinancialWords(feeValue);
     const formatted = allImeiItems.map(item => {
@@ -270,15 +289,21 @@ function getAllImeiProducts(invoices: any[]): string {
     const allImeiItems: string[] = [];
     (invoices || []).forEach((inv: any) => {
         (inv.orders || []).forEach((ord: any) => {
-            const isActive = ord.hasImieFee === true || ord.hasImieFee === 'true';
-            if (isActive) {
-                const desc = ord.productDescription || "";
-                const parts = desc.split(",");
-                parts.forEach((p: string) => {
-                    const trimmed = p.trim();
-                    if (!trimmed) return;
-                    allImeiItems.push(trimmed);
+            const checkedIds = ord.checkedImeis || [];
+            if (checkedIds.length > 0) {
+                const detected = getImeisFromDescription(ord.productDescription || "");
+                checkedIds.forEach((id: string) => {
+                    const match = detected.find(d => d.imei === id);
+                    if (match) {
+                        const clean = `İMEİ kod ${match.imei} ${match.name}`.replace(/\s+/g, ' ').trim();
+                        if (!allImeiItems.includes(clean)) allImeiItems.push(clean);
+                    }
                 });
+            } else if (ord.hasImieFee === true || ord.hasImieFee === 'true') {
+                const desc = ord.productDescription || "";
+                if (desc && !allImeiItems.includes(desc)) {
+                    allImeiItems.push(desc);
+                }
             }
         });
     });
@@ -329,7 +354,9 @@ function buildInvoiceData(
     // İLM rüsumu
     let invIlmFee = 0;
     for (const ord of orders) {
-        if (ord.hasImieFee === true || ord.hasImieFee === 'true') {
+        if (Array.isArray(ord.checkedImeis) && ord.checkedImeis.length > 0) {
+            invIlmFee += 23.6 * ord.checkedImeis.length;
+        } else if (ord.hasImieFee === true || ord.hasImieFee === 'true') {
             invIlmFee += 23.6;
         }
     }
@@ -953,8 +980,16 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
             <style jsx global>{`
                 .preview-container {
                     width: 100%;
-                    background: white;
+                    background: #cbd5e1;
                     min-height: 1122px;
+                    display: flex;
+                    justify-content: center;
+                }
+                .docx-wrapper-custom {
+                    width: 210mm;
+                    min-height: 297mm;
+                    background: white;
+                    box-shadow: 0 20px 50px rgba(0,0,0,0.2);
                 }
                 .docx-viewer {
                     padding: 0 !important;
@@ -966,18 +1001,21 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     box-shadow: none !important;
                     margin-bottom: 0 !important;
                 }
-                /* Let docx-preview handle the margins and spacing from the file */
-                .docx-viewer article {
-                    padding: 2.54cm !important; /* Standard fallback if file lacks margins */
+                /* Balanced padding: 2.2cm top/bottom, 1.5cm sides for a premium corporate look */
+                .docx-viewer article, .docx-viewer section.docx {
+                    padding: 2.2cm 1.5cm !important;
                     box-sizing: border-box;
                     min-height: 297mm;
-                }
-                .docx-wrapper-custom {
-                    font-family: 'Times New Roman', Times, serif !important;
-                }
-                /* Improved Page look */
-                .docx-viewer section.docx {
                     background: white !important;
+                    position: relative;
+                    word-wrap: break-word;
+                }
+                .docx-viewer table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                }
+                .docx-viewer p, .docx-viewer span, .docx-viewer td {
+                    font-family: 'Times New Roman', Times, serif !important;
                 }
             `}</style>
         </div>
@@ -1456,7 +1494,9 @@ function GenerateDocumentContent() {
                 const commaCount = (desc.match(/,/g) || []).length;
                 totalPhoneCount += Math.max(1, imeiCount, commaCount + 1);
 
-                if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
+                if (Array.isArray(ord.checkedImeis) && ord.checkedImeis.length > 0) {
+                    imeFee += 23.6 * ord.checkedImeis.length;
+                } else if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
                     imeFee += 23.6;
                 }
             });
@@ -1753,7 +1793,9 @@ function GenerateDocumentContent() {
         let calculatedFee = 0;
         updatedInvoices.forEach(inv => {
             (inv.orders || []).forEach(ord => {
-                if (ord.hasImieFee === true) {
+                if (Array.isArray(ord.checkedImeis) && ord.checkedImeis.length > 0) {
+                    calculatedFee += 23.6 * ord.checkedImeis.length;
+                } else if (ord.hasImieFee === true) {
                     calculatedFee += 23.6;
                 }
             });
@@ -2070,10 +2112,10 @@ function GenerateDocumentContent() {
                 DOVLET_RUSUMU: customer.details?.courtFee || "",
                 PENYA_FAIZ: "1",
                 XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
-                IMEI_SECTION: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
+                IMEI_SECTION: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => (ord.checkedImeis && ord.checkedImeis.length > 0) || ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
                     ? `Müştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “${companyInfo?.companyName || ""}” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
                     : "",
-                IMEI_TEXT: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
+                IMEI_TEXT: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => (ord.checkedImeis && ord.checkedImeis.length > 0) || ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
                     ? `Müştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “${companyInfo?.companyName || ""}” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
                     : "",
                 INVOICES: invoicesData,
@@ -2362,7 +2404,7 @@ function GenerateDocumentContent() {
                                                     @page { size: A4; margin: 0; }
                                                     body { margin: 0; padding: 0; font-family: 'Times New Roman', serif; }
                                                     .docx-wrapper { background: white !important; padding: 0 !important; }
-                                                    .docx { box-shadow: none !important; margin: 0 !important; padding: 2.54cm !important; width: 100% !important; box-sizing: border-box; }
+                                                    .docx { box-shadow: none !important; margin: 0 !important; padding: 1.5cm 1.91cm !important; width: 100% !important; box-sizing: border-box; }
                                                 `;
                                                 printDoc.head.appendChild(style);
 
@@ -2446,19 +2488,106 @@ function GenerateDocumentContent() {
                                     if (printContainer) {
                                         const printDoc = printContainer.contentDocument || printContainer.contentWindow?.document;
                                         if (printDoc) {
-                                            printDoc.body.innerHTML = '<div id="print-mount"></div>';
-                                            const mountPoint = printDoc.getElementById('print-mount');
+                                            // The ultimate professional printing trick:
+                                            // 1. @page { margin: 0 } hides browser headers/footers
+                                            // 2. A table with thead/tfoot repeats margins on every page
+                                            printDoc.body.innerHTML = `
+                                                <div id="print-mount">
+                                                    <table class="print-table">
+                                                        <thead><tr><td><div class="print-margin-top"></div></td></tr></thead>
+                                                        <tbody>
+                                                            <tr>
+                                                                <td class="print-content-cell">
+                                                                    <div id="print-content"></div>
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                        <tfoot><tr><td><div class="print-margin-bottom"></div></td></tr></tfoot>
+                                                    </table>
+                                                </div>
+                                            `;
+                                            const contentPoint = printDoc.getElementById('print-content');
 
                                             // 1. Add Print Styles to Iframe
                                             const style = printDoc.createElement('style');
                                             style.textContent = `
-                                                @page { size: A4; margin: 0; }
-                                                body { margin: 0; padding: 0; font-family: 'Times New Roman', serif; }
-                                                .docx-wrapper { background: white !important; padding: 0 !important; }
-                                                .docx { box-shadow: none !important; margin: 0 !important; padding: 2.54cm !important; width: 100% !important; box-sizing: border-box; }
-                                                .print-page { page-break-after: always; width: 100%; position: relative; }
-                                                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-                                                .file-preview { display: flex; flex-direction: column; items-center; justify-content: center; min-height: 100vh; padding: 2cm; box-sizing: border-box; }
+                                                @page { 
+                                                    size: A4; 
+                                                    margin: 0mm !important; 
+                                                }
+                                                body { 
+                                                    margin: 0 !important; 
+                                                    padding: 0 !important; 
+                                                    background: white !important;
+                                                    width: 100%;
+                                                }
+                                                .print-margin-top { height: 2.2cm; display: block; width: 100%; }
+                                                .print-margin-bottom { height: 2.0cm; display: block; width: 100%; }
+                                                .print-content-cell {
+                                                    padding: 0 1.5cm;
+                                                    vertical-align: top;
+                                                    width: 100%;
+                                                }
+                                                /* Pull only the first page content up to have a tighter court header (1.5cm vs 2.2cm) */
+                                                #print-content > .page-separator:first-child {
+                                                    margin-top: -0.7cm !important;
+                                                }
+                                                thead { display: table-header-group !important; }
+                                                tfoot { display: table-footer-group !important; }
+                                                .print-table {
+                                                    width: 100%;
+                                                    border-collapse: collapse;
+                                                    table-layout: auto;
+                                                }
+                                                .docx-wrapper { 
+                                                    background: white !important; 
+                                                    padding: 0 !important; 
+                                                }
+                                                .docx { 
+                                                    box-shadow: none !important; 
+                                                    margin: 0 !important; 
+                                                    padding: 0 !important; 
+                                                    width: 100% !important; 
+                                                }
+                                                .docx table { width: 100% !important; border-collapse: collapse !important; }
+                                                .docx td { word-break: normal !important; }
+                                                .keep-with-next {
+                                                    break-after: avoid !important;
+                                                    page-break-after: avoid !important;
+                                                }
+                                                .docx p { 
+                                                    margin: 0 !important;
+                                                    padding: 0 !important;
+                                                    orphans: 3;
+                                                    widows: 3;
+                                                }
+                                                .docx section.docx, .docx article {
+                                                    padding: 0 !important;
+                                                    margin: 0 !important;
+                                                    background: white !important;
+                                                }
+                                                .page-separator {
+                                                    width: 100%;
+                                                }
+                                                .page-separator + .page-separator {
+                                                    page-break-before: always !important;
+                                                    break-before: page !important;
+                                                }
+                                                .print-page { 
+                                                    width: 100%;
+                                                    background: white;
+                                                }
+                                                .file-preview { 
+                                                    display: flex; 
+                                                    flex-direction: column; 
+                                                    align-items: center; 
+                                                    justify-content: center; 
+                                                    width: 100%;
+                                                    height: calc(297mm - 4cm);
+                                                    box-sizing: border-box; 
+                                                    background: white;
+                                                }
+                                                img { max-width: 100%; max-height: 100%; object-fit: contain; }
                                             `;
                                             printDoc.head.appendChild(style);
 
@@ -2468,38 +2597,69 @@ function GenerateDocumentContent() {
                                             for (const template of filteredTemplates) {
                                                 const result = await generateDocument(template, true) as any;
                                                 if (result && result.content) {
-                                                    const pageDiv = printDoc.createElement('div');
-                                                    pageDiv.className = 'print-page';
-                                                    mountPoint?.appendChild(pageDiv);
-                                                    await renderAsync(result.content, pageDiv, undefined, {
+                                                    const wrapperDiv = printDoc.createElement('div');
+                                                    wrapperDiv.className = 'page-separator';
+                                                    contentPoint?.appendChild(wrapperDiv);
+
+                                                    await renderAsync(result.content, wrapperDiv, undefined, {
                                                         className: "docx-viewer",
                                                         inWrapper: false,
                                                         ignoreWidth: true,
                                                         ignoreHeight: true,
                                                         breakPages: true,
+                                                        experimental: true,
                                                     });
                                                 }
                                             }
 
                                             // 3. Render Mandatory Files into Iframe
                                             if (receiptFile && !isWarningOnly) {
-                                                const imgPage = printDoc.createElement('div');
-                                                imgPage.className = 'print-page file-preview';
-                                                imgPage.innerHTML = `<img src="${receiptFile.content}" />`;
-                                                mountPoint?.appendChild(imgPage);
+                                                const imgWrapper = printDoc.createElement('div');
+                                                imgWrapper.className = 'page-separator';
+                                                imgWrapper.innerHTML = `
+                                                    <div class="file-preview">
+                                                        <img src="${receiptFile.content}" />
+                                                    </div>
+                                                `;
+                                                contentPoint?.appendChild(imgWrapper);
                                             }
                                             if (postageFile && !isWarningOnly) {
-                                                const imgPage = printDoc.createElement('div');
-                                                imgPage.className = 'print-page file-preview';
-                                                imgPage.innerHTML = `<img src="${postageFile.content}" />`;
-                                                mountPoint?.appendChild(imgPage);
+                                                const imgWrapper = printDoc.createElement('div');
+                                                imgWrapper.className = 'page-separator';
+                                                imgWrapper.innerHTML = `
+                                                    <div class="file-preview">
+                                                        <img src="${postageFile.content}" />
+                                                    </div>
+                                                `;
+                                                contentPoint?.appendChild(imgWrapper);
                                             }
 
-                                            // 4. Trigger Print in Iframe
+                                            // 4. Run "Keep with Next" and "No Wrap" logic
                                             setTimeout(() => {
+                                                const paragraphs = contentPoint?.querySelectorAll('p');
+                                                paragraphs?.forEach(p => {
+                                                    const text = p.textContent?.trim().toUpperCase() || "";
+
+                                                    // Header detection (Keep with Next)
+                                                    if (/X\s*A\s*H\s*İ\s*Ş\s*E\s*D\s*İ\s*R\s*Ə\s*M/i.test(text)) {
+                                                        p.classList.add('keep-with-next');
+                                                        const rect = p.getBoundingClientRect();
+                                                        const pageHeight = 1122;
+                                                        const posInPage = rect.bottom % pageHeight;
+                                                        if (posInPage > pageHeight * 0.82) {
+                                                            (p as HTMLElement).style.pageBreakBefore = 'always';
+                                                        }
+                                                    }
+
+                                                    // Contact info detection (No Wrap)
+                                                    if (text.includes("TEL:") || text.includes("MOBİL") || text.includes("050") || text.includes("012")) {
+                                                        (p as HTMLElement).style.whiteSpace = 'nowrap';
+                                                    }
+                                                });
+
                                                 printContainer.contentWindow?.focus();
                                                 printContainer.contentWindow?.print();
-                                            }, 500);
+                                            }, 1200);
                                         }
                                     }
                                 } catch (err) {
@@ -2800,28 +2960,62 @@ function GenerateDocumentContent() {
                                                                         className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2.5 rounded-xl font-bold text-[12px] outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/5 transition-all resize-none scrollbar-none"
                                                                         placeholder="Məs: iPhone 13 (IMEI: ...), Kabro, Adapter"
                                                                     />
-                                                                    <div className="mt-2">
-                                                                        <button
-                                                                            onClick={(e) => {
-                                                                                e.preventDefault();
-                                                                                const newValue = ord.hasImieFee === true ? false : true;
-                                                                                updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
-                                                                            }}
-                                                                            type="button"
-                                                                            className={cn(
-                                                                                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
-                                                                                ord.hasImieFee === true
-                                                                                    ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
-                                                                                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                                                            )}
-                                                                        >
-                                                                            <Smartphone size={14} />
-                                                                            {ord.hasImieFee === true
-                                                                                ? "İMEİ deaktiv"
-                                                                                : ord.hasImieFee === false
-                                                                                    ? "İMEİ aktiv"
-                                                                                    : "İMEİ yoxla"}
-                                                                        </button>
+                                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                                        {(() => {
+                                                                            const detected = getImeisFromDescription(ord.productDescription);
+                                                                            if (detected.length === 0) {
+                                                                                return (
+                                                                                    <button
+                                                                                        onClick={(e) => {
+                                                                                            e.preventDefault();
+                                                                                            const newValue = ord.hasImieFee === true ? false : true;
+                                                                                            updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                                        }}
+                                                                                        type="button"
+                                                                                        className={cn(
+                                                                                            "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                            ord.hasImieFee === true
+                                                                                                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                        )}
+                                                                                    >
+                                                                                        <Smartphone size={14} />
+                                                                                        {ord.hasImieFee === true
+                                                                                            ? "İMEİ deaktiv"
+                                                                                            : ord.hasImieFee === false
+                                                                                                ? "İMEİ aktiv"
+                                                                                                : "İMEİ yoxla"}
+                                                                                    </button>
+                                                                                );
+                                                                            }
+
+                                                                            return detected.map((item) => {
+                                                                                const isActive = (ord.checkedImeis || []).includes(item.imei);
+                                                                                return (
+                                                                                    <button
+                                                                                        key={item.imei}
+                                                                                        onClick={(e) => {
+                                                                                            e.preventDefault();
+                                                                                            const currentChecked = ord.checkedImeis || [];
+                                                                                            const nextChecked = isActive
+                                                                                                ? currentChecked.filter(id => id !== item.imei)
+                                                                                                : [...currentChecked, item.imei];
+                                                                                            updateOrder(inv.id, ord.id, 'checkedImeis', nextChecked);
+                                                                                        }}
+                                                                                        type="button"
+                                                                                        className={cn(
+                                                                                            "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                            isActive
+                                                                                                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                        )}
+                                                                                    >
+                                                                                        <Smartphone size={14} />
+                                                                                        <span className="truncate max-w-[150px]">{item.name}: {isActive ? "DEAKTİV" : "YOXLA"}</span>
+                                                                                    </button>
+                                                                                );
+                                                                            });
+                                                                        })()}
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -3107,7 +3301,7 @@ function GenerateDocumentContent() {
                     `}</style>
                 </div>
             </div>
-        </AuthGuard>
+        </AuthGuard >
     );
 }
 

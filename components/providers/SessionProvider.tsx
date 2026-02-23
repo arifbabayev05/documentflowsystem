@@ -11,6 +11,7 @@ import { toast } from "sonner";
 interface AppUser {
     email: string;
     displayName: string;
+    phoneNumber?: string;
     role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "INSPECTOR" | "INSPECTOR_LEAD" | "ARCHIVER" | "ARCHIVE_MANAGER" | "DEP_HEAD" | "AUDIT_LEAD" | "PENDING";
     permissions: string[];
 }
@@ -23,6 +24,7 @@ interface AuthContextType {
     hasAccess: (path: string) => boolean;
     can: (permission: PermissionID) => boolean;
     logout: () => Promise<void>;
+    updateProfile: (data: Partial<AppUser>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const finalUser: AppUser = {
                 email: dbUser.email,
                 displayName: dbUser.displayName || dbUser.email.split('@')[0],
+                phoneNumber: dbUser.phoneNumber || "",
                 role: dbUser.role,
                 permissions: dbUser.permissions || []
             };
@@ -81,8 +84,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return () => unsubscribe();
     }, []);
 
+    const isPhoneRequiredMissing = useMemo(() => {
+        return user?.role === "INSPECTOR" && !user.phoneNumber?.trim();
+    }, [user]);
+
     const hasAccess = useCallback((path: string) => {
         if (!user) return false;
+
+        // Block everything for Inspector if phone is missing
+        if (isPhoneRequiredMissing) return false;
+
         if (user.role === "SUPERADMIN") return true;
 
         const requiredPermissions = PATH_TO_PERMISSION_MAP[path] || [];
@@ -95,9 +106,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const can = useCallback((permission: PermissionID) => {
         if (!user) return false;
+
+        // Block everything for Inspector if phone is missing
+        if (isPhoneRequiredMissing) return false;
+
         if (user.role === "SUPERADMIN") return true;
         return user.permissions.includes(permission);
-    }, [user]);
+    }, [user, isPhoneRequiredMissing]);
 
     const logout = async () => {
         try {
@@ -110,6 +125,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const updateProfile = async (data: Partial<AppUser>) => {
+        if (!user?.email) return;
+        try {
+            const { updateUserData } = await import("@/lib/db");
+            await updateUserData(user.email, data, user.email);
+
+            const updatedUser = { ...user, ...data };
+            setUser(updatedUser);
+            localStorage.setItem("legal12_user", JSON.stringify(updatedUser));
+        } catch (e: any) {
+            toast.error("Profil yenilənərkən xəta: " + e.message);
+            throw e;
+        }
+    };
+
     const value = useMemo(() => ({
         user,
         isLoading,
@@ -117,8 +147,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isSuperAdmin: user?.role === "SUPERADMIN",
         hasAccess,
         can,
-        logout
-    }), [user, isLoading, hasAccess, can]);
+        logout,
+        updateProfile
+    }), [user, isLoading, hasAccess, can, updateProfile]);
 
     return (
         <AuthContext.Provider value={value}>

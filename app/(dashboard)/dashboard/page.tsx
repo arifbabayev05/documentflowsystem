@@ -179,6 +179,27 @@ const isKarabakhAddress = (address: string | undefined) => {
     return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
 };
 
+const getImeisFromDescription = (description: string) => {
+    const parts = description.split(/[,;\n]/);
+    const results: { imei: string; name: string }[] = [];
+    parts.forEach(part => {
+        const imeiMatch = part.match(/\b\d{15}\b/);
+        if (imeiMatch) {
+            const imei = imeiMatch[0];
+            let name = part.replace(imei, '')
+                .replace(/imei\s*kod/gi, '')
+                .replace(/imei/gi, '')
+                .replace(/kod/gi, '')
+                .replace(/[():]/g, '')
+                .trim();
+            // Clean up leading/trailing dashes or symbols
+            name = name.replace(/^[-. ]+|[-. ]+$/g, '');
+            results.push({ imei, name: name || "Telefon" });
+        }
+    });
+    return results;
+};
+
 /**
  * Searchable User Select Component
  */
@@ -306,6 +327,7 @@ interface CustomerRow {
     assignedAt?: string; // Information when it was assigned
     isArchived?: boolean; // If true, it moves to archive list
     store?: string; // Store name
+    createdBy?: string; // Track who added the customer
     details?: {
         address?: string;
         actualAddress?: string;
@@ -353,6 +375,7 @@ interface CustomerRow {
                 paidAmount: string;
                 totalPrice: string;
                 hasImieFee?: boolean;
+                checkedImeis?: string[];
             }>;
         }>;
     };
@@ -599,7 +622,11 @@ const CustomerCard = memo(({
                     if (details.invoices && details.invoices.length > 0) {
                         details.invoices.forEach(inv => {
                             inv.orders?.forEach(o => {
-                                if (o.hasImieFee === true) fee += 23.6;
+                                if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
+                                    fee += 23.6 * o.checkedImeis.length;
+                                } else if (o.hasImieFee === true) {
+                                    fee += 23.6;
+                                }
                             });
                         });
                     } else {
@@ -1698,7 +1725,8 @@ const CustomerCard = memo(({
                                         initialPayment: getValue("details.initialPayment"),
                                         paidAmount: getValue("details.paidAmount") || "0.00",
                                         totalPrice: getValue("details.totalPrice"),
-                                        hasImieFee: undefined
+                                        hasImieFee: undefined,
+                                        checkedImeis: []
                                     }]
                                 }]).map((inv, idx) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
@@ -1907,27 +1935,60 @@ const CustomerCard = memo(({
                                                                 className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                 placeholder="Məhsul adı..."
                                                             />
-                                                            <div className="mt-1.5 flex justify-start">
-                                                                <button
-                                                                    onClick={() => {
-                                                                        if (!isEditing) setIsEditing(true);
-                                                                        const newValue = ord.hasImieFee === true ? false : true;
-                                                                        updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
-                                                                    }}
-                                                                    className={cn(
-                                                                        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
-                                                                        ord.hasImieFee === true
-                                                                            ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
-                                                                            : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                                                    )}
-                                                                >
-                                                                    <Smartphone size={14} />
-                                                                    {ord.hasImieFee === true
-                                                                        ? "İMEİ deaktiv"
-                                                                        : ord.hasImieFee === false
-                                                                            ? "İMEİ aktiv"
-                                                                            : "İMEİ yoxla"}
-                                                                </button>
+                                                            <div className="mt-1.5 flex flex-wrap gap-2">
+                                                                {(() => {
+                                                                    const detected = getImeisFromDescription(ord.productDescription || "");
+                                                                    if (detected.length === 0) {
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    if (!isEditing) setIsEditing(true);
+                                                                                    const newValue = ord.hasImieFee === true ? false : true;
+                                                                                    updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                                }}
+                                                                                className={cn(
+                                                                                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                    ord.hasImieFee === true
+                                                                                        ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                                        : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                )}
+                                                                            >
+                                                                                <Smartphone size={14} />
+                                                                                {ord.hasImieFee === true
+                                                                                    ? "İMEİ deaktiv"
+                                                                                    : ord.hasImieFee === false
+                                                                                        ? "İMEİ aktiv"
+                                                                                        : "İMEİ yoxla"}
+                                                                            </button>
+                                                                        );
+                                                                    }
+
+                                                                    return detected.map((item) => {
+                                                                        const isActive = (ord.checkedImeis || []).includes(item.imei);
+                                                                        return (
+                                                                            <button
+                                                                                key={item.imei}
+                                                                                onClick={() => {
+                                                                                    if (!isEditing) setIsEditing(true);
+                                                                                    const currentChecked = ord.checkedImeis || [];
+                                                                                    const nextChecked = isActive
+                                                                                        ? currentChecked.filter(id => id !== item.imei)
+                                                                                        : [...currentChecked, item.imei];
+                                                                                    updateOrder(inv.id, ord.id, 'checkedImeis', nextChecked);
+                                                                                }}
+                                                                                className={cn(
+                                                                                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                    isActive
+                                                                                        ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
+                                                                                        : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                )}
+                                                                            >
+                                                                                <Smartphone size={14} />
+                                                                                <span className="truncate max-w-[150px]">{item.name}: {isActive ? "DEAKTİV" : "YOXLA"}</span>
+                                                                            </button>
+                                                                        );
+                                                                    });
+                                                                })()}
                                                             </div>
                                                         </div>
 
@@ -2171,6 +2232,8 @@ export default function DashboardPage() {
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
+    const [statusFilter, setStatusFilter] = useState<ProcessStatus | "all">("all");
+    const [onlyMyEntries, setOnlyMyEntries] = useState(false);
     const [warningFilter, setWarningFilter] = useState<"all" | "sent" | "overdue" | "unsent">("all");
     const [invoiceCount, setInvoiceCount] = useState<string>("");
     const [invoiceMode, setInvoiceMode] = useState<"exact" | "min" | "max" | "all">("all");
@@ -2296,13 +2359,19 @@ export default function DashboardPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD';
+        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
 
         return rows.filter(c => {
             // Archive filter
             if (c.isArchived) return false;
 
+            // My Entries filter (only for DEP_HEAD and SUPERADMIN)
+            if (onlyMyEntries && (user?.role === 'DEP_HEAD' || user?.role === 'SUPERADMIN')) {
+                if (c.createdBy !== user?.email) return false;
+            }
+
             // First level: Role based access
+            // Inspectors see only what's assigned to them
             if (!isManager && c.assignedTo !== user?.email) {
                 // Exceptional case: If it's a new unsaved row being created right now
                 if (!c.id) return true;
@@ -2333,9 +2402,14 @@ export default function DashboardPage() {
                 }
             }
 
-            return matchesSearch && matchesWarning && matchesInvoiceCount;
+            let matchesStatus = true;
+            if (statusFilter !== "all") {
+                matchesStatus = c.process_status === statusFilter;
+            }
+
+            return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus;
         });
-    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, user?.email, user?.role]);
+    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, user?.email, user?.role]);
 
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
@@ -2384,11 +2458,26 @@ export default function DashboardPage() {
                                 )}
                             </div>
                             <div className="relative group/sel">
+                                <Zap size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
+                                <select
+                                    value={statusFilter}
+                                    onChange={(e) => setStatusFilter(e.target.value as any)}
+                                    className="pl-11 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 focus:border-primary outline-none text-[12px] font-bold transition-all shadow-sm appearance-none min-w-[200px] uppercase tracking-wider"
+                                >
+                                    <option value="all">Bütün Statuslar</option>
+                                    {STATUS_ORDER.map(status => (
+                                        <option key={status} value={status}>{STATUS_LABELS[status].label}</option>
+                                    ))}
+                                </select>
+                                <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                            </div>
+
+                            <div className="relative group/sel">
                                 <AlertTriangle size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
                                 <select
                                     value={warningFilter}
                                     onChange={(e) => setWarningFilter(e.target.value as any)}
-                                    className="pl-11 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 focus:border-primary outline-none text-sm font-semibold transition-all shadow-sm appearance-none min-w-[200px]"
+                                    className="pl-11 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 focus:border-primary outline-none text-[12px] font-bold transition-all shadow-sm appearance-none min-w-[200px] uppercase tracking-wider"
                                 >
                                     <option value="all">Bütün Xəbərdarlıqlar</option>
                                     <option value="sent">Göndərilənlər</option>
@@ -2431,6 +2520,21 @@ export default function DashboardPage() {
                                     </button>
                                 )}
                             </div>
+
+                            {(user?.role === 'SUPERADMIN' || user?.role === 'DEP_HEAD') && (
+                                <button
+                                    onClick={() => setOnlyMyEntries(!onlyMyEntries)}
+                                    className={cn(
+                                        "flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-[11px] font-black uppercase tracking-wider",
+                                        onlyMyEntries
+                                            ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
+                                            : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                                    )}
+                                >
+                                    <UserCircle size={16} className={onlyMyEntries ? "text-white" : "text-slate-400"} />
+                                    Mənim daxil etdiklərim
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

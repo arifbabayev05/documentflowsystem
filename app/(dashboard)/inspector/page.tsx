@@ -262,19 +262,6 @@ export default function InspectorPage() {
     const { user, can } = useAuth();
     const router = useRouter();
 
-    if (!user || !can("page_inspector")) {
-        return (
-            <AuthGuard>
-                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
-                        <Shield size={32} className="text-red-400" />
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
-                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Müfəttiş icazəniz olmalıdır.</p>
-                </div>
-            </AuthGuard>
-        );
-    }
     const [rows, setRows] = useState<EntryRow[]>([{ ...EMPTY_ROW }]);
     const [history, setHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -363,6 +350,22 @@ export default function InspectorPage() {
             return true;
         });
     }, [history, dateRange]);
+
+    if (!user || !can("page_inspector")) {
+        return (
+            <AuthGuard>
+                <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                    <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
+                        <Shield size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
+                    <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Müfəttiş icazəniz olmalıdır.</p>
+                </div>
+            </AuthGuard>
+        );
+    }
+
+
 
     /* ── paste handler ── */
     const handlePaste = (e: React.ClipboardEvent) => {

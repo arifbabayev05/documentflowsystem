@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import {
     Users as UsersIcon,
     LayoutDashboard,
@@ -36,7 +37,25 @@ const menuItems = [
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {
     const pathname = usePathname();
-    const { user, hasAccess, logout, isSuperAdmin, isAdmin } = useAuth();
+    const { user, hasAccess, logout, isSuperAdmin, isAdmin, updateProfile } = useAuth();
+    const [phoneValue, setPhoneValue] = useState(user?.phoneNumber || "");
+    const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
+
+    useEffect(() => {
+        setPhoneValue(user?.phoneNumber || "");
+    }, [user?.phoneNumber]);
+
+    const handlePhoneUpdate = async () => {
+        if (phoneValue === user?.phoneNumber) return;
+        setIsUpdatingPhone(true);
+        try {
+            await updateProfile({ phoneNumber: phoneValue });
+        } catch (e) {
+            // Error toast handled in updateProfile
+        } finally {
+            setIsUpdatingPhone(false);
+        }
+    };
 
     // Close sidebar on navigation (mobile)
     const handleLinkClick = () => {
@@ -103,9 +122,36 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                         <div className="flex flex-col overflow-hidden">
                             <span className="text-sm font-black text-text-main truncate">{user?.displayName}</span>
                             <span className="text-[10px] font-bold text-text-soft/60 truncate">{user?.email}</span>
+
+                            {/* Phone Input for Inspector */}
+                            {user?.role === "INSPECTOR" && (
+                                <div className="mt-2 relative">
+                                    <input
+                                        type="text"
+                                        value={phoneValue}
+                                        onChange={(e) => setPhoneValue(e.target.value)}
+                                        onBlur={handlePhoneUpdate}
+                                        onKeyDown={(e) => e.key === 'Enter' && handlePhoneUpdate()}
+                                        placeholder="Əlaqə nömrəsi..."
+                                        disabled={isUpdatingPhone}
+                                        className={cn(
+                                            "w-full bg-white border rounded-lg px-2 py-1 text-[10px] font-bold text-slate-700 outline-none transition-all placeholder:font-medium",
+                                            !user.phoneNumber?.trim()
+                                                ? "border-amber-300 ring-2 ring-amber-100 placeholder:text-amber-500"
+                                                : "border-slate-200 focus:border-primary"
+                                        )}
+                                    />
+                                    {!user.phoneNumber?.trim() && (
+                                        <div className="absolute -top-1 -right-1">
+                                            <div className="h-2 w-2 bg-amber-500 rounded-full animate-ping" />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
+
                 <button
                     onClick={logout}
                     className="flex w-full items-center gap-3 rounded-2xl px-5 py-4 text-sm font-bold text-text-soft hover:bg-red-50 hover:text-red-600 transition-all border border-transparent hover:border-red-100 group"

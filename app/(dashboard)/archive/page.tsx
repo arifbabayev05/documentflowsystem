@@ -197,9 +197,27 @@ export default function ArchiveDocumentsPage() {
         } catch { toast.error("Xəta baş verdi"); }
     };
 
-    const isCustomerDone = (c: CustomerRow) => {
+    const getArchiveCounts = (c: CustomerRow) => {
         const rel = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
-        return rel.length > 0 && rel.every(inv => !!inv.archiveUrl);
+        return {
+            total: rel.length,
+            done: rel.filter(inv => !!inv.archiveUrl).length
+        };
+    };
+
+    const isCustomerDone = (c: CustomerRow) => {
+        const { total, done } = getArchiveCounts(c);
+        return total > 0 && done === total;
+    };
+
+    const isCustomerInProgress = (c: CustomerRow) => {
+        const { total, done } = getArchiveCounts(c);
+        return done > 0 && done < total;
+    };
+
+    const isCustomerNew = (c: CustomerRow) => {
+        const { total, done } = getArchiveCounts(c);
+        return total > 0 && done === 0;
     };
 
     const visibleCustomers = useMemo(() => {
@@ -211,9 +229,9 @@ export default function ArchiveDocumentsPage() {
         return visibleCustomers.filter(c => {
             const nameMatch = c.fullName.toLowerCase().includes(s) || (c.customerCode || "").toLowerCase().includes(s);
             if (!nameMatch) return false;
-            if (filter === "pending" && (isCustomerDone(c) || !c.archiveAssignedTo)) return false;
+            if (filter === "unassigned" && !isCustomerNew(c)) return false;
+            if (filter === "pending" && !isCustomerInProgress(c)) return false;
             if (filter === "done" && !isCustomerDone(c)) return false;
-            if (filter === "unassigned" && c.archiveAssignedTo) return false;
             return true;
         });
     }, [visibleCustomers, searchTerm, filter]);
@@ -221,8 +239,8 @@ export default function ArchiveDocumentsPage() {
     const filterStats = useMemo(() => {
         return {
             all: visibleCustomers.length,
-            unassigned: visibleCustomers.filter(c => !c.archiveAssignedTo).length,
-            pending: visibleCustomers.filter(c => c.archiveAssignedTo && !isCustomerDone(c)).length,
+            unassigned: visibleCustomers.filter(c => isCustomerNew(c)).length,
+            pending: visibleCustomers.filter(c => isCustomerInProgress(c)).length,
             done: visibleCustomers.filter(c => isCustomerDone(c)).length
         };
     }, [visibleCustomers]);
