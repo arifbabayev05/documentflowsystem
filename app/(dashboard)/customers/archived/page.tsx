@@ -674,7 +674,7 @@ export default function ArchivedCustomersPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN";
+        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER";
 
         return rows.filter(c => {
             if (!c.isArchived) return false;

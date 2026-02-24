@@ -301,6 +301,10 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
             action = "ARCHIVE_REQUEST";
             category = "ARCHIVE";
             detail = "Arxiv sənəd sorğusu göndərildi";
+        } else if (data.details?.isWarningSent && !oldData?.details?.isWarningSent) {
+            action = "WARNING_SENT";
+            detail = "Xəbərdarlıq məktubu göndərildi";
+            category = "DOCUMENT";
         } else if (data.process_status && oldData?.process_status !== data.process_status) {
             action = "STATUS_CHANGE";
             const oldStatus = oldData?.process_status || 'N/A';

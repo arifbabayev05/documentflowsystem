@@ -125,6 +125,54 @@ const parseDate = (dateVal: any): Date | null => {
     return isNaN(d.getTime()) ? null : d;
 };
 
+/**
+ * Calculates working hours between two dates (09:00 - 18:00, Mon-Fri)
+ */
+const calculateWorkingHours = (startDate: Date, endDate: Date) => {
+    if (!startDate || !endDate || endDate <= startDate) return 0;
+
+    const startHour = 9;
+    const endHour = 18;
+
+    let totalMilliseconds = 0;
+    let current = new Date(startDate);
+
+    // Normalize start time
+    if (current.getHours() < startHour) {
+        current.setHours(startHour, 0, 0, 0);
+    } else if (current.getHours() >= endHour) {
+        current.setDate(current.getDate() + 1);
+        current.setHours(startHour, 0, 0, 0);
+    }
+
+    while (current < endDate) {
+        const day = current.getDay();
+        if (day === 0 || day === 6) {
+            current.setDate(current.getDate() + 1);
+            current.setHours(startHour, 0, 0, 0);
+            continue;
+        }
+
+        const dayEnd = new Date(current);
+        dayEnd.setHours(endHour, 0, 0, 0);
+
+        if (endDate < dayEnd) {
+            if (endDate.getHours() >= startHour) {
+                totalMilliseconds += endDate.getTime() - current.getTime();
+            }
+            break;
+        } else {
+            totalMilliseconds += dayEnd.getTime() - current.getTime();
+            current.setDate(current.getDate() + 1);
+            current.setHours(startHour, 0, 0, 0);
+        }
+    }
+
+    return totalMilliseconds / (1000 * 60 * 60);
+};
+
+const SYSTEM_START_DATE = new Date("2026-02-23T00:00:00");
+
 export default function AnalyticsPage() {
     const { user, can } = useAuth();
     const [loading, setLoading] = useState(true);
@@ -196,13 +244,13 @@ export default function AnalyticsPage() {
         const h = Math.floor(hours);
         const m = Math.round((hours - h) * 60);
 
-        const workDays = Math.floor(h / 8);
-        const remainingH = h % 8;
+        const workDays = Math.floor(h / 9);
+        const remainingH = h % 9;
 
         let parts = [];
         if (workDays > 0) parts.push(`${workDays} İş günü`);
         if (remainingH > 0) parts.push(`${remainingH} Saat`);
-        if (m > 0 && workDays === 0) parts.push(`${m} DƏQ`);
+        if (m > 0) parts.push(`${m} DƏQ`);
 
         return parts.length > 0 ? parts.join(' ') : "0 Saat";
     };
@@ -233,12 +281,17 @@ export default function AnalyticsPage() {
 
     const filteredCustomers = useMemo(() => {
         if (!customers.length) return [];
-        if (timeRange === 'all') return customers;
+        const filteredBySystemDate = customers.filter(c => {
+            const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+            return date && date >= SYSTEM_START_DATE;
+        });
+
+        if (timeRange === 'all') return filteredBySystemDate;
 
         if (timeRange === 'custom') {
             const from = dateFrom ? new Date(dateFrom) : null;
             const to = dateTo ? new Date(dateTo + 'T23:59:59') : null;
-            return customers.filter(c => {
+            return filteredBySystemDate.filter(c => {
                 const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
                 if (!date) return false;
                 if (from && date < from) return false;
@@ -251,7 +304,7 @@ export default function AnalyticsPage() {
         const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 365;
         const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
-        return customers.filter(c => {
+        return filteredBySystemDate.filter(c => {
             const date = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
             if (!date) return false;
             return date >= cutoff;
@@ -426,8 +479,12 @@ export default function AnalyticsPage() {
                 }
             }
 
+            // Skip data older than SYSTEM_START_DATE for time-based metrics
+            const creationDate = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+            const isNewData = creationDate && creationDate >= SYSTEM_START_DATE;
+
             // Dwell Analysis Logic (Status History)
-            if (c.statusHistory && c.statusHistory.length > 0) {
+            if (isNewData && c.statusHistory && c.statusHistory.length > 0) {
                 const history = [...c.statusHistory].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
                 const getPhaseKey = (hItem: any) => {
@@ -437,9 +494,11 @@ export default function AnalyticsPage() {
                     if (act === 'CREATE' || lbl.includes('qeydə alındı')) return 'ASSIGN_WAITING';
                     // 2. Assignment starts Inspector Fill
                     if (act === 'ASSIGN' || lbl.includes('Müfəttiş təyin edildi')) return 'INSPECTOR_FILL';
-                    // 3. Archive Request starts Archive Waiting
+                    // 3. Warning Sent starts Archive Waiting (or keep existing logic)
+                    if (act === 'WARNING_SENT' || lbl.includes('Xəbərdarlıq məktubu')) return 'ARCHIVE_WAITING';
+                    // 4. Archive Request starts Archive Waiting
                     if (act === 'ARCHIVE_REQUEST' || lbl.includes('Arxiv sorğusu')) return 'ARCHIVE_WAITING';
-                    // 4. File Upload starts Final Doc Prep
+                    // 5. File Upload starts Final Doc Prep
                     if (act === 'FILE_UPLOAD' || lbl.includes('Arxiv sənədi yükləndi')) return 'FINAL_DOC_PREP';
                     return null;
                 };
@@ -449,7 +508,7 @@ export default function AnalyticsPage() {
                 for (let i = 1; i < history.length; i++) {
                     const prev = history[i - 1];
                     const curr = history[i];
-                    const diffHours = Math.max(0, (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / (1000 * 60 * 60));
+                    const diffHours = calculateWorkingHours(new Date(prev.timestamp), new Date(curr.timestamp));
 
                     if (currentPhase && dwellMap[currentPhase]) {
                         if (!selectedPerfUser || curr.user === selectedPerfUser) {
@@ -478,39 +537,42 @@ export default function AnalyticsPage() {
                 // Add time from last action to NOW if not completed
                 if (currentPhase && dwellMap[currentPhase] && status !== 'COMPLETED') {
                     const last = history[history.length - 1];
-                    const diffHoursNow = Math.max(0, (now.getTime() - new Date(last.timestamp).getTime()) / (1000 * 60 * 60));
+                    const diffHoursNow = calculateWorkingHours(new Date(last.timestamp), now);
                     dwellMap[currentPhase].totalHours += diffHoursNow;
                     dwellMap[currentPhase].count++;
                 }
             }
 
-            // Processing time: use statusHistory first→last, or createdAt→printedAt/updatedAt
+            // Processing time: Warning Sent -> Completed (Working hours)
             {
                 let startDate: Date | null = null;
                 let endDate: Date | null = null;
 
-                if (c.statusHistory && c.statusHistory.length >= 2) {
+                if (c.statusHistory && c.statusHistory.length > 0) {
                     const sorted = [...c.statusHistory].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-                    startDate = parseDate(sorted[0].timestamp);
-                    endDate = parseDate(sorted[sorted.length - 1].timestamp);
-                } else {
-                    startDate = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
-                    endDate = parseDate(c.printedAt || c.updatedAt);
+
+                    // Start: WARNING_SENT -> ASSIGN -> First entry (to match chart and avoid 0)
+                    const warnEntry = sorted.find((h: any) => h.action === 'WARNING_SENT' || (h.label && h.label.includes('Xəbərdarlıq')));
+                    const assignedEntry = sorted.find((h: any) => h.action === 'ASSIGN' || h.action === 'STATUS_CHANGE');
+
+                    startDate = parseDate(warnEntry?.timestamp || assignedEntry?.timestamp || sorted[0].timestamp);
+                    // End: Strictly COMPLETED
+                    const completedEntry = sorted.find((h: any) => h.action === 'COMPLETED' || (h.action === 'STATUS_CHANGE' && h.label && h.label.includes('Arxiv Müştəri')));
+                    if (completedEntry) {
+                        endDate = parseDate(completedEntry.timestamp);
+                    } else if (status === 'COMPLETED') {
+                        endDate = parseDate(c.updatedAt || c.printedAt);
+                    }
                 }
 
-                if (startDate && endDate && endDate > startDate) {
-                    const diffDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+                if (isNewData && startDate && endDate && endDate > startDate) {
+                    const workHours = calculateWorkingHours(startDate, endDate);
+                    const workDays = workHours / 9;
                     const handlers = Array.from(new Set([c.assignedTo, c.createdBy].filter((u: any) => u && u.includes('@'))));
                     const key = handlers[0] || '__all__';
                     if (!inspectorMap[key]) inspectorMap[key] = { count: 0, totalSpeed: 0 };
                     inspectorMap[key].count++;
-                    inspectorMap[key].totalSpeed += Math.max(0, diffDays);
-                } else {
-                    // Still count the case so avgProcessingDays denominator is correct
-                    const handlers = Array.from(new Set([c.assignedTo, c.createdBy].filter((u: any) => u && u.includes('@'))));
-                    const key = handlers[0] || '__all__';
-                    if (!inspectorMap[key]) inspectorMap[key] = { count: 0, totalSpeed: 0 };
-                    inspectorMap[key].count++;
+                    inspectorMap[key].totalSpeed += Math.max(0, workDays);
                 }
             }
 
@@ -750,12 +812,17 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">{formatDetailedTime(stats.avgProcessingDays * 24)}</span> təşkil edir.
+                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">
+                                        {formatDetailedTime(stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0))}
+                                    </span> təşkil edir.
                                     Prosesdə ən çox ləngimə <span className="underline decoration-indigo-400 font-bold">{maxDwell.label}</span> mərhələsində qeydə alınıb.
                                 </p>
                                 <div className="flex items-center gap-3">
                                     <span className="px-3 py-1 bg-white/10 rounded-full text-[9px] font-black uppercase tracking-widest">
-                                        Status: {stats.avgProcessingDays * 24 < 8 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
+                                        {(() => {
+                                            const total = stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0);
+                                            return `Status: ${total < 4 ? 'Sürətli' : total < 10 ? 'Normal' : 'Ləng'}`;
+                                        })()}
                                     </span>
                                 </div>
                             </motion.div>
@@ -930,20 +997,20 @@ export default function AnalyticsPage() {
                         className="bg-white p-8 rounded-[2.5rem] border border-slate-300 shadow-sm relative group hover:shadow-xl transition-all"
                     >
                         <div className="flex items-center justify-between mb-4">
-                            <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center", stats.avgProcessingDays < 5 ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600")}>
-                                <Clock size={24} />
+                            <div className="h-12 w-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={24} />
                             </div>
-                            <Inbox size={24} className="opacity-10 text-slate-900" />
+                            <Activity size={24} className="opacity-10 text-slate-900" />
                         </div>
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center opacity-70">
-                            İşlərin Orta İcra Müddəti
-                            <InfoTooltip title="İcra Sürəti" text="İşin daxil olmasından sənədlərin hazır olmasına qədər keçən orta müddət." />
+                            Ümumi Vaxt Qənaəti
+                            <InfoTooltip title="Rəqəmsal Qənaət" text="Sistemin tətbiqi nəticəsində əl əməyinə (faktiki iş saatına) qənaət olunmuş toplam müddət." />
                         </div>
                         <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">
-                            {formatDetailedTime(stats.avgProcessingDays * 24)}
+                            {stats.totalSavedHours.toFixed(1)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saat</span>
                         </h2>
                         <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase text-emerald-500">
-                            Status: {stats.avgProcessingDays * 24 < 8 ? 'Sürətli' : stats.avgProcessingDays < 15 ? 'Normal' : 'Ləng'}
+                            <CheckCircle size={12} /> Səmərəlilik: +{((stats.totalSavedHours / Math.max(1, stats.timeSavingsData.reduce((a: any, d: any) => a + d.faktiki, 0))) * 100).toFixed(0)}%
                         </div>
                     </motion.div>
 
