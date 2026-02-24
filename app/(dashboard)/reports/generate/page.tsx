@@ -460,6 +460,155 @@ function buildInvoiceData(
     };
 }
 
+const prepareTemplateData = (customer: any, companyInfo: any, template: any, selectedCourt: any, allUsers: any) => {
+    const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
+    const invoices = customer.details?.invoices || [];
+
+    const totalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.')) || 0;
+    const paidAmount = parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.')) || 0;
+    const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
+
+    const invoicesData = invoices.map((inv: any, idx: number) =>
+        buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
+    );
+
+    const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
+    const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
+    const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
+
+    const extraCosts = totalPenaltyFromInvoices + feeVal;
+
+    // Sections for loops
+    const xahisItems = invoicesData.map((invData: any) => ({
+        ...invData,
+        inv_separator: invData.xahis_separator,
+    }));
+
+    const guzestItems = invoicesData.map((invData: any) => ({
+        guzest_index: invData.guzest_index,
+        guzest_meblegi: invData.guzest_meblegi,
+        guzest_separator: invData.guzest_separator,
+    }));
+
+    // Inspector logic
+    const inspectorName = customer.details?.executorName || "";
+    const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
+    const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
+    const inspectorPhone2 = "012 310 07 75";
+
+    // IMEI logic
+    const uniqueImeis = new Set<string>();
+    invoices.forEach((inv: any) => {
+        (inv.orders || []).forEach((ord: any) => {
+            const isActive = ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.checkedImeis && ord.checkedImeis.length > 0);
+            if (isActive) {
+                const imeiMatch = (ord.productDescription || "").match(/\d{15,16}/);
+                uniqueImeis.add(imeiMatch ? imeiMatch[0] : (ord.productDescription || ""));
+            }
+        });
+    });
+    const isMultipleImei = uniqueImeis.size > 1;
+
+    const templateNameNormalized = (template?.name || "").toLowerCase();
+    const isWarning = templateNameNormalized.includes("xəbərdarlıq");
+
+    return {
+        // Loops
+        invoices: invoicesData,
+        xahis_items: xahisItems,
+        guzest_items: guzestItems,
+
+        // Court/Company
+        MEHKEME_ADI: selectedCourt?.name || "",
+        MEHKEME_UNVAN: selectedCourt?.address || "",
+        MEHKEME_TELEFON: selectedCourt?.phone || "",
+        MEHKEME_FAKS: selectedCourt?.fax || "",
+        IDDIACININ_ADI: companyInfo?.companyName || "",
+        IDDIACI_UNVAN: companyInfo?.address || "",
+        IDDIACI_TELEFON: companyInfo?.phone || "",
+        IDDIACI_FAKS: companyInfo?.fax || "",
+        NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
+        NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
+
+        // Customer Details
+        CAVABDEH_AD_SOYAD: (isWarning && customer.details?.actualAddress)
+            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
+            : (customer.fullName || ""),
+        CAVABDEH_TAM_AD: (isWarning && customer.details?.actualAddress)
+            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
+            : (customer.fullName || ""),
+        CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
+        CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
+        CAVABDEH_UNVAN: customer.details?.address || "",
+        CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
+        CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
+        CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress.trim() !== (customer.details.address || "").trim())
+            ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
+            : "",
+        CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
+        CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
+        CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
+        CAVABDEH_ATA_SUFFIX_3: (customer.details?.gender === "Qadın" ? "qızından" : "oğlundan"),
+
+        // Financials (Global)
+        UMUMI_BORC: totalBorcFromInvoices.toFixed(2),
+        UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalBorcFromInvoices),
+        CEMI_ODENEN: paidAmount.toFixed(2),
+        DOVLET_RUSUMU: customer.details?.courtFee || "",
+        PENYA_FAIZ: "1",
+        ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
+        ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
+        ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
+        ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
+        DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
+        DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
+        DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
+        ILM_RUSUM: feeVal.toFixed(2),
+        ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
+        CERIME_ODENEN: extraCosts.toFixed(2),
+        CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
+        GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
+
+        // Products / IMEI
+        BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
+        BUTUN_MEHSULLAR: getAllProducts(invoices),
+        BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
+        BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
+        MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices),
+        MEHSUL_IMEI_SIYAHI_QISA: getAllImeiProductsShort(invoices),
+        MEHSUL_SIYAHI: getAllProducts(invoices),
+        IMEI_SECTION: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => (ord.checkedImeis && ord.checkedImeis.length > 0) || ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
+            ? `\nMüştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “${companyInfo?.companyName || ""}” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
+            : "",
+        imei_rusum: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${(isMultipleImei ? "ümumilikdə " : "")}${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+        IMEI_RUSUM: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${(isMultipleImei ? "ümumilikdə " : "")}${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
+
+        // Single invoice legacy support
+        MUQAVILE_TARIXI: customer.details?.contractDate || "",
+        TAKSIT_AY: customer.details?.paymentPeriod || "",
+        AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
+        ILKIN_ODENIS: customer.details?.initialPayment || "",
+        XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
+
+        // Extras
+        QOSMA: feeVal > 0
+            ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
+            : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
+
+        // Dates & Signing
+        currentDate: new Date().toLocaleDateString("az-AZ"),
+        ERIZE_GUN: `${new Date().getDate()}`,
+        ERIZE_AY: AZ_MONTHS_CAP[new Date().getMonth()],
+        ERIZE_IL: new Date().getFullYear().toString(),
+        TARIX: `${new Date().getDate()}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
+        ELAQE_TEL1: inspectorPhone1,
+        ELAQE_TEL2: inspectorPhone2,
+        NUMAYENDE_IMZA: "Süleymanlı.R.X",
+        MUHASIB_IMZA: "S.İsmayılova",
+        ICRACI_AD_SOYAD: formatExecutorName(customer.details?.executorName || ""),
+    };
+};
+
 // --- Components ---
 const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placeholder, isPrice, isFin, isSelect, options, onFocus, onBlur, className, readOnly }: any) => {
     return (
@@ -652,147 +801,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     return;
                 }
 
-                const invoices = customer.details?.invoices || [];
-                const debtNum = parseFloat((customer.details?.totalUnpaid || customer.debtAmount || "0").toString().replace(',', '.')) || 0;
-                const totalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.')) || 0;
-                const paidAmount = parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.')) || 0;
-
-                const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
-                const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
-                const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
-                const extraCosts = penaltyVal + feeVal;
-
-                const invoicesData = invoices.map((inv: any, idx: number) =>
-                    buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
-                );
-
-                const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
-                const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
-                const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
-
-                // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
-                const xahisItems = invoicesData.map((invData: any) => ({
-                    ...invData,
-                    inv_separator: invData.xahis_separator,
-                }));
-
-                // Güzəşt bölməsi üçün (Ödəniş Cədvəli Qeyd hissəsi)
-                const guzestItems = invoicesData.map((invData: any) => ({
-                    guzest_index: invData.guzest_index,
-                    guzest_meblegi: invData.guzest_meblegi,
-                    guzest_separator: invData.guzest_separator,
-                }));
-
-                const totalDebt = totalBorcFromInvoices;
-
-                // Find inspector phone numbers
-                const inspectorName = customer.details?.executorName || "";
-                const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
-                const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
-                const inspectorPhone2 = "012 310 07 75";
-
-                // Calculate if multiple IMEI items exist for pluralization labels
-                const uniqueImeis = new Set<string>();
-                (invoices || []).forEach((inv: any) => {
-                    (inv.orders || []).forEach((ord: any) => {
-                        const isActive = ord.hasImieFee === true || ord.hasImieFee === 'true';
-                        if (isActive) {
-                            const imeiMatch = (ord.productDescription || "").match(/\d{15,16}/);
-                            uniqueImeis.add(imeiMatch ? imeiMatch[0] : (ord.productDescription || ""));
-                        }
-                    });
-                });
-                const isMultipleImei = uniqueImeis.size > 1;
-
-                const data = {
-                    invoices: invoicesData,
-                    xahis_items: xahisItems,
-                    guzest_items: guzestItems,
-                    MUHASIB_IMZA: "S.İsmayılova",
-                    MEHKEME_ADI: selectedCourt?.name || "",
-                    MEHKEME_UNVAN: selectedCourt?.address || "",
-                    MEHKEME_TELEFON: selectedCourt?.phone || "",
-                    MEHKEME_FAKS: selectedCourt?.fax || "",
-                    IDDIACININ_ADI: companyInfo?.companyName || "",
-                    IDDIACI_UNVAN: companyInfo?.address || "",
-                    IDDIACI_TELEFON: companyInfo?.phone || "",
-                    IDDIACI_FAKS: companyInfo?.fax || "",
-                    NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
-                    NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
-                    //CAVABDEH_AD_SOYAD: customer.fullName || "",
-                    CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
-                    CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
-                    CAVABDEH_UNVAN: customer.details?.address || "",
-                    CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
-                    CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
-                    CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
-                    CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress !== customer.details.address)
-                        ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
-                        : "",
-                    CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
-                    CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
-                    CAVABDEH_ATA_SUFFIX_3: (customer.details?.gender === "Qadın" ? "qızından" : "oğlundan"),
-
-                    // Custom logic for Warning letters: Prepend actual address to name if it exists 
-                    // to fit the requested sentence structure in the Word template.
-                    CAVABDEH_AD_SOYAD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
-                        ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-                        : (customer.fullName || ""),
-                    CAVABDEH_TAM_AD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
-                        ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-                        : (customer.fullName || ""),
-
-
-                    BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
-                    BUTUN_MEHSULLAR: getAllProducts(invoices),
-                    BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
-                    BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
-
-                    UMUMI_BORC: totalDebt.toFixed(2),
-                    UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
-                    CEMI_ODENEN: paidAmount.toFixed(2),
-                    DOVLET_RUSUMU: customer.details?.courtFee || "",
-                    PENYA_FAIZ: "1",
-                    XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
-                    IMEI_SECTION: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
-                        ? `\nMüştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “ABC” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
-                        : "",
-                    MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                    MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices),
-                    MEHSUL_IMEI_SIYAHI_QISA: getAllImeiProductsShort(invoices),
-                    MEHSUL_SIYAHI: getAllProducts(invoices),
-                    ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
-                    ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
-                    TAKSIT_AY: customer.details?.paymentPeriod || "",
-                    AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
-                    ILKIN_ODENIS: customer.details?.initialPayment || "",
-                    ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
-                    ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
-                    ILM_RUSUM: (isMultipleImei ? "ümumilikdə " : "") + feeVal.toFixed(2),
-                    ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
-                    CERIME_ODENEN: extraCosts.toFixed(2),
-                    CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
-                    imei_rusum: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${(isMultipleImei ? "ümumilikdə " : "")}${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
-                    IMEI_RUSUM: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${(isMultipleImei ? "ümumilikdə " : "")}${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
-                    DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
-                    DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
-                    DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
-                    GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
-
-                    QOSMA: feeVal > 0
-                        ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
-                        : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
-
-                    currentDate: new Date().toLocaleDateString("az-AZ"),
-                    ERIZE_GUN: `${new Date().getDate()}`,
-                    ERIZE_AY: AZ_MONTHS[new Date().getMonth()],
-                    ERIZE_IL: new Date().getFullYear().toString(),
-                    TARIX: `${new Date().getDate()}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
-                    ELAQE_TEL1: inspectorPhone1,
-                    ELAQE_TEL2: "012 310 07 75",
-                    NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                    ICRACI_AD_SOYAD: formatExecutorName(customer.details?.executorName || ""),
-                };
+                const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers);
 
                 // Apply highlighter marker to the focused value
                 const FIELD_TO_TAG: any = {
@@ -2124,136 +2133,7 @@ function GenerateDocumentContent() {
                 nullGetter: () => ""
             });
 
-            const invoices = customer.details?.invoices || [];
-            const debtNum = parseFloat(customer.details?.totalUnpaid || customer.debtAmount || "0");
-            const totalPrice = parseFloat(customer.details?.totalPrice || "0");
-            const paidAmount = parseFloat(customer.details?.paidAmount || "0");
-
-            const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
-            const unpaidVal = parseFloat((customer.details?.unpaidAmount || "0").toString().replace(',', '.')) || 0;
-            const penaltyVal = parseFloat((customer.details?.penalty || "0").toString().replace(',', '.')) || 0;
-            const extraCosts = penaltyVal + feeVal;
-
-            const invoicesData = invoices.map((inv: any, idx: number) =>
-                buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
-            );
-
-            // XAHİŞ bölməsi üçün (Məhkəmə Ərizəsi)
-            const xahisItems = invoicesData.map((invData: any) => ({
-                ...invData,
-                inv_separator: invData.xahis_separator,
-            }));
-
-            // Güzəşt bölməsi üçün (Ödəniş Cədvəli Qeyd hissəsi)
-            const guzestItems = invoicesData.map((invData: any) => ({
-                guzest_index: invData.guzest_index,
-                guzest_meblegi: invData.guzest_meblegi,
-                guzest_separator: invData.guzest_separator,
-            }));
-
-            const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
-            const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
-            const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
-
-            const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
-            const now = new Date();
-
-            const totalDebt = totalBorcFromInvoices;
-
-            // Find inspector phone numbers
-            const inspectorName = customer.details?.executorName || "";
-            const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
-            const inspectorPhone1 = inspector?.phone1 || "050 280 11 90";
-            const inspectorPhone2 = inspector?.phone2 || "012 310 07 75";
-
-            const data = {
-                MEHKEME_ADI: selectedCourt?.name || "",
-                MEHKEME_UNVAN: selectedCourt?.address || "",
-                MEHKEME_TELEFON: selectedCourt?.phone || "",
-                MEHKEME_FAKS: selectedCourt?.fax || "",
-                IDDIACININ_ADI: companyInfo?.companyName || "",
-                IDDIACI_UNVAN: companyInfo?.address || "",
-                IDDIACI_TELEFON: companyInfo?.phone || "",
-                IDDIACI_FAKS: companyInfo?.fax || "",
-                NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
-                NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
-                CAVABDEH_AD_SOYAD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
-                    ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-                    : (customer.fullName || ""),
-                CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
-                CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
-                CAVABDEH_UNVAN: customer.details?.address || "",
-                CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
-                CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
-                CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress !== customer.details.address)
-                    ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
-                    : "",
-                CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
-                CAVABDEH_TAM_AD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
-                    ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-                    : (customer.fullName || ""),
-                CAVABDEH_ATA_SUFFIX: customer.details?.gender === "Qadın" ? "qızına" : "oğluna",
-                CAVABDEH_ATA_SUFFIX_2: customer.details?.gender === "Qadın" ? "qızının" : "oğlunun",
-                CAVABDEH_ATA_SUFFIX_3: customer.details?.gender === "Qadın" ? "qızından" : "oğlundan",
-
-                BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
-                BUTUN_MEHSULLAR: getAllProducts(invoices),
-                BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
-                BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
-                MEHSUL_IMEI_SIYAHI: getAllImeiProducts(invoices), // Alias for user template compatibility
-                MEHSUL_IMEI_SIYAHI_QISA: getAllImeiProductsShort(invoices), // Short version: IMEI + model only
-
-                UMUMI_BORC: totalDebt.toFixed(2),
-                UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalDebt),
-                CEMI_ODENEN: paidAmount.toFixed(2),
-                DOVLET_RUSUMU: customer.details?.courtFee || "",
-                PENYA_FAIZ: "1",
-                XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
-                IMEI_SECTION: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => (ord.checkedImeis && ord.checkedImeis.length > 0) || ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
-                    ? `Müştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “${companyInfo?.companyName || ""}” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
-                    : "",
-                IMEI_TEXT: invoices.some((inv: any) => (inv.orders || []).some((ord: any) => (ord.checkedImeis && ord.checkedImeis.length > 0) || ord.hasImieFee === true || ord.hasImieFee === 'true' || (ord.productDescription || "").toLowerCase().replace(/İ/g, 'i').replace(/I/g, 'i').includes("imei")))
-                    ? `Müştəri "Müqavilə"-nin şərt(lər)ini pozduğu, pul öhdəliyini lazımı qaydada icra etmədiyi hal(lar)da “${companyInfo?.companyName || ""}” “mal"-ın istifadəsini mümkünsüz edə, o cümlədən cihazın İMEİ kodunun deaktiv olunması üsulu ilə əşyanın Azərbaycan Respublikasının rabitə şəbəkələrində istifadəsinə məhdudiyyəti tədbiq edə, məhdudiyyətin aradan qaldırılması üçün müqavilənin 3.5-ci bəndinə əsasən İnnovativ Layihələr Mərkəzinə ödənilən rüsumu tələb edə bilər. “Müştəri"nin adının riskli müştəri siyahısına salınmasını təmin edə, habelə adının rislki müştəri siyahısında olduğuna dair digər satıcılara məlumat ötürə bilər.`
-                    : "",
-                INVOICES: invoicesData,
-                MUQAVILE_TARIXI: customer.details?.contractDate || "",
-                MEHSUL_SIYAHI: getAllProducts(invoices),
-                ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
-                ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
-                TAKSIT_AY: customer.details?.paymentPeriod || "",
-                AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
-                ILKIN_ODENIS: customer.details?.initialPayment || "",
-                ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
-                ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
-                CERIME_ODENEN: extraCosts.toFixed(2),
-                CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
-                ILM_RUSUM: feeVal.toFixed(2),
-                ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
-                imei_rusum: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
-                IMEI_RUSUM: feeVal > 0 ? `İnnovativ Layihələr Mərkəzinə ödənilən ${feeVal.toFixed(2)} (${numberToAzerbaijaniFinancialWords(feeVal)}) manat rüsum,` : "",
-                DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
-                DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
-                DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
-                GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
-
-                QOSMA: feeVal > 0
-                    ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
-                    : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
-
-                ERIZE_GUN: `${now.getDate()}`,
-                ERIZE_AY: AZ_MONTHS_CAP[now.getMonth()],
-                ERIZE_IL: now.getFullYear().toString(),
-                TARIX: `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`,
-                NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                ELAQE_TEL1: inspectorPhone1,
-                ELAQE_TEL2: "012 310 07 75",
-                ICRACI_AD_SOYAD: customer.details?.executorName || "",
-                MUHASIB_IMZA: "S.İsmayılova",
-                invoices: invoicesData,
-                xahis_items: xahisItems,
-                guzest_items: guzestItems,
-            };
-
+            const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers);
             doc.render(data);
             const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}.docx`;
 

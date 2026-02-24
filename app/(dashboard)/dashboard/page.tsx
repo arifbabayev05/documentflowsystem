@@ -181,6 +181,44 @@ const isKarabakhAddress = (address: string | undefined) => {
     return KARABAKH_DISTRICTS.some(district => v.includes(normalizeAZ(district)));
 };
 
+/**
+ * Common keyboard navigation for inputs: Enter, ArrowRight, ArrowLeft
+ */
+const keyboardNavigation = (e: React.KeyboardEvent<any>, isEditing: boolean) => {
+    if (!isEditing) return;
+
+    if (e.key === 'Enter') {
+        const inputs = Array.from(document.querySelectorAll('input:not([readonly]), select:not([disabled])')) as HTMLElement[];
+        const index = inputs.indexOf(e.currentTarget);
+        if (index > -1 && index < inputs.length - 1) {
+            inputs[index + 1].focus();
+            e.preventDefault();
+        }
+    } else if (e.key === 'ArrowRight') {
+        const input = e.currentTarget as HTMLInputElement;
+        // Move to next if not an input or cursor is at the end
+        if (input.tagName !== 'INPUT' || input.selectionStart === input.value.length) {
+            const inputs = Array.from(document.querySelectorAll('input:not([readonly]), select:not([disabled])')) as HTMLElement[];
+            const index = inputs.indexOf(e.currentTarget);
+            if (index > -1 && index < inputs.length - 1) {
+                inputs[index + 1].focus();
+                e.preventDefault();
+            }
+        }
+    } else if (e.key === 'ArrowLeft') {
+        const input = e.currentTarget as HTMLInputElement;
+        // Move to previous if not an input or cursor is at the beginning
+        if (input.tagName !== 'INPUT' || input.selectionStart === 0) {
+            const inputs = Array.from(document.querySelectorAll('input:not([readonly]), select:not([disabled])')) as HTMLElement[];
+            const index = inputs.indexOf(e.currentTarget);
+            if (index > 0) {
+                inputs[index - 1].focus();
+                e.preventDefault();
+            }
+        }
+    }
+};
+
 const getImeisFromDescription = (description: string) => {
     const parts = description.split(/[,;\n]/);
     const results: { imei: string; name: string }[] = [];
@@ -466,15 +504,7 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
                         value={value || ""}
                         onChange={handleValueChange}
                         placeholder={placeholder || (['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'].includes(path) ? "GG.AA.İİİİ" : "-")}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter' && isEditing) {
-                                const inputs = Array.from(document.querySelectorAll('input:not([readonly]), select:not([disabled])')) as HTMLElement[];
-                                const index = inputs.indexOf(e.currentTarget);
-                                if (index > -1 && index < inputs.length - 1) {
-                                    inputs[index + 1].focus();
-                                }
-                            }
-                        }}
+                        onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                     />
                 )}
                 {action}
@@ -1300,6 +1330,7 @@ const CustomerCard = memo(({
                                         value={localData.fullName || ""}
                                         onClick={(e) => e.stopPropagation()}
                                         onChange={(e) => handleFieldChange("fullName", e.target.value)}
+                                        onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                         className="bg-transparent border-b-2 border-primary/20 outline-none text-lg font-bold text-slate-900 tracking-tight w-full max-w-md"
                                         placeholder="SOYAD AD ATA ADI"
                                     />
@@ -1411,6 +1442,7 @@ const CustomerCard = memo(({
                                             value={getValue("details.executorName")}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => handleFieldChange("details.executorName", e.target.value)}
+                                            onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                             className="bg-transparent text-sm font-semibold text-slate-800 outline-none w-24 border-b border-transparent focus:border-blue-400"
                                             placeholder="Ad Soyad"
                                         />
@@ -1769,6 +1801,7 @@ const CustomerCard = memo(({
                                                             readOnly={!isEditing}
                                                             value={inv.invoiceNumber || ""}
                                                             onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                            onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                             className={cn(
                                                                 "h-11 px-4 rounded-xl text-sm font-bold outline-none transition-all w-full xl:w-[280px] shadow-sm",
                                                                 isEditing
@@ -1957,6 +1990,7 @@ const CustomerCard = memo(({
                                                                 readOnly={!isEditing}
                                                                 value={ord.productDescription || ""}
                                                                 onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
+                                                                onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                 className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                 placeholder="Məhsul adı..."
                                                             />
@@ -2024,6 +2058,7 @@ const CustomerCard = memo(({
                                                                 readOnly={!isEditing}
                                                                 value={ord.contractDate || ""}
                                                                 onChange={(e) => updateOrder(inv.id, ord.id, 'contractDate', formatDateInput(e.target.value))}
+                                                                onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                 className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all text-center shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
                                                                 placeholder="GG.AA.İİİİ"
                                                             />
@@ -2043,6 +2078,7 @@ const CustomerCard = memo(({
                                                                         if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                         updateOrder(inv.id, ord.id, 'paymentPeriod', v);
                                                                     }}
+                                                                    onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                     className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
@@ -2057,6 +2093,7 @@ const CustomerCard = memo(({
                                                                         if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                         updateOrder(inv.id, ord.id, 'initialPayment', v);
                                                                     }}
+                                                                    onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                     className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
@@ -2073,6 +2110,7 @@ const CustomerCard = memo(({
                                                                         if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                         updateOrder(inv.id, ord.id, 'monthlyPayment', v);
                                                                     }}
+                                                                    onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                     className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
@@ -2089,6 +2127,7 @@ const CustomerCard = memo(({
                                                                         if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                                         updateOrder(inv.id, ord.id, 'paidAmount', v);
                                                                     }}
+                                                                    onKeyDown={(e) => keyboardNavigation(e, isEditing)}
                                                                     className={cn("w-full h-11 px-2 rounded-xl text-[13px] font-bold text-slate-800 outline-none text-center transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black" : "bg-slate-50 border border-slate-500")}
                                                                 />
                                                             </div>
