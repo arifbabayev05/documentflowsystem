@@ -117,7 +117,7 @@ const ExpandableButton = ({
     );
 };
 
-export type ProcessStatus = 'INSPECTOR_ENTERED' | 'ASSIGNED_BY_MANAGER' | 'FILLED_BY_ADMIN' | 'WAITING_FOR_ARCHIVE' | 'ARCHIVE_UPLOADED' | 'COMPLETED';
+export type ProcessStatus = 'INSPECTOR_ENTERED' | 'ASSIGNED_BY_MANAGER' | 'FILLED_BY_ADMIN' | 'WAITING_FOR_ARCHIVE' | 'ARCHIVE_UPLOADED' | 'COMPLETED' | 'UNFINISHED_ARCHIVE';
 
 export const STATUS_ORDER: ProcessStatus[] = [
     'INSPECTOR_ENTERED',
@@ -125,7 +125,8 @@ export const STATUS_ORDER: ProcessStatus[] = [
     'FILLED_BY_ADMIN',
     'WAITING_FOR_ARCHIVE',
     'ARCHIVE_UPLOADED',
-    'COMPLETED'
+    'COMPLETED',
+    'UNFINISHED_ARCHIVE'
 ];
 
 export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string, bg: string }> = {
@@ -134,7 +135,8 @@ export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string
     FILLED_BY_ADMIN: { label: 'Müfəttiş doldurdu', color: 'text-purple-600', bg: 'bg-purple-50' },
     WAITING_FOR_ARCHIVE: { label: 'Arxivdən sənəd istənilib', color: 'text-orange-600', bg: 'bg-orange-50' },
     ARCHIVE_UPLOADED: { label: 'Arxiv faylı əlavə olundu', color: 'text-slate-600', bg: 'bg-slate-100' },
-    COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' }
+    COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' },
+    UNFINISHED_ARCHIVE: { label: 'Tamamlanmayan Sənəd', color: 'text-orange-600', bg: 'bg-orange-50' }
 };
 
 /** Helper to check if warning is older than 5 days */
@@ -203,22 +205,27 @@ const getImeisFromDescription = (description: string) => {
 /**
  * Searchable User Select Component
  */
-const UserSelect = ({ users, workload, value, onChange }: any) => {
+const UserSelect = ({ users, workload, value, onChange, onToggle }: any) => {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState("");
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const selectedUser = users.find((u: any) => u.id === value);
 
+    const handleToggle = (val: boolean) => {
+        setIsOpen(val);
+        if (onToggle) onToggle(val);
+    };
+
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
+                handleToggle(false);
             }
         };
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
+    }, [isOpen]);
 
     const filteredUsers = users.filter((u: any) =>
         (u.displayName || u.email || "").toLowerCase().includes(search.toLowerCase())
@@ -227,7 +234,7 @@ const UserSelect = ({ users, workload, value, onChange }: any) => {
     return (
         <div className="relative w-full" ref={dropdownRef}>
             <button
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={() => handleToggle(!isOpen)}
                 className={cn(
                     "w-full flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all text-left",
                     isOpen ? "ring-2 ring-primary/10 border-primary/40" : "hover:border-slate-300 shadow-sm"
@@ -269,7 +276,7 @@ const UserSelect = ({ users, workload, value, onChange }: any) => {
                     </div>
                     <div className="max-h-[180px] overflow-y-auto scrollbar-none">
                         <button
-                            onClick={() => { onChange(""); setIsOpen(false); setSearch(""); }}
+                            onClick={() => { onChange(""); handleToggle(false); setSearch(""); }}
                             className="w-full text-left px-3 py-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-widest hover:bg-slate-50 border-b border-slate-50"
                         >
                             Seçimi təmizlə
@@ -283,7 +290,7 @@ const UserSelect = ({ users, workload, value, onChange }: any) => {
                                 return (
                                     <button
                                         key={u.id}
-                                        onClick={() => { onChange(u.id); setIsOpen(false); setSearch(""); }}
+                                        onClick={() => { onChange(u.id); handleToggle(false); setSearch(""); }}
                                         className={cn(
                                             "w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-primary/5 transition-all",
                                             isSelected && "bg-primary/[0.03] border-l-2 border-primary"
@@ -513,6 +520,7 @@ const CustomerCard = memo(({
     const [showMore, setShowMore] = useState(false);
     const [showActualAddress, setShowActualAddress] = useState(!!row.details?.actualAddress);
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [openStoreDropdownId, setOpenStoreDropdownId] = useState<string | null>(null);
     const [storeSearch, setStoreSearch] = useState("");
     const [dropdownSelectedIndex, setDropdownSelectedIndex] = useState(0);
@@ -1262,10 +1270,10 @@ const CustomerCard = memo(({
             <div
                 ref={cardRef}
                 className={cn(
-                    "relative bg-white rounded-xl border transition-all duration-300 overflow-hidden flex-1",
-                    isExpanded
-                        ? "border-slate-300 shadow-lg ring-1 ring-slate-200"
-                        : "border-slate-200 hover:border-slate-400 hover:shadow-md cursor-pointer group"
+                    "relative bg-white rounded-xl border transition-all duration-300 flex-1",
+                    (isExpanded || isDropdownOpen)
+                        ? "border-slate-300 shadow-lg ring-1 ring-slate-200 z-[30]"
+                        : "border-slate-200 hover:border-slate-400 hover:shadow-md cursor-pointer group z-0 hover:z-[10]"
                 )} >
                 {/* HEADER / COMPACT VIEW */}
                 <div
@@ -1282,7 +1290,7 @@ const CustomerCard = memo(({
                                 "h-10 w-10 rounded-xl flex items-center justify-center text-[12px] font-black transition-all shrink-0 border",
                                 isExpanded ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200" : "bg-white text-slate-600 border-slate-500 group-hover:border-slate-300 group-hover:text-slate-900"
                             )}>
-                                {totalRows - index}
+                                {index + 1}
                             </div>
 
                             <div className="flex-1 min-w-0">
@@ -1342,7 +1350,7 @@ const CustomerCard = memo(({
                                                         {archiveComplete && (
                                                             <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg shrink-0">
                                                                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                                                                <span className="text-[10px] font-black uppercase tracking-wider">Sənədlər tam hazırdır</span>
+                                                                <span className="text-[10px] font-black uppercase tracking-wider">Arxiv Sənədləri tam hazırdır</span>
                                                             </div>
                                                         )}
                                                     </div>
@@ -1369,6 +1377,23 @@ const CustomerCard = memo(({
                                 )}
                             </div>
                         </div>
+                        {['SUPERADMIN', 'ADMIN', 'MANAGER'].includes(user?.role || '') && !row.isArchived && (
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const updated = { ...localData, isArchived: true, process_status: 'UNFINISHED_ARCHIVE' as ProcessStatus };
+                                    setLocalData(updated);
+                                    toast.promise(onSave(updated), {
+                                        loading: 'Arxivlənir...',
+                                        success: 'Sənəd arxivə göndərildi',
+                                        error: 'Xəta baş verdi'
+                                    });
+                                }}
+                                className="h-10 px-4 bg-white text-slate-600 border border-slate-200 rounded-xl font-black text-[11px] uppercase tracking-wider hover:bg-slate-50 hover:text-slate-900 transition-all flex items-center gap-2 active:scale-95 shrink-0"
+                            >
+                                <FolderArchive size={16} className="text-slate-400" /> Tamamlanmayan Sənəd
+                            </button>
+                        )}
                     </div>
 
                     {/* BOTTOM ROW: SECONDARY INFO & ACTIONS */}
@@ -2135,6 +2160,7 @@ const CustomerCard = memo(({
                             users={appUsers}
                             workload={userWorkload}
                             value={localData.assignedTo || ""}
+                            onToggle={setIsDropdownOpen}
                             onChange={async (selectedId: string) => {
                                 const now = new Date().toISOString();
                                 const updated = {
@@ -2208,7 +2234,7 @@ const CustomerCard = memo(({
                                 error: 'Xəta baş verdi'
                             });
                         }}
-                        className="mt-2 w-full h-10 flex items-center justify-center gap-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 hover:text-slate-900 transition-all font-bold text-[10px] uppercase tracking-wider border border-slate-300"
+                        className="mt-2 w-full h-11 flex items-center justify-center gap-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 hover:scale-[1.02] active:scale-95 transition-all font-black text-[11px] uppercase tracking-wider shadow-lg shadow-emerald-600/20 border-none animate-glow-emerald"
                     >
                         <FolderArchive size={14} /> Arxivə göndər
                     </button>
@@ -2233,6 +2259,8 @@ export default function DashboardPage() {
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState<ProcessStatus | "all">("all");
+    const [page, setPage] = useState(1);
+    const itemsPerPage = 50;
     const [onlyMyEntries, setOnlyMyEntries] = useState(false);
     const [warningFilter, setWarningFilter] = useState<"all" | "sent" | "overdue" | "unsent">("all");
     const [invoiceCount, setInvoiceCount] = useState<string>("");
@@ -2282,12 +2310,16 @@ export default function DashboardPage() {
         fetchCustomers(true);
         if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD') {
             getAllUsers().then(users => {
-                const assignable = users.filter((u: any) => ['ADMIN', 'INSPECTOR', 'INSPECTOR_LEAD'].includes(u.role));
+                const assignable = users.filter((u: any) => u.role === 'ADMIN');
                 setAppUsers(assignable);
             });
         }
         getStores().then(setStores);
     }, [user?.role]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries]);
 
     const addRow = () => {
         const newRow: CustomerRow = {
@@ -2414,12 +2446,19 @@ export default function DashboardPage() {
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
         rows.forEach(r => {
-            if (r.assignedTo && !['ARCHIVE_UPLOADED', 'COMPLETED'].includes(r.process_status || '')) {
+            if (r.assignedTo && !['ARCHIVE_UPLOADED', 'COMPLETED', 'UNFINISHED_ARCHIVE'].includes(r.process_status || '')) {
                 map[r.assignedTo] = (map[r.assignedTo] || 0) + 1;
             }
         });
         return map;
     }, [rows]);
+
+    const myStats = useMemo(() => {
+        if (!user?.email) return { active: 0, archived: 0 };
+        const active = rows.filter(r => r.assignedTo === user.email && !r.isArchived).length;
+        const archived = rows.filter(r => r.assignedTo === user.email && r.isArchived).length;
+        return { active, archived };
+    }, [rows, user?.email]);
 
     if (loadingData && rows.length === 0) {
         return (
@@ -2435,6 +2474,37 @@ export default function DashboardPage() {
     return (
         <AuthGuard>
             <div className="max-w-[1500px] mx-auto pb-16 relative px-4">
+
+                {/* 0. USER STATS BANNER */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 mt-4">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-blue-400 transition-all">
+                        <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-110 transition-transform">
+                            <Zap size={24} />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aktiv İşlərim</p>
+                            <p className="text-2xl font-black text-slate-900">{myStats.active}</p>
+                        </div>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-emerald-400 transition-all">
+                        <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-110 transition-transform">
+                            <FolderArchive size={24} />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Arxivə Göndərilən</p>
+                            <p className="text-2xl font-black text-slate-900">{myStats.archived}</p>
+                        </div>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-purple-400 transition-all">
+                        <div className="h-12 w-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 group-hover:scale-110 transition-transform">
+                            <RefreshCw size={24} />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ümumi İş Sayı</p>
+                            <p className="text-2xl font-black text-slate-900">{(userWorkload[user?.email || ""] || 0)}</p>
+                        </div>
+                    </div>
+                </div>
 
                 {/* 1. STICKY FILTER BAR */}
                 <div className="sticky top-0 z-50 bg-slate-50/80 backdrop-blur-xl -mx-4 px-4 pt-4 pb-4 border-b border-slate-200">
@@ -2521,7 +2591,7 @@ export default function DashboardPage() {
                                 )}
                             </div>
 
-                            {(user?.role === 'SUPERADMIN' || user?.role === 'DEP_HEAD') && (
+                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
                                 <button
                                     onClick={() => setOnlyMyEntries(!onlyMyEntries)}
                                     className={cn(
@@ -2541,71 +2611,154 @@ export default function DashboardPage() {
 
                 {/* 2. CARD LIST */}
                 <div className="grid grid-cols-1 gap-6 mt-6 pb-20">
-                    {filteredRows.map((row, idx) => (
-                        <CustomerCard
-                            // Important: use a unique key if possible, but fallback to idx for stability if id is missing on new rows
-                            key={row.id || idx}
-                            row={row}
-                            index={idx}
-                            totalRows={rows.length}
-                            canUpdate={can("page_customers")}
-                            canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
-                            appUsers={appUsers}
-                            userWorkload={userWorkload}
-                            stores={stores}
-                            onSave={handleSave}
-                            onDelete={onDelete}
-                            can={can}
-                        />
-                    ))}
+                    <style dangerouslySetInnerHTML={{
+                        __html: `
+                        @keyframes glow-emerald {
+                            0% { box-shadow: 0 0 5px rgba(16, 185, 129, 0.2), 0 0 0px rgba(16, 185, 129, 0.1); }
+                            50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.6), 0 0 10px rgba(16, 185, 129, 0.4); }
+                            100% { box-shadow: 0 0 5px rgba(16, 185, 129, 0.2), 0 0 0px rgba(16, 185, 129, 0.1); }
+                        }
+                        .animate-glow-emerald {
+                            animation: glow-emerald 2s infinite ease-in-out;
+                        }
+                    `}} />
 
-                    {filteredRows.length === 0 && (
-                        <div className="py-40 text-center flex flex-col items-center gap-6 opacity-20">
-                            <div className="p-10 bg-gray-100 rounded-full">
-                                <Search size={80} />
-                            </div>
-                            <p className="font-black text-3xl uppercase tracking-[0.2em] italic">Məlumat Tapılmadı</p>
-                        </div>
-                    )}
+                    {filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, idx) => {
+                        const globalIndex = (page - 1) * itemsPerPage + idx;
+                        return (
+                            <CustomerCard
+                                // Important: use a unique key if possible, but fallback to idx for stability if id is missing on new rows
+                                key={row.id || globalIndex}
+                                row={row}
+                                index={globalIndex}
+                                totalRows={rows.length}
+                                canUpdate={can("page_customers")}
+                                canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
+                                appUsers={appUsers}
+                                userWorkload={userWorkload}
+                                stores={stores}
+                                onSave={handleSave}
+                                onDelete={onDelete}
+                                can={can}
+                            />
+                        );
+                    })}
                 </div>
 
-                {/* DELETE MODAL */}
-                {deleteModal.isOpen && (
-                    <div
-                        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
-                        onClick={() => setDeleteModal({ isOpen: false, index: null })}
-                    >
-                        <div
-                            className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="flex flex-col items-center text-center gap-6">
-                                <div className="h-16 w-16 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100">
-                                    <AlertTriangle size={32} />
-                                </div>
-                                <div>
-                                    <h3 className="text-xl font-black text-slate-800 uppercase">Məlumat Silinsin?</h3>
-                                    <p className="text-sm text-slate-600 mt-2 font-medium">Bu müştəri kartını silmək istədiyinizə əminsiniz? Bu əməliyyat geri qaytarıla bilməz.</p>
-                                </div>
-                                <div className="flex flex-col w-full gap-3">
-                                    <button
-                                        onClick={confirmDelete}
-                                        className="w-full bg-red-600 text-white py-4 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95"
-                                    >
-                                        Bəli, Silinsin
-                                    </button>
-                                    <button
-                                        onClick={() => setDeleteModal({ isOpen: false, index: null })}
-                                        className="w-full bg-slate-50 text-slate-600 py-4 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
-                                    >
-                                        Ləğv Et
-                                    </button>
-                                </div>
+                {filteredRows.length > 0 && (
+                    <div className="flex flex-col items-center gap-4 pt-10 pb-20">
+                        <div className="flex items-center gap-2">
+                            <button
+                                disabled={page === 1}
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            >
+                                <Minus size={16} />
+                            </button>
+
+                            <div className="flex items-center gap-1.5 mx-4">
+                                {(() => {
+                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
+                                    let startPage = Math.max(1, page - 2);
+                                    let endPage = Math.min(totalPages, startPage + 4);
+
+                                    if (endPage - startPage < 4) {
+                                        startPage = Math.max(1, endPage - 4);
+                                    }
+
+                                    const pages = [];
+                                    for (let i = startPage; i <= endPage; i++) {
+                                        pages.push(
+                                            <button
+                                                key={i}
+                                                onClick={() => setPage(i)}
+                                                className={cn(
+                                                    "h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black transition-all border",
+                                                    page === i
+                                                        ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
+                                                        : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                                                )}
+                                            >
+                                                {i}
+                                            </button>
+                                        );
+                                    }
+                                    return pages;
+                                })()}
+
+                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
+                                    <>
+                                        <span className="text-slate-300 mx-1">...</span>
+                                        <button
+                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
+                                            className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
+                                        >
+                                            {Math.ceil(filteredRows.length / itemsPerPage)}
+                                        </button>
+                                    </>
+                                )}
                             </div>
+
+                            <button
+                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
+                                onClick={() => setPage(p => p + 1)}
+                                className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            >
+                                <Plus size={16} />
+                            </button>
                         </div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
+                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                        </span>
+                    </div>
+                )}
+
+                {filteredRows.length === 0 && (
+                    <div className="py-40 text-center flex flex-col items-center gap-6 opacity-20">
+                        <div className="p-10 bg-gray-100 rounded-full">
+                            <Search size={80} />
+                        </div>
+                        <p className="font-black text-3xl uppercase tracking-[0.2em] italic">Məlumat Tapılmadı</p>
                     </div>
                 )}
             </div>
-        </AuthGuard >
+
+            {/* DELETE MODAL */}
+            {deleteModal.isOpen && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
+                    onClick={() => setDeleteModal({ isOpen: false, index: null })}
+                >
+                    <div
+                        className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex flex-col items-center text-center gap-6">
+                            <div className="h-16 w-16 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100">
+                                <AlertTriangle size={32} />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-black text-slate-800 uppercase">Məlumat Silinsin?</h3>
+                                <p className="text-sm text-slate-600 mt-2 font-medium">Bu müştəri kartını silmək istədiyinizə əminsiniz? Bu əməliyyat geri qaytarıla bilməz.</p>
+                            </div>
+                            <div className="flex flex-col w-full gap-3">
+                                <button
+                                    onClick={confirmDelete}
+                                    className="w-full bg-red-600 text-white py-4 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95"
+                                >
+                                    Bəli, Silinsin
+                                </button>
+                                <button
+                                    onClick={() => setDeleteModal({ isOpen: false, index: null })}
+                                    className="w-full bg-slate-50 text-slate-600 py-4 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
+                                >
+                                    Ləğv Et
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </AuthGuard>
     );
 }

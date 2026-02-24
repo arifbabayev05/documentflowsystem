@@ -81,6 +81,19 @@ const normalizeAZ = (str: string | undefined) => {
         .trim();
 };
 
+const formatExecutorName = (name: string) => {
+    if (!name) return "";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length < 2) return name;
+
+    // Check if it's already Surname + Name style by simple assumption or just move last part to front
+    // Handle "Əzizə F. Nəsirova" -> "Nəsirova Əzizə F."
+    // Handle "Arif Babayev" -> "Babayev Arif"
+    const surname = parts[parts.length - 1];
+    const namePart = parts.slice(0, 1);
+    return `${surname} ${namePart}`;
+};
+
 const KARABAKH_DISTRICTS = [
     "Şuşa", "Xankəndi", "Ağdam", "Füzuli", "Cəbrayıl", "Xocavənd", "Xocalı", "Tərtər", "Ağdərə", "Laçın", "Kəlbəcər", "Zəngilan", "Qubadlı"
 ];
@@ -778,7 +791,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     ELAQE_TEL1: inspectorPhone1,
                     ELAQE_TEL2: "012 310 07 75",
                     NUMAYENDE_IMZA: "Süleymanlı.R.X",
-                    ICRACI_AD_SOYAD: customer.details?.executorName || "",
+                    ICRACI_AD_SOYAD: formatExecutorName(customer.details?.executorName || ""),
                 };
 
                 // Apply highlighter marker to the focused value
