@@ -2391,7 +2391,7 @@ export default function DashboardPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD' || user?.role === 'ADMIN';
+        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
 
         return rows.filter(c => {
             // Archive filter: dashboard primarily shows active work.
@@ -2401,13 +2401,16 @@ export default function DashboardPage() {
             }
 
             // My Entries filter (only for DEP_HEAD and SUPERADMIN)
-            if (onlyMyEntries && (user?.role === 'DEP_HEAD' || user?.role === 'SUPERADMIN')) {
+            if (onlyMyEntries && (user?.role === 'DEP_HEAD' || user?.role === 'SUPERADMIN' || user?.role === 'MANAGER')) {
                 if (c.createdBy !== user?.email) return false;
             }
 
             // First level: Role based access
-            // Inspectors see only what's assigned to them
-            if (!isManager && c.assignedTo !== user?.email) {
+            // Inspectors/Admins see only what's assigned to them
+            // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE
+            const canSeeUnfinished = (user?.role === 'ADMIN' || user?.role === 'MANAGER' || user?.role === 'SUPERADMIN') && c.process_status === 'UNFINISHED_ARCHIVE';
+
+            if (!isManager && c.assignedTo !== user?.email && !canSeeUnfinished) {
                 // Exceptional case: If it's a new unsaved row being created right now
                 if (!c.id) return true;
                 return false;
