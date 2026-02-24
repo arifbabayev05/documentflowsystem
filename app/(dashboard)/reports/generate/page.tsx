@@ -964,33 +964,30 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                                 const pRect = p.getBoundingClientRect();
                                 const posInDoc = containerRect ? pRect.bottom - containerRect.top : 0;
                                 const posInPage = posInDoc % 1122;
-
+                                const pPage = Math.floor(posInDoc / 1122);
                                 let shouldPush = false;
 
-                                // 1. Check distance to section bottom if in paginated view
-                                if (section) {
-                                    const sRect = section.getBoundingClientRect();
-                                    const distToBottom = sRect.bottom - pRect.bottom;
-                                    // If less than 280px (approx 7.5cm) left, force to next page
-                                    if (distToBottom < 280) shouldPush = true;
-                                }
-
-                                // 2. Check if next paragraph has already jumped to another page
-                                if (nextP && containerRect) {
+                                // 1. Check if next paragraph has already jumped to another page (Keep with Next)
+                                // We ONLY push if the header is already near the bottom (bottom > 950px)
+                                // and its following content has already jumped to the next page.
+                                if (nextP && containerRect && pPage === 0) {
                                     const nRect = nextP.getBoundingClientRect();
                                     const nPosInDoc = nRect.top - containerRect.top;
-                                    const pPage = Math.floor(posInDoc / 1122);
                                     const nPage = Math.floor(nPosInDoc / 1122);
-                                    if (pPage < nPage) shouldPush = true;
+                                    if (pPage < nPage && posInPage > 950) shouldPush = true;
                                 }
 
-                                // 3. General "too low" check for safety
-                                if (posInPage > 750) shouldPush = true;
+                                // 2. Robust fallback for 1st page bottom (No Alone Headers)
+                                if (pPage === 0 && posInPage > 1050) shouldPush = true;
 
                                 if (shouldPush) {
                                     (p as HTMLElement).style.setProperty('page-break-before', 'always', 'important');
                                     (p as HTMLElement).style.setProperty('break-before', 'page', 'important');
-                                    (p as HTMLElement).style.marginTop = '3cm'; // Better safety gap
+                                    (p as HTMLElement).style.marginTop = '0';
+                                } else {
+                                    (p as HTMLElement).style.removeProperty('page-break-before');
+                                    (p as HTMLElement).style.removeProperty('break-before');
+                                    (p as HTMLElement).style.marginTop = '';
                                 }
                             }
                         });
@@ -2746,29 +2743,24 @@ function GenerateDocumentContent() {
                                                         const pRect = p.getBoundingClientRect();
                                                         const posInDoc = pRect.bottom - containerRect.top;
                                                         const posInPage = posInDoc % 1122;
-
+                                                        const pPage = Math.floor(posInDoc / 1122);
                                                         let shouldPush = false;
 
-                                                        if (section) {
-                                                            const sRect = section.getBoundingClientRect();
-                                                            const distToBottom = sRect.bottom - pRect.bottom;
-                                                            if (distToBottom < 280) shouldPush = true;
-                                                        }
-
-                                                        if (nextP) {
+                                                        if (nextP && pPage === 0) {
                                                             const nRect = nextP.getBoundingClientRect();
                                                             const nPosInDoc = nRect.top - containerRect.top;
-                                                            const pPage = Math.floor(posInDoc / 1122);
                                                             const nPage = Math.floor(nPosInDoc / 1122);
-                                                            if (pPage < nPage) shouldPush = true;
+                                                            if (pPage < nPage && posInPage > 950) shouldPush = true;
                                                         }
 
-                                                        if (posInPage > 750) shouldPush = true;
+                                                        if (pPage === 0 && posInPage > 1050) shouldPush = true;
 
                                                         if (shouldPush) {
                                                             (p as HTMLElement).style.setProperty('page-break-before', 'always', 'important');
                                                             (p as HTMLElement).style.setProperty('break-before', 'page', 'important');
-
+                                                        } else {
+                                                            (p as HTMLElement).style.removeProperty('page-break-before');
+                                                            (p as HTMLElement).style.removeProperty('break-before');
                                                         }
                                                     }
 
