@@ -31,6 +31,7 @@ import { getCustomers, getAuditLogs, getCourts } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { Timestamp } from "firebase/firestore";
+import { parseDate, calculateWorkingHours, formatDetailedTime, formatWorkTime } from "@/lib/format";
 import {
     ResponsiveContainer,
     AreaChart, Area,
@@ -110,67 +111,6 @@ interface AnalyticsData {
 
 const FEE_PER_CASE = 20;
 
-const parseDate = (dateVal: any): Date | null => {
-    if (!dateVal) return null;
-    if (dateVal instanceof Timestamp) return dateVal.toDate();
-    if (dateVal.toDate && typeof dateVal.toDate === 'function') return dateVal.toDate();
-    if (typeof dateVal === 'string' && dateVal.includes('.')) {
-        const [d, m, y] = dateVal.split('.').map(Number);
-        if (d && m && y) {
-            const year = y < 100 ? 2000 + y : y;
-            return new Date(year, m - 1, d);
-        }
-    }
-    const d = new Date(dateVal);
-    return isNaN(d.getTime()) ? null : d;
-};
-
-/**
- * Calculates working hours between two dates (09:00 - 18:00, Mon-Fri)
- */
-const calculateWorkingHours = (startDate: Date, endDate: Date) => {
-    if (!startDate || !endDate || endDate <= startDate) return 0;
-
-    const startHour = 9;
-    const endHour = 18;
-
-    let totalMilliseconds = 0;
-    let current = new Date(startDate);
-
-    // Normalize start time
-    if (current.getHours() < startHour) {
-        current.setHours(startHour, 0, 0, 0);
-    } else if (current.getHours() >= endHour) {
-        current.setDate(current.getDate() + 1);
-        current.setHours(startHour, 0, 0, 0);
-    }
-
-    while (current < endDate) {
-        const day = current.getDay();
-        if (day === 0 || day === 6) {
-            current.setDate(current.getDate() + 1);
-            current.setHours(startHour, 0, 0, 0);
-            continue;
-        }
-
-        const dayEnd = new Date(current);
-        dayEnd.setHours(endHour, 0, 0, 0);
-
-        if (endDate < dayEnd) {
-            if (endDate.getHours() >= startHour) {
-                totalMilliseconds += endDate.getTime() - current.getTime();
-            }
-            break;
-        } else {
-            totalMilliseconds += dayEnd.getTime() - current.getTime();
-            current.setDate(current.getDate() + 1);
-            current.setHours(startHour, 0, 0, 0);
-        }
-    }
-
-    return totalMilliseconds / (1000 * 60 * 60);
-};
-
 const SYSTEM_START_DATE = new Date("2026-02-23T00:00:00");
 
 export default function AnalyticsPage() {
@@ -222,38 +162,6 @@ export default function AnalyticsPage() {
     }, [user, user?.role]);
 
     const formatAZN = (v: number) => Math.floor(v).toLocaleString('az-AZ') + " ₼";
-
-    const formatDetailedTime = (hours: number) => {
-        const totalMinutes = Math.round(hours * 60);
-        if (totalMinutes < 60) return `${totalMinutes} DƏQ`;
-
-        const h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-
-        if (h < 24) {
-            return m > 0 ? `${h} Saat ${m} DƏQ` : `${h} Saat`;
-        }
-
-        const d = Math.floor(h / 24);
-        const rh = h % 24;
-
-        return rh > 0 ? `${d} GÜN ${rh} Saat` : `${d} GÜN`;
-    };
-
-    const formatWorkTime = (hours: number) => {
-        const h = Math.floor(hours);
-        const m = Math.round((hours - h) * 60);
-
-        const workDays = Math.floor(h / 9);
-        const remainingH = h % 9;
-
-        let parts = [];
-        if (workDays > 0) parts.push(`${workDays} İş günü`);
-        if (remainingH > 0) parts.push(`${remainingH} Saat`);
-        if (m > 0) parts.push(`${m} DƏQ`);
-
-        return parts.length > 0 ? parts.join(' ') : "0 Saat";
-    };
 
     const InfoTooltip = ({ title, text, iconClass }: { title: string, text: string, iconClass?: string }) => (
         <span className="relative inline-block ml-2 align-middle group z-[100]">

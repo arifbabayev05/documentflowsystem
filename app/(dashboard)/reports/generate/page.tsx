@@ -931,16 +931,69 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                             trimXmlDeclaration: true,
                         });
 
-                        // Highlighting logic: replace markers with span
+                        // 1. Highlighting logic: replace markers with span
                         if (focusedField) {
-                            const container = viewerRef.current;
-                            const html = container.innerHTML;
+                            const html = viewerRef.current.innerHTML;
                             if (html.includes("[[FOC_S]]")) {
-                                container.innerHTML = html
+                                viewerRef.current.innerHTML = html
                                     .split("[[FOC_S]]").join('<span class="bg-amber-200 ring-2 ring-amber-400/50 rounded-sm px-0.5 animate-pulse text-slate-900 shadow-sm relative z-10">')
                                     .split("[[FOC_E]]").join('</span>');
                             }
                         }
+
+                        // 2. Synchronize layout with Print logic (Keep with Next & Character normalization)
+                        // This ensures the preview matches the print out exactly.
+                        const paragraphs = viewerRef.current?.querySelectorAll('p');
+                        const containerRect = viewerRef.current?.getBoundingClientRect();
+
+                        paragraphs?.forEach(p => {
+                            const text = p.textContent?.trim().toUpperCase() || "";
+                            // Extract letters to match regardless of spaces/dots/colons
+                            const clean = text.replace(/[^A-ZƏəİiIıŞşĞğÇçÖöÜü]/g, '');
+
+                            if (clean.includes('XAHİŞEDİRƏM')) {
+                                p.classList.add('keep-with-next');
+
+                                // Find next non-empty paragraph to ensure they stay together
+                                let nextP = p.nextElementSibling;
+                                while (nextP && (!nextP.textContent?.trim() || nextP.tagName !== 'P')) {
+                                    nextP = nextP.nextElementSibling;
+                                }
+
+                                const section = p.closest('section, article, .docx');
+                                const pRect = p.getBoundingClientRect();
+                                const posInDoc = containerRect ? pRect.bottom - containerRect.top : 0;
+                                const posInPage = posInDoc % 1122;
+
+                                let shouldPush = false;
+
+                                // 1. Check distance to section bottom if in paginated view
+                                if (section) {
+                                    const sRect = section.getBoundingClientRect();
+                                    const distToBottom = sRect.bottom - pRect.bottom;
+                                    // If less than 280px (approx 7.5cm) left, force to next page
+                                    if (distToBottom < 280) shouldPush = true;
+                                }
+
+                                // 2. Check if next paragraph has already jumped to another page
+                                if (nextP && containerRect) {
+                                    const nRect = nextP.getBoundingClientRect();
+                                    const nPosInDoc = nRect.top - containerRect.top;
+                                    const pPage = Math.floor(posInDoc / 1122);
+                                    const nPage = Math.floor(nPosInDoc / 1122);
+                                    if (pPage < nPage) shouldPush = true;
+                                }
+
+                                // 3. General "too low" check for safety
+                                if (posInPage > 750) shouldPush = true;
+
+                                if (shouldPush) {
+                                    (p as HTMLElement).style.setProperty('page-break-before', 'always', 'important');
+                                    (p as HTMLElement).style.setProperty('break-before', 'page', 'important');
+                                    (p as HTMLElement).style.marginTop = '3cm'; // Better safety gap
+                                }
+                            }
+                        });
                     }
                 } catch (err: any) {
                     console.error("Docxtemplater Render Error:", err);
@@ -1029,6 +1082,15 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 }
                 .docx-viewer p, .docx-viewer span, .docx-viewer td {
                     font-family: 'Times New Roman', Times, serif !important;
+                }
+                /* Pull first page up only if it's the first document in the list, or match print logic */
+                .preview-container .doc-page:first-child .docx-viewer article,
+                .preview-container .doc-page:first-child .docx-viewer section.docx {
+                    padding-top: 1.5cm !important; /* Matches -0.7cm pull-up from 2.2cm baseline */
+                }
+                .keep-with-next {
+                    break-after: avoid !important;
+                    page-break-after: avoid !important;
                 }
             `}</style>
         </div>
@@ -2654,13 +2716,43 @@ function GenerateDocumentContent() {
                                                     const text = p.textContent?.trim().toUpperCase() || "";
 
                                                     // Header detection (Keep with Next)
-                                                    if (/X\s*A\s*H\s*İ\s*Ş\s*E\s*D\s*İ\s*R\s*Ə\s*M/i.test(text)) {
+                                                    const cleanText = text.replace(/[^A-ZƏəİiIıŞşĞğÇçÖöÜü]/g, '');
+                                                    if (cleanText.includes('XAHİŞEDİRƏM')) {
                                                         p.classList.add('keep-with-next');
-                                                        const rect = p.getBoundingClientRect();
-                                                        const pageHeight = 1122;
-                                                        const posInPage = rect.bottom % pageHeight;
-                                                        if (posInPage > pageHeight * 0.82) {
-                                                            (p as HTMLElement).style.pageBreakBefore = 'always';
+
+                                                        let nextP = p.nextElementSibling;
+                                                        while (nextP && (!nextP.textContent?.trim() || nextP.tagName !== 'P')) {
+                                                            nextP = nextP.nextElementSibling;
+                                                        }
+
+                                                        const section = p.closest('section, article, .docx');
+                                                        const containerRect = contentPoint?.getBoundingClientRect() || { top: 0 };
+                                                        const pRect = p.getBoundingClientRect();
+                                                        const posInDoc = pRect.bottom - containerRect.top;
+                                                        const posInPage = posInDoc % 1122;
+
+                                                        let shouldPush = false;
+
+                                                        if (section) {
+                                                            const sRect = section.getBoundingClientRect();
+                                                            const distToBottom = sRect.bottom - pRect.bottom;
+                                                            if (distToBottom < 280) shouldPush = true;
+                                                        }
+
+                                                        if (nextP) {
+                                                            const nRect = nextP.getBoundingClientRect();
+                                                            const nPosInDoc = nRect.top - containerRect.top;
+                                                            const pPage = Math.floor(posInDoc / 1122);
+                                                            const nPage = Math.floor(nPosInDoc / 1122);
+                                                            if (pPage < nPage) shouldPush = true;
+                                                        }
+
+                                                        if (posInPage > 750) shouldPush = true;
+
+                                                        if (shouldPush) {
+                                                            (p as HTMLElement).style.setProperty('page-break-before', 'always', 'important');
+                                                            (p as HTMLElement).style.setProperty('break-before', 'page', 'important');
+
                                                         }
                                                     }
 
@@ -2672,7 +2764,7 @@ function GenerateDocumentContent() {
 
                                                 printContainer.contentWindow?.focus();
                                                 printContainer.contentWindow?.print();
-                                            }, 1200);
+                                            }, 2000);
                                         }
                                     }
                                 } catch (err) {

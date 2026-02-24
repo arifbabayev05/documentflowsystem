@@ -1,3 +1,5 @@
+import { Timestamp } from "firebase/firestore";
+
 /**
  * Converts a numerical amount to Azerbaijani words for Manats and keeps qepiks as numbers.
  * Example: 683.20 -> "altı yüz səksən üç manat 20 qəpik"
@@ -80,6 +82,7 @@ export function formatDateInput(value: string): string {
 
     return res;
 }
+
 /**
  * Formats a phone number as (XXX) XXX-XX-XX as the user types.
  */
@@ -101,3 +104,100 @@ export function formatPhoneInput(value: string): string {
 
     return res;
 }
+
+/** 
+ * Safely parses any date/timestamp value into a Date object.
+ * Handles ISO strings, Firestore Timestamps, and Azerbaijani date format (DD.MM.YYYY).
+ */
+export const parseDate = (dateVal: any): Date | null => {
+    if (!dateVal) return null;
+    if (dateVal instanceof Timestamp) return dateVal.toDate();
+    if (dateVal.toDate && typeof dateVal.toDate === 'function') return dateVal.toDate();
+
+    if (typeof dateVal === 'string') {
+        const trimmed = dateVal.trim();
+        // Handle Azerbaijani dots format DD.MM.YYYY
+        if (trimmed.includes('.') && !trimmed.includes('T') && !trimmed.includes('-')) {
+            const parts = trimmed.split(' ');
+            const dateParts = parts[0].split('.');
+            if (dateParts.length === 3) {
+                const [d, m, y] = dateParts.map(Number);
+                const year = y < 100 ? 2000 + y : y;
+                const date = new Date(year, m - 1, d);
+                if (parts.length > 1) {
+                    const timeParts = parts[1].split(':');
+                    if (timeParts.length >= 2) {
+                        date.setHours(Number(timeParts[0]), Number(timeParts[1]));
+                        if (timeParts.length === 3) date.setSeconds(Number(timeParts[2]));
+                    }
+                }
+                return date;
+            }
+        }
+    }
+    const d = new Date(dateVal);
+    return isNaN(d.getTime()) ? null : d;
+};
+
+export const calculateWorkingHours = (startDate: any, endDate: any) => {
+    const s = parseDate(startDate);
+    const e = parseDate(endDate);
+    if (!s || !e || e <= s) return 0;
+
+    const startH = 9;
+    const endH = 18;
+    let totalMs = 0;
+
+    let curr = new Date(s.getTime());
+    if (curr.getHours() < startH) curr.setHours(startH, 0, 0, 0);
+    if (curr.getHours() >= endH) {
+        curr.setDate(curr.getDate() + 1);
+        curr.setHours(startH, 0, 0, 0);
+    }
+
+    while (curr < e) {
+        const day = curr.getDay();
+        if (day === 0 || day === 6) {
+            curr.setDate(curr.getDate() + 1);
+            curr.setHours(startH, 0, 0, 0);
+            continue;
+        }
+
+        const dayEnd = new Date(curr.getTime());
+        dayEnd.setHours(endH, 0, 0, 0);
+
+        if (e <= dayEnd) {
+            totalMs += Math.max(0, e.getTime() - curr.getTime());
+            break;
+        } else {
+            totalMs += Math.max(0, dayEnd.getTime() - curr.getTime());
+            curr.setDate(curr.getDate() + 1);
+            curr.setHours(startH, 0, 0, 0);
+        }
+    }
+    return totalMs / (1000 * 60 * 60);
+};
+
+export const formatDetailedTime = (hours: number) => {
+    const totalMinutes = Math.round(hours * 60);
+    if (totalMinutes === 0) return "0 dəq";
+    if (totalMinutes < 60) return `${totalMinutes} dəq`;
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h < 24) return m > 0 ? `${h} saat ${m} dəq` : `${h} saat`;
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+    return `${d} gün ${rh > 0 ? rh + ' saat ' : ''}${m > 0 ? m + ' dəq' : ''}`.trim();
+};
+
+export const formatWorkTime = (hours: number) => {
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    const workDays = Math.floor(h / 9);
+    const remainingH = h % 9;
+    let parts = [];
+    if (workDays > 0) parts.push(`${workDays} iş günü`);
+    if (remainingH > 0) parts.push(`${remainingH} saat`);
+    if (m > 0) parts.push(`${m} dəq`);
+    return parts.length > 0 ? parts.join(' ') : "0 saat";
+};

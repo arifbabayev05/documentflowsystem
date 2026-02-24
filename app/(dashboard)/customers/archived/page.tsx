@@ -30,7 +30,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, deleteCustomer, updateCustomer, getStores } from "@/lib/db";
-import { formatDateInput } from "@/lib/format";
+import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
@@ -295,30 +295,23 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
             });
         }
 
-        const sorted = entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const sorted = entries.sort((a, b) => (parseDate(a.date)?.getTime() || 0) - (parseDate(b.date)?.getTime() || 0));
 
         // Deduplicate
         const unique = sorted.filter((val, index, self) =>
             index === self.findIndex((t) => (
                 t.label === val.label &&
-                Math.floor(new Date(t.date).getTime() / 60000) === Math.floor(new Date(val.date).getTime() / 60000)
+                Math.floor((parseDate(t.date)?.getTime() || 0) / 60000) === Math.floor((parseDate(val.date)?.getTime() || 0) / 60000)
             ))
         );
 
         let duration = "";
         if (unique.length >= 2) {
-            const start = new Date(unique[0].date).getTime();
-            const end = row.printedAt ? new Date(row.printedAt).getTime() : new Date(unique[unique.length - 1].date).getTime();
-            const diff = Math.max(0, end - start);
-            const hours = Math.floor(diff / (1000 * 60 * 60));
-            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const days = Math.floor(hours / 24);
+            const startStr = unique[0].date;
+            const endStr = row.printedAt || unique[unique.length - 1].date;
 
-            if (days < 1) {
-                duration = `${hours} saat ${minutes} dəq`;
-            } else {
-                duration = `${days} gün ${hours % 24} saat`;
-            }
+            const wh = calculateWorkingHours(startStr, endStr);
+            duration = formatDetailedTime(wh);
         }
 
         return { timeline: unique, durationText: duration };
@@ -674,7 +667,7 @@ export default function ArchivedCustomersPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER";
+        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER" || user?.role === "DEP_HEAD";
 
         return rows.filter(c => {
             if (!c.isArchived) return false;
