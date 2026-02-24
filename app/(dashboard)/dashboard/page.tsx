@@ -1552,9 +1552,9 @@ const CustomerCard = memo(({
                                                         }
                                                     };
 
-                                                    if (isKarabakh) {
-                                                        sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = localData.details?.actualAddress;
-                                                    }
+                                                    // if (localData.details?.actualAddress) {
+                                                    //     sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = localData.details.actualAddress;
+                                                    // }
 
                                                     const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
 
@@ -2502,10 +2502,16 @@ export default function DashboardPage() {
     }, [rows]);
 
     const myStats = useMemo(() => {
-        if (!user?.email) return { active: 0, archived: 0 };
+        if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0 };
         const active = rows.filter(r => r.assignedTo === user.email && !r.isArchived).length;
         const archived = rows.filter(r => r.assignedTo === user.email && r.isArchived).length;
-        return { active, archived };
+        const unassigned = rows.filter(r => !r.assignedTo).length;
+        return {
+            active,
+            archived,
+            total: active + archived,
+            unassigned
+        };
     }, [rows, user?.email]);
 
     if (loadingData && rows.length === 0) {
@@ -2524,7 +2530,10 @@ export default function DashboardPage() {
             <div className="max-w-[1500px] mx-auto pb-16 relative px-4">
 
                 {/* 0. USER STATS BANNER */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 mt-4">
+                <div className={cn(
+                    "grid grid-cols-1 gap-4 mb-6 mt-4",
+                    (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') ? "md:grid-cols-4" : "md:grid-cols-3"
+                )}>
                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-blue-400 transition-all">
                         <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-110 transition-transform">
                             <Zap size={24} />
@@ -2549,9 +2558,22 @@ export default function DashboardPage() {
                         </div>
                         <div>
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ümumi İş Sayı</p>
-                            <p className="text-2xl font-black text-slate-900">{(userWorkload[user?.email || ""] || 0)}</p>
+                            <p className="text-2xl font-black text-slate-900">{myStats.total}</p>
                         </div>
                     </div>
+
+                    {/* New: Unassigned status for Managers/Admins */}
+                    {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
+                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-orange-400 transition-all animate-in fade-in slide-in-from-right-4 duration-500">
+                            <div className="h-12 w-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100 group-hover:scale-110 transition-transform">
+                                <Users size={24} />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Təyinat edilməyən</p>
+                                <p className="text-2xl font-black text-slate-900">{myStats.unassigned}</p>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* 1. STICKY FILTER BAR */}

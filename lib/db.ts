@@ -338,7 +338,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
             cleanedData.statusHistory = statusHistory;
         }
 
-        await updateDoc(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }));
+        await setDoc(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }), { merge: true });
 
         await addAuditLog(action, detail, userEmail, category, {
             targetId: id,

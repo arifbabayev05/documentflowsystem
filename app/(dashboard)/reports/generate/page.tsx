@@ -541,7 +541,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
         CAVABDEH_UNVAN: customer.details?.address || "",
         CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
-        CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
+        CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || customer.details?.address || "",
         CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress.trim() !== (customer.details.address || "").trim())
             ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
             : "",
@@ -1250,14 +1250,24 @@ function GenerateDocumentContent() {
                 }
 
                 // Auto-select court matching based on address
-                const targetAddress = normalizeAZ(typedCust.details?.actualAddress || typedCust.details?.address || "");
+                // We try Actual Address first, then Registration Address if no match
+                const addressesToTry = [
+                    typedCust.details?.actualAddress,
+                    typedCust.details?.address
+                ].filter(Boolean) as string[];
 
-                if (targetAddress && courtsData?.length > 0) {
+                let finalMatchedCourt: Court | null = null;
+
+                for (const rawAddr of addressesToTry) {
+                    const targetAddress = normalizeAZ(rawAddr);
+                    if (!targetAddress) continue;
+
                     const addressWords = targetAddress.split(/\s+/);
                     const addressKeywords: string[] = [];
                     addressWords.forEach((word, i) => {
-                        // Priority words before markers like "rayon" or "şəhər"
-                        if (['rayon', 'rayonu', 'seher', 'seheri'].includes(word) && i > 0) {
+                        // Priority markers: rayon (r), seher (seh), qesebe (q)
+                        const markers = ['rayon', 'rayonu', 'seher', 'seheri', 'r', 'seh', 'q', 'qes'];
+                        if (markers.includes(word) && i > 0) {
                             addressKeywords.push(addressWords[i - 1]);
                         }
                     });
@@ -1270,15 +1280,30 @@ function GenerateDocumentContent() {
                             .trim().split(/\s+/)[0];
 
                         if (courtCoreName.length < 3) return false;
+                        // Avoid matching address common words like "kuc", "prospekt"
+                        if (["kuc", "prospekt", "unvan"].includes(courtCoreName)) return false;
 
-                        // Check 1: High fidelity match with identified address keywords
-                        if (addressKeywords.includes(courtCoreName)) return true;
+                        // Check 1: High fidelity match with identified address keywords (e.g. "Sabunçu")
+                        if (addressKeywords.length > 0 && addressKeywords.includes(courtCoreName)) return true;
 
                         // Check 2: Fallback include (checks if court name exists as a distinct part of the address)
-                        return targetAddress.includes(courtCoreName);
+                        // Only fallback if no specific keywords were found
+                        if (addressKeywords.length === 0) {
+                            return targetAddress.includes(courtCoreName);
+                        }
+                        return false;
                     });
 
-                    if (matchedCourt) setSelectedCourt(matchedCourt);
+                    if (matchedCourt) {
+                        finalMatchedCourt = matchedCourt;
+                        break;
+                    }
+                }
+
+                if (finalMatchedCourt) {
+                    setSelectedCourt(finalMatchedCourt);
+                } else {
+                    setSelectedCourt(null);
                 }
             } else {
                 toast.error("Müştəri tapılmadı");
@@ -2015,9 +2040,9 @@ function GenerateDocumentContent() {
 
         // Karabakh rule always applies (even for warnings) as per user request
         const isKarabakh = isKarabakhAddress(customer.details?.address || "");
-        if (isKarabakh) {
-            sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = "details.actualAddress";
-        }
+        // if (isKarabakh) {
+        //     sections["Ünvan Məlumatları"]["Faktiki Yaşayış"] = "details.actualAddress";
+        // }
 
         const isEmpty = (v: any) => v === undefined || v === null || v.toString().trim() === "";
 

@@ -34,6 +34,12 @@ export default function ReportsPage() {
     const { user, can, isSuperAdmin } = useAuth();
     const router = useRouter();
 
+    const [activeTab, setActiveTab] = useState<"customers" | "templates">("customers");
+    const [customers, setCustomers] = useState<Customer[]>([]);
+    const [templates, setTemplates] = useState<Template[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [searchTerm, setSearchTerm] = useState("");
+
     if (!user || !isSuperAdmin) {
         return (
             <AuthGuard>
@@ -47,11 +53,6 @@ export default function ReportsPage() {
             </AuthGuard>
         );
     }
-    const [activeTab, setActiveTab] = useState<"customers" | "templates">("customers");
-    const [customers, setCustomers] = useState<Customer[]>([]);
-    const [templates, setTemplates] = useState<Template[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState("");
 
     useEffect(() => {
         fetchInitialData();

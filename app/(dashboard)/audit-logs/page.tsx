@@ -77,6 +77,15 @@ export default function AuditLogsPage() {
     const { user, can } = useAuth();
     const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
     const [activeTab, setActiveTab] = useState("all");
+    const [loadingLogs, setLoadingLogs] = useState(true);
+    const [searchTerm, setSearchTerm] = useState("");
+    const [selectedAction, setSelectedAction] = useState<string>("all");
+    const [users, setUsers] = useState<any[]>([]);
+    const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+    const [userSearchTerm, setUserSearchTerm] = useState("");
+    const [isUserFilterOpen, setIsUserFilterOpen] = useState(false);
+    const [showCleanupModal, setShowCleanupModal] = useState(false);
+    const [cleaning, setCleaning] = useState(false);
 
     if (!user || !can("page_audit_logs")) {
         return (
@@ -91,15 +100,6 @@ export default function AuditLogsPage() {
             </AuthGuard>
         );
     }
-    const [loadingLogs, setLoadingLogs] = useState(true);
-    const [searchTerm, setSearchTerm] = useState("");
-    const [selectedAction, setSelectedAction] = useState<string>("all");
-    const [users, setUsers] = useState<any[]>([]);
-    const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
-    const [userSearchTerm, setUserSearchTerm] = useState("");
-    const [isUserFilterOpen, setIsUserFilterOpen] = useState(false);
-    const [showCleanupModal, setShowCleanupModal] = useState(false);
-    const [cleaning, setCleaning] = useState(false);
 
     const handleBulkDelete = async () => {
         if (!user) return;

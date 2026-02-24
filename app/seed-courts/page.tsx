@@ -548,14 +548,14 @@ export default function SeedCourtsPage() {
             setStatus(`Silindi: ${existing.length} məhkəmə. Yeni məlumatlar emal edilir...`);
 
             // 2. Parse
-            const lines = RAW_DATA.split('\n').map(l => l.trim());
+            const lines = RAW_DATA.split('\n').map(l => l.trim()).filter(Boolean);
             const courts = [];
             let currentCourt: any = null;
 
-            for (const line of lines) {
-                if (!line) continue;
-
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
                 const lowerLine = line.toLowerCase();
+
                 const isAddress = lowerLine.startsWith("ünvan");
                 const isPhone = lowerLine.startsWith("tel") || lowerLine.startsWith("telefon");
                 const isFax = lowerLine.startsWith("faks");
@@ -566,17 +566,21 @@ export default function SeedCourtsPage() {
                         courts.push(currentCourt);
                     }
                     if (isAddress) currentCourt.address = line.replace(/^ünvan\s*:?\s*/i, "").trim();
-                    if (isPhone) {
-                        let p = line.replace(/^(telefon|tel)\s*:?\s*/i, "").trim();
-                        currentCourt.phone = p;
-                    }
+                    if (isPhone) currentCourt.phone = line.replace(/^(telefon|tel)\s*:?\s*/i, "").trim();
                     if (isFax) currentCourt.fax = line.replace(/^faks\s*:?\s*/i, "").trim();
                 } else {
-                    // It's a name candidate
-                    if (/^\d+\.?\s+court/i.test(line)) continue;
+                    // It's a name candidate or a continuation of address
+                    // If the current line is short and previous line was address, it's likely address continuation
+                    const prevLine = i > 0 ? lines[i - 1].toLowerCase() : "";
+                    const isContinuation = (prevLine.startsWith("ünvan") || (currentCourt && currentCourt.address && !currentCourt.phone && !currentCourt.fax)) &&
+                        (line.includes("küç") || line.includes("pr") || /^\d+/.test(line) || line.length < 20);
 
-                    currentCourt = { name: line, address: "", phone: "", fax: "" };
-                    courts.push(currentCourt);
+                    if (isContinuation && currentCourt) {
+                        currentCourt.address = (currentCourt.address + " " + line).trim();
+                    } else {
+                        currentCourt = { name: line, address: "", phone: "", fax: "" };
+                        courts.push(currentCourt);
+                    }
                 }
             }
 
