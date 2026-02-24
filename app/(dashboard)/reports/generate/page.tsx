@@ -2177,15 +2177,24 @@ function GenerateDocumentContent() {
                 IDDIACI_FAKS: companyInfo?.fax || "",
                 NUMAYENDE_AD_SOYAD: companyInfo?.representative || "",
                 NUMAYENDE_FIN: (companyInfo?.representativeFin || "").toUpperCase(),
-                CAVABDEH_AD_SOYAD: customer.fullName || "",
+                CAVABDEH_AD_SOYAD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
+                    ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
+                    : (customer.fullName || ""),
                 CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
                 CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
                 CAVABDEH_UNVAN: customer.details?.address || "",
+                CAVABDEH_QEYDIYYAT_UNVAN: customer.details?.address || "",
                 CAVABDEH_FAKTIKI_UNVAN: customer.details?.actualAddress || "",
-                CAVABDEH_MOBIL: customer.details?.phone || "",
-                CAVABDEH_TAM_AD: customer.fullName || "",
+                CAVABDEH_FAKTIKI_UNVAN_SUFFIX: (customer.details?.actualAddress && customer.details.actualAddress !== customer.details.address)
+                    ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
+                    : "",
+                CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
+                CAVABDEH_TAM_AD: (template.name.toLowerCase().includes("xəbərdarlıq") && customer.details?.actualAddress)
+                    ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
+                    : (customer.fullName || ""),
                 CAVABDEH_ATA_SUFFIX: customer.details?.gender === "Qadın" ? "qızına" : "oğluna",
                 CAVABDEH_ATA_SUFFIX_2: customer.details?.gender === "Qadın" ? "qızının" : "oğlunun",
+                CAVABDEH_ATA_SUFFIX_3: customer.details?.gender === "Qadın" ? "qızından" : "oğlundan",
 
                 BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
                 BUTUN_MEHSULLAR: getAllProducts(invoices),
