@@ -2391,11 +2391,14 @@ export default function DashboardPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
+        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD' || user?.role === 'ADMIN';
 
         return rows.filter(c => {
-            // Archive filter
-            if (c.isArchived) return false;
+            // Archive filter: dashboard primarily shows active work.
+            // Items in 'UNFINISHED_ARCHIVE' are technically archived but should be visible if that status is selected.
+            if (c.isArchived) {
+                if (statusFilter !== 'UNFINISHED_ARCHIVE') return false;
+            }
 
             // My Entries filter (only for DEP_HEAD and SUPERADMIN)
             if (onlyMyEntries && (user?.role === 'DEP_HEAD' || user?.role === 'SUPERADMIN')) {
@@ -2425,7 +2428,9 @@ export default function DashboardPage() {
 
             let matchesInvoiceCount = true;
             if (invoiceMode !== "all" && invoiceCount !== "") {
-                const count = c.details?.invoices?.length || 0;
+                const invoices = c.details?.invoices || [];
+                // Support legacy data structure (items with a contract number but no invoices array yet)
+                const count = invoices.length > 0 ? invoices.length : (c.details?.contractNumber ? 1 : 0);
                 const target = parseInt(invoiceCount);
                 if (!isNaN(target)) {
                     if (invoiceMode === "exact") matchesInvoiceCount = count === target;
