@@ -2407,10 +2407,11 @@ export default function DashboardPage() {
 
             // First level: Role based access
             // Inspectors/Admins see only what's assigned to them
-            // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE
-            const canSeeUnfinished = (user?.role === 'ADMIN' || user?.role === 'MANAGER' || user?.role === 'SUPERADMIN') && c.process_status === 'UNFINISHED_ARCHIVE';
+            // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE tasks that are unassigned
+            const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
+            const isAssignedToMe = c.assignedTo === user?.email;
 
-            if (!isManager && c.assignedTo !== user?.email && !canSeeUnfinished) {
+            if (!isManager && !isAssignedToMe && !canSeeUnfinished) {
                 // Exceptional case: If it's a new unsaved row being created right now
                 if (!c.id) return true;
                 return false;

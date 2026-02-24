@@ -1243,20 +1243,36 @@ function GenerateDocumentContent() {
                     }
                 }
 
-                // Auto-select court
-                const actualAddress = (typedCust.details?.actualAddress || "").toLowerCase();
-                const addressRaw = typedCust.details?.address || "";
-                const address = normalizeAZ(addressRaw);
+                // Auto-select court matching based on address
+                const targetAddress = normalizeAZ(typedCust.details?.actualAddress || typedCust.details?.address || "");
 
-                if (address) {
-                    const matchedCourt = courtsData.find((court: any) => {
-                        const courtName = normalizeAZ(court.name);
-                        const courtDistrict = courtName
-                            .replace("rayon", "").replace("mehkeme", "").replace("seher", "").replace("baki", "")
-                            .trim().split(" ")[0];
-                        return courtDistrict.length > 3 && address.includes(courtDistrict);
+                if (targetAddress && courtsData?.length > 0) {
+                    const addressWords = targetAddress.split(/\s+/);
+                    const addressKeywords: string[] = [];
+                    addressWords.forEach((word, i) => {
+                        // Priority words before markers like "rayon" or "şəhər"
+                        if (['rayon', 'rayonu', 'seher', 'seheri'].includes(word) && i > 0) {
+                            addressKeywords.push(addressWords[i - 1]);
+                        }
                     });
-                    if (matchedCourt) setSelectedCourt(matchedCourt as Court);
+
+                    const matchedCourt = (courtsData as Court[]).find((court) => {
+                        const courtName = normalizeAZ(court.name);
+                        // Extracting the core name by stripping common suffixes
+                        const courtCoreName = courtName
+                            .replace(/rayon|mehkeme|seher|baki|kommersiya|inzibati/g, "")
+                            .trim().split(/\s+/)[0];
+
+                        if (courtCoreName.length < 3) return false;
+
+                        // Check 1: High fidelity match with identified address keywords
+                        if (addressKeywords.includes(courtCoreName)) return true;
+
+                        // Check 2: Fallback include (checks if court name exists as a distinct part of the address)
+                        return targetAddress.includes(courtCoreName);
+                    });
+
+                    if (matchedCourt) setSelectedCourt(matchedCourt);
                 }
             } else {
                 toast.error("Müştəri tapılmadı");
