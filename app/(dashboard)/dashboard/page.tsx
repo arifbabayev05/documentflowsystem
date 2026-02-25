@@ -130,9 +130,9 @@ export const STATUS_ORDER: ProcessStatus[] = [
 ];
 
 export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string, bg: string }> = {
-    INSPECTOR_ENTERED: { label: 'Müfəttiş Daxil Etdi', color: 'text-blue-600', bg: 'bg-blue-50' },
-    ASSIGNED_BY_MANAGER: { label: 'Xəbərdarlıq göndərildi', color: 'text-amber-600', bg: 'bg-amber-50' },
-    FILLED_BY_ADMIN: { label: 'Müfəttiş doldurdu', color: 'text-purple-600', bg: 'bg-purple-50' },
+    INSPECTOR_ENTERED: { label: 'Yeni daxil edildi', color: 'text-blue-600', bg: 'bg-blue-50' },
+    ASSIGNED_BY_MANAGER: { label: 'İcraata götürüldü', color: 'text-amber-600', bg: 'bg-amber-50' },
+    FILLED_BY_ADMIN: { label: 'Məlumatlar doldurulub', color: 'text-purple-600', bg: 'bg-purple-50' },
     WAITING_FOR_ARCHIVE: { label: 'Arxivdən sənəd istənilib', color: 'text-orange-600', bg: 'bg-orange-50' },
     ARCHIVE_UPLOADED: { label: 'Arxiv faylı əlavə olundu', color: 'text-slate-600', bg: 'bg-slate-100' },
     COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' },
@@ -2255,7 +2255,12 @@ const CustomerCard = memo(({
                                 ? `${STATUS_LABELS[row.process_status].bg} ${STATUS_LABELS[row.process_status].color} ${STATUS_LABELS[row.process_status].color.replace('text-', 'border-').replace('600', '100')}`
                                 : "bg-white text-slate-400 border-slate-100"
                         )}>
-                            {row.process_status ? STATUS_LABELS[row.process_status].label : "Daxil Edilib"}
+                            {(() => {
+                                if (row.process_status === 'ASSIGNED_BY_MANAGER' && row.details?.warningDate) {
+                                    return 'Xəbərdarlıq göndərildi';
+                                }
+                                return row.process_status ? STATUS_LABELS[row.process_status].label : "Daxil Edilib";
+                            })()}
                         </div>
                     )}
                 </div>
@@ -2304,6 +2309,7 @@ export default function DashboardPage() {
     const [warningFilter, setWarningFilter] = useState<"all" | "sent" | "overdue" | "unsent">("all");
     const [invoiceCount, setInvoiceCount] = useState<string>("");
     const [invoiceMode, setInvoiceMode] = useState<"exact" | "min" | "max" | "all">("all");
+    const [executorFilter, setExecutorFilter] = useState<string>("all");
 
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({
         isOpen: false,
@@ -2358,7 +2364,7 @@ export default function DashboardPage() {
 
     useEffect(() => {
         setPage(1);
-    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries]);
+    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, executorFilter]);
 
     const addRow = () => {
         const newRow: CustomerRow = {
@@ -2487,9 +2493,14 @@ export default function DashboardPage() {
                 matchesStatus = c.process_status === statusFilter;
             }
 
-            return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus;
+            let matchesExecutor = true;
+            if (executorFilter !== "all") {
+                matchesExecutor = c.assignedTo === executorFilter;
+            }
+
+            return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus && matchesExecutor;
         });
-    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, user?.email, user?.role]);
+    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, executorFilter, user?.email, user?.role]);
 
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
@@ -2660,6 +2671,23 @@ export default function DashboardPage() {
                                     </button>
                                 )}
                             </div>
+
+                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD') && (
+                                <div className="relative group/sel">
+                                    <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
+                                    <select
+                                        value={executorFilter}
+                                        onChange={(e) => setExecutorFilter(e.target.value)}
+                                        className="pl-11 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 focus:border-primary outline-none text-[12px] font-bold transition-all shadow-sm appearance-none min-w-[200px] uppercase tracking-wider"
+                                    >
+                                        <option value="all">Bütün İnzibatçılar</option>
+                                        {appUsers.map(u => (
+                                            <option key={u.id} value={u.email}>{u.displayName || u.email}</option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                                </div>
+                            )}
 
                             {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
                                 <button

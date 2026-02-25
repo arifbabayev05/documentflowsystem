@@ -1257,6 +1257,7 @@ function GenerateDocumentContent() {
                 ].filter(Boolean) as string[];
 
                 let finalMatchedCourt: Court | null = null;
+                const MAJOR_CITIES = ['baki', 'gence', 'naxcivan'];
 
                 for (const rawAddr of addressesToTry) {
                     const targetAddress = normalizeAZ(rawAddr);
@@ -1264,38 +1265,67 @@ function GenerateDocumentContent() {
 
                     const addressWords = targetAddress.split(/\s+/);
                     const addressKeywords: string[] = [];
+                    const addressMajorCity = MAJOR_CITIES.find(city => targetAddress.includes(city));
+
                     addressWords.forEach((word, i) => {
                         // Priority markers: rayon (r), seher (seh), qesebe (q)
-                        const markers = ['rayon', 'rayonu', 'seher', 'seheri', 'r', 'seh', 'q', 'qes'];
+                        const markers = ['rayon', 'rayonu', 'seher', 'seheri', 'r', 'seh', 'q', 'qes', 'mr'];
                         if (markers.includes(word) && i > 0) {
                             addressKeywords.push(addressWords[i - 1]);
                         }
                     });
 
-                    const matchedCourt = (courtsData as Court[]).find((court) => {
+                    // Scoring system to find the BEST match instead of the FIRST match
+                    let bestScore = 0;
+                    let bestMatchedCourt: Court | null = null;
+
+                    for (const court of (courtsData as Court[])) {
                         const courtName = normalizeAZ(court.name);
-                        // Extracting the core name by stripping common suffixes
-                        const courtCoreName = courtName
-                            .replace(/rayon|mehkeme|seher|baki|kommersiya|inzibati/g, "")
-                            .trim().split(/\s+/)[0];
+                        // Extracting all meaningful words (stripping common suffixes globally)
+                        const courtWords = courtName
+                            .replace(/rayon|mehkeme|seher|kommersiya|inzibati|muxtar|respublikasi/g, " ")
+                            .split(/\s+/)
+                            .filter(w => w.length >= 3 && !["kuc", "prospekt", "unvan", "nomreli", "sayli"].includes(w));
 
-                        if (courtCoreName.length < 3) return false;
-                        // Avoid matching address common words like "kuc", "prospekt"
-                        if (["kuc", "prospekt", "unvan"].includes(courtCoreName)) return false;
-
-                        // Check 1: High fidelity match with identified address keywords (e.g. "Sabunçu")
-                        if (addressKeywords.length > 0 && addressKeywords.includes(courtCoreName)) return true;
-
-                        // Check 2: Fallback include (checks if court name exists as a distinct part of the address)
-                        // Only fallback if no specific keywords were found
-                        if (addressKeywords.length === 0) {
-                            return targetAddress.includes(courtCoreName);
+                        // 3 Cities Rule: If address has major city, court name MUST match it if court has a major city
+                        const courtMajorCity = MAJOR_CITIES.find(city => courtName.includes(city));
+                        if (addressMajorCity && courtMajorCity && addressMajorCity !== courtMajorCity) {
+                            continue;
                         }
-                        return false;
-                    });
 
-                    if (matchedCourt) {
-                        finalMatchedCourt = matchedCourt;
+                        let score = 0;
+
+                        // Check 1: Score based on identified address keywords (rayon, seher name etc)
+                        addressKeywords.forEach(ak => {
+                            if (courtWords.includes(ak)) {
+                                // Specific match (e.g. "Serur" vs "Serur") is worth more than a regional match
+                                // "naxcivan" as a keyword might match many courts in MR, but "serur" only one.
+                                // However, and address word like "serur" being present in "naxcivan mr serur rayon..." is key.
+                                score += 10;
+                            }
+                        });
+
+                        // Check 2: Token match (any long-enough word from court appearing in address)
+                        // This helps if the address isn't perfectly formatted with 'r', 'rayon'
+                        courtWords.forEach(cw => {
+                            if (targetAddress.includes(cw)) {
+                                score += 2;
+                            }
+                        });
+
+                        // Check 3: Major city bonus
+                        if (addressMajorCity === courtMajorCity && addressMajorCity) {
+                            score += 1;
+                        }
+
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestMatchedCourt = court;
+                        }
+                    }
+
+                    if (bestMatchedCourt && bestScore >= 10) {
+                        finalMatchedCourt = bestMatchedCourt;
                         break;
                     }
                 }

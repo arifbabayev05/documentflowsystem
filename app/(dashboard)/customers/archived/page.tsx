@@ -25,11 +25,12 @@ import {
     ArrowRight,
     Users,
     Plus,
+    Minus,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, deleteCustomer, updateCustomer, getStores } from "@/lib/db";
+import { getCustomers, deleteCustomer, updateCustomer, getStores, getAllUsers } from "@/lib/db";
 import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
@@ -628,6 +629,10 @@ export default function ArchivedCustomersPage() {
     const [endDate, setEndDate] = useState("");
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({ isOpen: false, index: null });
     const [stores, setStores] = useState<any[]>([]);
+    const [appUsers, setAppUsers] = useState<any[]>([]);
+    const [executorFilter, setExecutorFilter] = useState<string>("all");
+    const [page, setPage] = useState(1);
+    const itemsPerPage = 50;
 
     const fetchData = useCallback(async () => {
         try {
@@ -645,7 +650,17 @@ export default function ArchivedCustomersPage() {
         }
     }, []);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        fetchData();
+        getAllUsers().then(users => {
+            const admins = users.filter((u: any) => u.role === 'ADMIN');
+            setAppUsers(admins);
+        });
+    }, [fetchData]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [searchTerm, startDate, endDate, executorFilter]);
 
     const handleSave = async (data: CustomerRow, email?: string) => {
         if (!data.id) return;
@@ -696,9 +711,14 @@ export default function ArchivedCustomersPage() {
                 if (archTime > e) return false;
             }
 
+            // Executor filter
+            if (executorFilter !== "all") {
+                if (c.assignedTo !== executorFilter) return false;
+            }
+
             return true;
         });
-    }, [rows, searchTerm, startDate, endDate, user]);
+    }, [rows, searchTerm, startDate, endDate, user, executorFilter]);
 
     if (!user || !can('page_archive_customers')) {
         return (
@@ -737,7 +757,25 @@ export default function ArchivedCustomersPage() {
                         />
                     </div>
 
-                    <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-200/60 shadow-inner">
+                    <div className="flex flex-wrap items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-200/60 shadow-inner">
+                        {/* Executor Filter */}
+                        {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'ARCHIVE_MANAGER' || user?.role === 'DEP_HEAD') && (
+                            <div className="relative group/sel bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
+                                <select
+                                    value={executorFilter}
+                                    onChange={(e) => setExecutorFilter(e.target.value)}
+                                    className="pl-11 pr-10 py-2.5 bg-transparent outline-none text-[12px] font-bold cursor-pointer appearance-none min-w-[200px] uppercase tracking-wider"
+                                >
+                                    <option value="all">Bütün İnzibatçılar</option>
+                                    {appUsers.map(u => (
+                                        <option key={u.id} value={u.email}>{u.displayName || u.email}</option>
+                                    ))}
+                                </select>
+                                <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                            </div>
+                        )}
+
                         <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                             <div className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 transition-colors border-r border-slate-100">
                                 <Calendar size={14} className="text-slate-400" />
@@ -777,13 +815,81 @@ export default function ArchivedCustomersPage() {
                 <div className="space-y-4">
                     {loading ? (
                         <div className="py-20 flex flex-col items-center gap-4"><Loader2 className="animate-spin text-slate-300" size={40} /><p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Arxiv Yüklənir...</p></div>
-                    ) : filteredRows.map((row, idx) => (
-                        <CustomerCard key={row.id || idx} row={row} index={idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
+                    ) : filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, idx) => (
+                        <CustomerCard key={row.id || (page - 1) * itemsPerPage + idx} row={row} index={(page - 1) * itemsPerPage + idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
                     ))}
                     {!loading && filteredRows.length === 0 && (
                         <div className="py-20 text-center opacity-20"><Search size={60} className="mx-auto mb-4" /><p className="font-black text-2xl uppercase tracking-widest italic">Arxiv Boşdur</p></div>
                     )}
                 </div>
+
+                {filteredRows.length > 0 && (
+                    <div className="flex flex-col items-center gap-4 pt-10 pb-20">
+                        <div className="flex items-center gap-2">
+                            <button
+                                disabled={page === 1}
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            >
+                                <Minus size={16} />
+                            </button>
+
+                            <div className="flex items-center gap-1.5 mx-4">
+                                {(() => {
+                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
+                                    let startPage = Math.max(1, page - 2);
+                                    let endPage = Math.min(totalPages, startPage + 4);
+
+                                    if (endPage - startPage < 4) {
+                                        startPage = Math.max(1, endPage - 4);
+                                    }
+
+                                    const pages = [];
+                                    for (let i = startPage; i <= endPage; i++) {
+                                        pages.push(
+                                            <button
+                                                key={i}
+                                                onClick={() => setPage(i)}
+                                                className={cn(
+                                                    "h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black transition-all border",
+                                                    page === i
+                                                        ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
+                                                        : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                                                )}
+                                            >
+                                                {i}
+                                            </button>
+                                        );
+                                    }
+                                    return pages;
+                                })()}
+
+                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
+                                    <>
+                                        <span className="text-slate-300 mx-1">...</span>
+                                        <button
+                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
+                                            className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
+                                        >
+                                            {Math.ceil(filteredRows.length / itemsPerPage)}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+
+                            <button
+                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
+                                onClick={() => setPage(p => p + 1)}
+                                className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            >
+                                <Plus size={16} />
+                            </button>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
+                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                        </span>
+                    </div>
+                )}
 
                 {deleteModal.isOpen && (
                     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
