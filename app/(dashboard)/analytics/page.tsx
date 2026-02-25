@@ -107,6 +107,11 @@ interface AnalyticsData {
     };
     timeSavingsData: { name: string; faktiki: number; bizim: number; saved: number }[];
     totalSavedHours: number;
+    archiveStats: {
+        avgHoursPerDoc: number;
+        totalArchivedDays: number;
+        totalArchivedDocs: number;
+    };
 }
 
 const FEE_PER_CASE = 20;
@@ -286,14 +291,16 @@ export default function AnalyticsPage() {
             trendData: [],
             warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
             timeSavingsData: [],
-            totalSavedHours: 0
+            totalSavedHours: 0,
+            archiveStats: { avgHoursPerDoc: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
         };
 
         if (!filteredCustomers.length) return {
             ...initial,
             warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
             timeSavingsData: [],
-            totalSavedHours: 0
+            totalSavedHours: 0,
+            archiveStats: { avgHoursPerDoc: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
         };
 
         const isOverdueWarning = (dateStr?: string) => {
@@ -582,10 +589,42 @@ export default function AnalyticsPage() {
             totalDocs: filteredCustomers.length
         };
 
-        // Time Savings Data: Faktiki=1 sənəd/1 saat, Bizim=3 sənəd/1 saat
+        // Archive Efficiency Calculation
+        // Formula: (Unique Archive Days * 8 hours) / Total Archived Documents
+        const archivedDocs = filteredCustomers.filter(c => c.isArchived);
+        const uniqueArchivedDays = new Set<string>();
+        archivedDocs.forEach(c => {
+            if (c.statusHistory) {
+                c.statusHistory.forEach((h: any) => {
+                    const date = parseDate(h.timestamp);
+                    if (date) uniqueArchivedDays.add(date.toISOString().split('T')[0]);
+                });
+            }
+            // Also check top-level archivedAt/updatedAt as fallbacks
+            if (c.archivedAt) {
+                const date = parseDate(c.archivedAt);
+                if (date) uniqueArchivedDays.add(date.toISOString().split('T')[0]);
+            }
+            if (!c.statusHistory && c.updatedAt) {
+                const date = parseDate(c.updatedAt);
+                if (date) uniqueArchivedDays.add(date.toISOString().split('T')[0]);
+            }
+        });
+
+        const totalArchivedDocs = archivedDocs.length;
+        const totalArchivedDays = uniqueArchivedDays.size;
+        const avgHoursPerDoc = totalArchivedDocs > 0 ? (totalArchivedDays * 8) / totalArchivedDocs : 0;
+
+        initial.archiveStats = {
+            avgHoursPerDoc,
+            totalArchivedDays,
+            totalArchivedDocs
+        };
+
+        // Time Savings Data: Faktiki=1 sənəd/1 saat, Bizim=Data-driven Archive Speed
         const timeSavingsData = Object.entries(trendMap).map(([key, val]) => {
-            const faktiki = val.count * 1;   // 1 hour per doc
-            const bizim = val.count / 3;     // 3 docs per hour
+            const faktiki = val.count * 1;   // 1 hour per doc (manual)
+            const bizim = val.count * avgHoursPerDoc; // Based on actual daily archive throughput
             const saved = Math.max(0, faktiki - bizim);
             return { name: val.label, faktiki: parseFloat(faktiki.toFixed(1)), bizim: parseFloat(bizim.toFixed(1)), saved: parseFloat(saved.toFixed(1)) };
         });
@@ -627,6 +666,8 @@ export default function AnalyticsPage() {
         return initial;
     }, [filteredCustomers, auditLogs, selectedPerfUser]);
 
+
+    const riskScore = Math.round((stats.readyForCourtCount / Math.max(1, stats.totalCases)) * 100);
 
     if (loading) return (
         <div className="flex h-screen items-center justify-center bg-white">
@@ -739,27 +780,28 @@ export default function AnalyticsPage() {
                                 whileHover={{ y: -5 }}
                                 className="bg-white p-8 rounded-[2.5rem] border border-slate-300 shadow-sm relative overflow-hidden group"
                             >
-                                <div className="flex justify-between items-start mb-10">
-                                    <div>
-                                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center">
-                                            İcraat Vəziyyəti
-                                            <InfoTooltip title="Sənədlərin hazırlıq faizi" text="Məhkəməyə hazır işlərin ümumi işlərin sayına olan nisbətini faizlə ifadə edir." />
-                                        </h4>
-                                        <p className="text-3xl font-black text-slate-900 mt-2">{riskScore} <span className="text-md text-slate-400">/ 100%</span></p>
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="h-12 w-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
+                                        <TrendingUp size={24} />
                                     </div>
-                                    <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center", riskScore < 40 ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600")}>
-                                        {riskScore < 40 ? <AlertTriangle size={24} /> : <CheckCircle size={24} />}
-                                    </div>
+                                    <Activity size={24} className="opacity-10 text-slate-900" />
                                 </div>
-                                <div className="space-y-3">
-                                    <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase">
-                                        <span>Məhkəməyə Hazırlıq</span>
-                                        <span className={riskScore < 40 ? "text-rose-600" : "text-emerald-600"}>
-                                            {riskScore < 40 ? "Kritik" : riskScore < 70 ? "Orta" : "Yüksək"}
-                                        </span>
+                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center opacity-70">
+                                    Sənəd Başına Orta Vaxt
+                                    <InfoTooltip title="Arxiv Performansı" text="Gündəlik 8 saatlıq iş rejimi əsasında hər bir arxivləşdirilmiş sənədə sərf olunan orta müddət." />
+                                </div>
+                                <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">
+                                    {stats.archiveStats.avgHoursPerDoc < 1
+                                        ? <>{Math.round(stats.archiveStats.avgHoursPerDoc * 60)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Dəqiqə</span></>
+                                        : <>{stats.archiveStats.avgHoursPerDoc.toFixed(2)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saat</span></>
+                                    }
+                                </h2>
+                                <div className="mt-4 flex flex-col gap-1">
+                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase text-emerald-500">
+                                        <CheckCircle size={12} /> Səmərəlilik: +{((1 - stats.archiveStats.avgHoursPerDoc) * 100).toFixed(0)}%
                                     </div>
-                                    <div className="h-2 w-full bg-slate-50 rounded-full overflow-hidden">
-                                        <motion.div initial={{ width: 0 }} animate={{ width: `${riskScore}%` }} className={cn("h-full", riskScore < 40 ? "bg-rose-500" : "bg-emerald-500")} />
+                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                        {stats.archiveStats.totalArchivedDays} İş Günü / {stats.archiveStats.totalArchivedDocs} Sənəd
                                     </div>
                                 </div>
                             </motion.div>
@@ -904,21 +946,28 @@ export default function AnalyticsPage() {
                     <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }} initial="hidden" animate="show" transition={{ delay: 0.2 }}
                         className="bg-white p-8 rounded-[2.5rem] border border-slate-300 shadow-sm relative group hover:shadow-xl transition-all"
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="h-12 w-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
-                                <TrendingUp size={24} />
+                        <div className="flex justify-between items-start mt-2 mb-10">
+                            <div>
+                                <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center">
+                                    İcraat Vəziyyəti
+                                    <InfoTooltip title="Sənədlərin hazırlıq faizi" text="Məhkəməyə hazır işlərin ümumi işlərin sayına olan nisbətini faizlə ifadə edir." />
+                                </h4>
+                                <p className="text-3xl font-black text-slate-900 mt-2">{riskScore} <span className="text-md text-slate-400">/ 100%</span></p>
                             </div>
-                            <Activity size={24} className="opacity-10 text-slate-900" />
+                            <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center", riskScore < 40 ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600")}>
+                                {riskScore < 40 ? <AlertTriangle size={24} /> : <CheckCircle size={24} />}
+                            </div>
                         </div>
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center opacity-70">
-                            Ümumi Vaxt Qənaəti
-                            <InfoTooltip title="Rəqəmsal Qənaət" text="Sistemin tətbiqi nəticəsində əl əməyinə (faktiki iş saatına) qənaət olunmuş toplam müddət." />
-                        </div>
-                        <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">
-                            {stats.totalSavedHours.toFixed(1)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saat</span>
-                        </h2>
-                        <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase text-emerald-500">
-                            <CheckCircle size={12} /> Səmərəlilik: +{((stats.totalSavedHours / Math.max(1, stats.timeSavingsData.reduce((a: any, d: any) => a + d.faktiki, 0))) * 100).toFixed(0)}%
+                        <div className="space-y-3">
+                            <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase">
+                                <span>Məhkəməyə Hazırlıq</span>
+                                <span className={riskScore < 40 ? "text-rose-600" : "text-emerald-600"}>
+                                    {riskScore < 40 ? "Kritik" : riskScore < 70 ? "Orta" : "Yüksək"}
+                                </span>
+                            </div>
+                            <div className="h-2 w-full bg-slate-50 rounded-full overflow-hidden">
+                                <motion.div initial={{ width: 0 }} animate={{ width: `${riskScore}%` }} className={cn("h-full", riskScore < 40 ? "bg-rose-500" : "bg-emerald-500")} />
+                            </div>
                         </div>
                     </motion.div>
 
@@ -975,7 +1024,7 @@ export default function AnalyticsPage() {
                                 <div className="flex items-start justify-between mb-6">
                                     <div>
                                         <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Vaxt Qənaəti</h3>
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Faktiki: 1 sənəd = 1 saat · Bizim: 3 sənəd = 1 saat</p>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Faktiki: 1 sənəd/saat · Bizim: {stats.archiveStats.avgHoursPerDoc.toFixed(2)} sənəd/saat</p>
                                     </div>
                                     <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 px-4 py-2 rounded-2xl">
                                         <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Qənaət</span>
@@ -1017,7 +1066,7 @@ export default function AnalyticsPage() {
                                                 <span className="text-sm font-bold text-indigo-400 uppercase">Saat</span>
                                             </div>
                                             <p className="text-[9px] font-bold text-indigo-400 mt-4 uppercase tracking-widest leading-relaxed font-black">
-                                                3 qat daha sürətli sənəd tərtibatı
+                                                Dövri iş rejimi əsasında hesablanan real sürət
                                             </p>
                                         </div>
                                     </div>
