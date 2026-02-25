@@ -761,7 +761,7 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin orta icra müddəti <span className="font-black text-emerald-300">
+                                    İşlərin ortalama gecikmə müddəti <span className="font-black text-emerald-300">
                                         {formatDetailedTime(stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0))}
                                     </span> təşkil edir.
                                     Prosesdə ən çox ləngimə <span className="underline decoration-indigo-400 font-bold">{maxDwell.label}</span> mərhələsində qeydə alınıb.

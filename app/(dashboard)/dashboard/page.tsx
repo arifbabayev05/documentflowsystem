@@ -2318,13 +2318,16 @@ export default function DashboardPage() {
 
     const fetchCustomers = async (isInitial = false) => {
         if (isInitial) {
-            const cached = localStorage.getItem("legal12_customers");
-            if (cached) {
-                try {
+            try {
+                const cached = localStorage.getItem("legal12_customers");
+                if (cached) {
                     const parsed = JSON.parse(cached);
                     setRows(parsed);
                     setLoadingData(false);
-                } catch (e) { }
+                }
+            } catch (e) {
+                // Silent catch for initial load
+                localStorage.removeItem("legal12_customers");
             }
         }
 
@@ -2342,7 +2345,43 @@ export default function DashboardPage() {
             const finalRows = mergedRows.length > 0 ? mergedRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
 
             setRows(finalRows);
-            localStorage.setItem("legal12_customers", JSON.stringify(finalRows));
+
+            // ULTRA-OPTIMIZATION: Remove EVERYTHING not absolutely needed for the list view
+            // to stay under 5MB localStorage quota.
+            const optimizedForCache = finalRows
+                .slice(0, 1000) // Only cache last 1000 to be safe
+                .map(row => ({
+                    id: row.id,
+                    customerCode: row.customerCode,
+                    fullName: row.fullName,
+                    debtAmount: row.debtAmount,
+                    process_status: row.process_status,
+                    assignedTo: row.assignedTo,
+                    createdAt: row.createdAt,
+                    isArchived: row.isArchived,
+                    details: {
+                        fin: row.details?.fin,
+                        phone: row.details?.phone,
+                        isWarningSent: row.details?.isWarningSent
+                    }
+                }));
+
+            try {
+                // Use a non-blocking timeout to ensure it doesn't slow down the UI
+                setTimeout(() => {
+                    try {
+                        localStorage.setItem("legal12_customers", JSON.stringify(optimizedForCache));
+                    } catch (quotaError) {
+                        // If 1000 is still too large, try even smaller
+                        try {
+                            localStorage.setItem("legal12_customers", JSON.stringify(optimizedForCache.slice(0, 200)));
+                        } catch (e) {
+                            localStorage.removeItem("legal12_customers");
+                        }
+                    }
+                }, 100);
+            } catch (e) { }
+
         } catch (err) {
             console.error("Failed to load customers:", err);
             toast.error("Məlumatları yükləmək mümkün olmadı");
@@ -2505,7 +2544,7 @@ export default function DashboardPage() {
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
         rows.forEach(r => {
-            if (r.assignedTo && !['ARCHIVE_UPLOADED', 'COMPLETED', 'UNFINISHED_ARCHIVE'].includes(r.process_status || '')) {
+            if (r.assignedTo && !r.isArchived) {
                 map[r.assignedTo] = (map[r.assignedTo] || 0) + 1;
             }
         });
@@ -2514,16 +2553,26 @@ export default function DashboardPage() {
 
     const myStats = useMemo(() => {
         if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0 };
-        const active = rows.filter(r => r.assignedTo === user.email && !r.isArchived).length;
-        const archived = rows.filter(r => r.assignedTo === user.email && r.isArchived).length;
-        const unassigned = rows.filter(r => !r.assignedTo).length;
+
+        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD';
+        const targetEmail = (executorFilter !== 'all') ? executorFilter : (isManager ? null : user.email);
+
+        // Banner 'Active' counts should only include ASSIGNED tasks for consistency with the Assignment dropdown.
+        // Unassigned tasks are shown in a separate card for Managers.
+        const active = rows.filter(r => (targetEmail ? r.assignedTo === targetEmail : !!r.assignedTo) && !r.isArchived).length;
+        const archived = rows.filter(r => (targetEmail ? r.assignedTo === targetEmail : !!r.assignedTo) && r.isArchived).length;
+
+        // Unassigned should only count those needing attention (not archived)
+        const unassigned = rows.filter(r => !r.assignedTo && !r.isArchived).length;
+
         return {
             active,
             archived,
             total: active + archived,
-            unassigned
+            unassigned,
+            isGlobal: !targetEmail
         };
-    }, [rows, user?.email]);
+    }, [rows, user?.email, user?.role, executorFilter]);
 
     if (loadingData && rows.length === 0) {
         return (
@@ -2550,7 +2599,9 @@ export default function DashboardPage() {
                             <Zap size={24} />
                         </div>
                         <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aktiv İşlərim</p>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                {myStats.isGlobal || executorFilter !== 'all' ? "Aktiv İşlər" : "Aktiv İşlərim"}
+                            </p>
                             <p className="text-2xl font-black text-slate-900">{myStats.active}</p>
                         </div>
                     </div>
@@ -2638,7 +2689,7 @@ export default function DashboardPage() {
                                 <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
                             </div>
 
-                            <div className="flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-4 py-2 transition-all focus-within:border-slate-400 shadow-sm group">
+                            {/* <div className="flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-4 py-2 transition-all focus-within:border-slate-400 shadow-sm group">
                                 <Tag size={14} className="text-slate-600 group-focus-within:text-slate-900 transition-colors" />
                                 <input
                                     type="text"
@@ -2670,9 +2721,9 @@ export default function DashboardPage() {
                                         <X size={12} />
                                     </button>
                                 )}
-                            </div>
+                            </div> */}
 
-                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD') && (
+                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
                                 <div className="relative group/sel">
                                     <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
                                     <select

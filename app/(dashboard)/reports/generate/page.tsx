@@ -462,6 +462,40 @@ function buildInvoiceData(
 
 const prepareTemplateData = (customer: any, companyInfo: any, template: any, selectedCourt: any, allUsers: any) => {
     const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
+
+    const originalFullName = (customer.fullName || "").trim().replace(/\s+/g, ' ');
+    const nameParts = originalFullName.split(/\s+/);
+    // Add a leading space to standard suffixes
+    let ataSuffix1 = (customer.details?.gender === "Qadın" ? " qızına" : " oğluna");
+    let ataSuffix2 = (customer.details?.gender === "Qadın" ? " qızının" : " oğlunun");
+    let ataSuffix3 = (customer.details?.gender === "Qadın" ? " qızından" : " oğlundan");
+
+    let adSoyadWithSuffix1 = originalFullName + ataSuffix1;
+    let adSoyadWithSuffix2 = originalFullName + ataSuffix2;
+    let adSoyadWithSuffix3 = originalFullName + ataSuffix3;
+
+    if (nameParts.length >= 3) {
+        const lastPart = nameParts[nameParts.length - 1];
+        const lastPartLower = lastPart.toLowerCase();
+
+        if (lastPartLower.endsWith("vic") || lastPartLower.endsWith("viç")) {
+            // Suffix tail only to avoid duplication when used with full name
+            ataSuffix1 = "ə";
+            ataSuffix2 = "in";
+            ataSuffix3 = "dən";
+            adSoyadWithSuffix1 = originalFullName + ataSuffix1;
+            adSoyadWithSuffix2 = originalFullName + ataSuffix2;
+            adSoyadWithSuffix3 = originalFullName + ataSuffix3;
+        } else if (lastPartLower.endsWith("yevna")) {
+            ataSuffix1 = "ya";
+            ataSuffix2 = "nın";
+            ataSuffix3 = "dan";
+            adSoyadWithSuffix1 = originalFullName + ataSuffix1;
+            adSoyadWithSuffix2 = originalFullName + ataSuffix2;
+            adSoyadWithSuffix3 = originalFullName + ataSuffix3;
+        }
+    }
+
     const invoices = customer.details?.invoices || [];
 
     const totalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.')) || 0;
@@ -469,7 +503,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
 
     const invoicesData = invoices.map((inv: any, idx: number) =>
-        buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, customer.fullName || "", feeVal)
+        buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, originalFullName, feeVal)
     );
 
     const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
@@ -532,11 +566,11 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
         // Customer Details
         CAVABDEH_AD_SOYAD: (isWarning && customer.details?.actualAddress)
-            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-            : (customer.fullName || ""),
+            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${originalFullName}`
+            : originalFullName,
         CAVABDEH_TAM_AD: (isWarning && customer.details?.actualAddress)
-            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${customer.fullName || ""}`
-            : (customer.fullName || ""),
+            ? `və ${customer.details.actualAddress} ünvanında faktiki olaraq yaşayan ${originalFullName}`
+            : originalFullName,
         CAVABDEH_DOGUM_TARIXI: customer.details?.birthDate || "",
         CAVABDEH_FIN: (customer.details?.fin || "").toUpperCase(),
         CAVABDEH_UNVAN: customer.details?.address || "",
@@ -546,9 +580,12 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             ? `\nFaktiki Ünvan : ${customer.details.actualAddress}`
             : "",
         CAVABDEH_MOBIL: formatPhoneInput(customer.details?.phone || ""),
-        CAVABDEH_ATA_SUFFIX: (customer.details?.gender === "Qadın" ? "qızına" : "oğluna"),
-        CAVABDEH_ATA_SUFFIX_2: (customer.details?.gender === "Qadın" ? "qızının" : "oğlunun"),
-        CAVABDEH_ATA_SUFFIX_3: (customer.details?.gender === "Qadın" ? "qızından" : "oğlundan"),
+        CAVABDEH_ATA_SUFFIX: ataSuffix1,
+        CAVABDEH_ATA_SUFFIX_2: ataSuffix2,
+        CAVABDEH_ATA_SUFFIX_3: ataSuffix3,
+        CAVABDEH_AD_SOYAD_S_1: adSoyadWithSuffix1,
+        CAVABDEH_AD_SOYAD_S_2: adSoyadWithSuffix2,
+        CAVABDEH_AD_SOYAD_S_3: adSoyadWithSuffix3,
 
         // Financials (Global)
         UMUMI_BORC: totalBorcFromInvoices.toFixed(2),
@@ -1264,30 +1301,40 @@ function GenerateDocumentContent() {
                     if (!targetAddress) continue;
 
                     const addressWords = targetAddress.split(/\s+/);
-                    const addressKeywords: string[] = [];
+                    const addressKeywords: { word: string; weight: number }[] = [];
                     const addressMajorCity = MAJOR_CITIES.find(city => targetAddress.includes(city));
 
+                    const rayonMarkers = ['rayon', 'rayonu', 'r', 'mr'];
+                    const cityMarkers = ['seher', 'seheri', 'seh', 'sh', 's'];
+                    const settlementMarkers = ['qesebe', 'qes', 'q', 'kend', 'kendi', 'k'];
+
                     addressWords.forEach((word, i) => {
-                        // Priority markers: rayon (r), seher (seh), qesebe (q)
-                        const markers = ['rayon', 'rayonu', 'seher', 'seheri', 'r', 'seh', 'q', 'qes', 'mr'];
-                        if (markers.includes(word) && i > 0) {
-                            addressKeywords.push(addressWords[i - 1]);
+                        if (i > 0) {
+                            const prevWord = addressWords[i - 1];
+                            if (prevWord.length < 3 && !['r', 'q', 'm'].includes(prevWord)) return;
+
+                            if (rayonMarkers.includes(word)) {
+                                addressKeywords.push({ word: prevWord, weight: 20 });
+                            } else if (cityMarkers.includes(word)) {
+                                addressKeywords.push({ word: prevWord, weight: 15 });
+                            } else if (settlementMarkers.includes(word)) {
+                                addressKeywords.push({ word: prevWord, weight: 5 });
+                            }
                         }
                     });
 
-                    // Scoring system to find the BEST match instead of the FIRST match
+                    // Scoring system to find the BEST match
                     let bestScore = 0;
                     let bestMatchedCourt: Court | null = null;
 
                     for (const court of (courtsData as Court[])) {
                         const courtName = normalizeAZ(court.name);
-                        // Extracting all meaningful words (stripping common suffixes globally)
                         const courtWords = courtName
                             .replace(/rayon|mehkeme|seher|kommersiya|inzibati|muxtar|respublikasi/g, " ")
                             .split(/\s+/)
-                            .filter(w => w.length >= 3 && !["kuc", "prospekt", "unvan", "nomreli", "sayli"].includes(w));
+                            .filter(w => w.length >= 3);
 
-                        // 3 Cities Rule: If address has major city, court name MUST match it if court has a major city
+                        // 3 Cities Rule
                         const courtMajorCity = MAJOR_CITIES.find(city => courtName.includes(city));
                         if (addressMajorCity && courtMajorCity && addressMajorCity !== courtMajorCity) {
                             continue;
@@ -1295,13 +1342,19 @@ function GenerateDocumentContent() {
 
                         let score = 0;
 
-                        // Check 1: Score based on identified address keywords (rayon, seher name etc)
+                        // Check 1: Score based on identified address keywords with weights
                         addressKeywords.forEach(ak => {
-                            if (courtWords.includes(ak)) {
-                                // Specific match (e.g. "Serur" vs "Serur") is worth more than a regional match
-                                // "naxcivan" as a keyword might match many courts in MR, but "serur" only one.
-                                // However, and address word like "serur" being present in "naxcivan mr serur rayon..." is key.
-                                score += 10;
+                            if (courtWords.includes(ak.word) || courtName.includes(ak.word)) {
+                                score += ak.weight;
+                            }
+                        });
+
+                        // Check 2: Baseline match (any court word appearing in address)
+                        // This handles cases like "Gence s, Kepez r" where "Gence" is not explicitly 
+                        // matched by marker but exists in the address.
+                        courtWords.forEach(cw => {
+                            if (targetAddress.includes(cw)) {
+                                score += 5;
                             }
                         });
 
