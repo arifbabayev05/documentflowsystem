@@ -109,6 +109,8 @@ interface AnalyticsData {
     totalSavedHours: number;
     archiveStats: {
         avgHoursPerDoc: number;
+        pureAvgHoursPerDoc: number;
+        archivePortionHours: number;
         totalArchivedDays: number;
         totalArchivedDocs: number;
     };
@@ -277,7 +279,7 @@ export default function AnalyticsPage() {
             bottleneckTimeline: [
                 { stage: "Qeydiyyat -> Təyinat", action: "ASSIGN", avgHours: 0, icon: <Users size={14} />, color: "bg-blue-500" },
                 { stage: "Təyinat -> Sənəd Sorğusu", action: "ARCHIVE_REQUEST", avgHours: 0, icon: <FileText size={14} />, color: "bg-amber-500" },
-                { stage: "Sorğu -> Sənəd Yüklənməsi", action: "FILE_UPLOAD", avgHours: 0, icon: <ArrowUpRight size={14} />, color: "bg-indigo-500" },
+                { stage: "Arxiv yüklənmə müddəti (Sorğu -> Yüklənmə)", action: "FILE_UPLOAD", avgHours: 0, icon: <ArrowUpRight size={14} />, color: "bg-indigo-500" },
                 { stage: "Yüklənmə -> Tamamlanma", action: "COMPLETED", avgHours: 0, icon: <CheckCircle size={14} />, color: "bg-emerald-500" }
             ],
             topBadCourts: [],
@@ -292,7 +294,7 @@ export default function AnalyticsPage() {
             warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
             timeSavingsData: [],
             totalSavedHours: 0,
-            archiveStats: { avgHoursPerDoc: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
+            archiveStats: { avgHoursPerDoc: 0, pureAvgHoursPerDoc: 0, archivePortionHours: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
         };
 
         if (!filteredCustomers.length) return {
@@ -300,7 +302,7 @@ export default function AnalyticsPage() {
             warningStats: { noWarning: 0, warningSent: 0, overdue: 0, archived: 0, totalDocs: 0 },
             timeSavingsData: [],
             totalSavedHours: 0,
-            archiveStats: { avgHoursPerDoc: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
+            archiveStats: { avgHoursPerDoc: 0, pureAvgHoursPerDoc: 0, archivePortionHours: 0, totalArchivedDays: 0, totalArchivedDocs: 0 }
         };
 
         const isOverdueWarning = (dateStr?: string) => {
@@ -321,7 +323,7 @@ export default function AnalyticsPage() {
         const inspectorMap: Record<string, { count: number; totalSpeed: number }> = {};
         const adminMap: Record<string, { count: number; totalSpeed: number }> = {};
         const regionMap: Record<string, { count: number; amount: number }> = {};
-        const trendMap: Record<string, { label: string, amount: number, count: number }> = {};
+        const trendMap: Record<string, { label: string, amount: number, count: number, archivedCount: number }> = {};
 
         const addToGroup = (key: string, customer: any) => {
             if (!initial.groups[key]) initial.groups[key] = [];
@@ -334,7 +336,7 @@ export default function AnalyticsPage() {
             const d = new Date();
             d.setMonth(d.getMonth() - i);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            trendMap[key] = { label: AZ_MONTHS_SHORT[d.getMonth()], amount: 0, count: 0 };
+            trendMap[key] = { label: AZ_MONTHS_SHORT[d.getMonth()], amount: 0, count: 0, archivedCount: 0 };
         }
 
         // Status Dwell Analysis
@@ -391,6 +393,7 @@ export default function AnalyticsPage() {
                 if (trendMap[trendKey]) {
                     trendMap[trendKey].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
                     trendMap[trendKey].count++;
+                    if (c.isArchived) trendMap[trendKey].archivedCount++;
                 }
             }
 
@@ -521,11 +524,13 @@ export default function AnalyticsPage() {
                 addToGroup("age:senior", c);
             }
 
-            const store = (c.store || "Digər Mağaza").trim();
-            if (!storeMap[store]) storeMap[store] = { count: 0, amount: 0 };
-            storeMap[store].count++;
-            storeMap[store].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
-            addToGroup(`store:${store}`, c);
+            if (c.store) {
+                const store = c.store.trim();
+                if (!storeMap[store]) storeMap[store] = { count: 0, amount: 0 };
+                storeMap[store].count++;
+                storeMap[store].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
+                addToGroup(`store:${store}`, c);
+            }
 
             if (c.courtName) {
                 const court = c.courtName.trim();
@@ -613,18 +618,26 @@ export default function AnalyticsPage() {
 
         const totalArchivedDocs = archivedDocs.length;
         const totalArchivedDays = uniqueArchivedDays.size;
-        const avgHoursPerDoc = totalArchivedDocs > 0 ? (totalArchivedDays * 8) / totalArchivedDocs : 0;
+        const avgHoursPerOverallDoc = totalArchivedDocs > 0 ? (totalArchivedDays * 8) / totalArchivedDocs : 0;
+
+        // Split avgHoursPerDoc based on dwell time ratios
+        const totalDwell = initial.statusDwellTimes.reduce((acc, d) => acc + d.avgHours, 0);
+        const archiveDwell = initial.statusDwellTimes.find(d => d.status === 'ARCHIVE_WAITING')?.avgHours || 0;
+        const archiveRatio = totalDwell > 0 ? (archiveDwell / totalDwell) : 0;
 
         initial.archiveStats = {
-            avgHoursPerDoc,
+            avgHoursPerDoc: avgHoursPerOverallDoc,
+            pureAvgHoursPerDoc: avgHoursPerOverallDoc * (1 - archiveRatio),
+            archivePortionHours: avgHoursPerOverallDoc * archiveRatio,
             totalArchivedDays,
             totalArchivedDocs
         };
 
-        // Time Savings Data: Faktiki=1 sənəd/1 saat, Bizim=Data-driven Archive Speed
+        // Time Savings Data: Base only on archived documents
         const timeSavingsData = Object.entries(trendMap).map(([key, val]) => {
-            const faktiki = val.count * 1;   // 1 hour per doc (manual)
-            const bizim = val.count * avgHoursPerDoc; // Based on actual daily archive throughput
+            const count = val.archivedCount || 0;
+            const faktiki = count * 1;   // 1 hour per doc (manual)
+            const bizim = count * initial.archiveStats.pureAvgHoursPerDoc; // Based on pure platform speed
             const saved = Math.max(0, faktiki - bizim);
             return { name: val.label, faktiki: parseFloat(faktiki.toFixed(1)), bizim: parseFloat(bizim.toFixed(1)), saved: parseFloat(saved.toFixed(1)) };
         });
@@ -760,17 +773,19 @@ export default function AnalyticsPage() {
                                 <h4 className="text-[10px] font-black uppercase tracking-[0.3em] mb-4 opacity-70 flex items-center">
                                     İcraatın Çevikliyi
                                 </h4>
-                                <p className="text-xl font-medium leading-relaxed mb-6">
-                                    İşlərin ortalama gecikmə müddəti <span className="font-black text-emerald-300">
-                                        {formatDetailedTime(stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0))}
-                                    </span> təşkil edir.
-                                    Prosesdə ən çox ləngimə <span className="underline decoration-indigo-400 font-bold">{maxDwell.label}</span> mərhələsində qeydə alınıb.
+                                <p className="text-xl font-medium leading-relaxed mb-2">
+                                    İşlərin ortalama xalis icraat müddəti <span className="font-black text-emerald-300">
+                                        {formatDetailedTime(stats.statusDwellTimes.filter(d => d.status !== 'ARCHIVE_WAITING').reduce((acc, curr) => acc + curr.avgHours, 0))}
+                                    </span> təşkil edir (arxivsiz).
+                                </p>
+                                <p className="text-[11px] font-bold text-indigo-200 uppercase tracking-widest mb-6 opacity-80">
+                                    Arxiv gözləmə vaxtı: {formatDetailedTime(stats.statusDwellTimes.find(d => d.status === 'ARCHIVE_WAITING')?.avgHours || 0)}
                                 </p>
                                 <div className="flex items-center gap-3">
                                     <span className="px-3 py-1 bg-white/10 rounded-full text-[9px] font-black uppercase tracking-widest">
                                         {(() => {
-                                            const total = stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0);
-                                            return `Status: ${total < 4 ? 'Sürətli' : total < 10 ? 'Normal' : 'Ləng'}`;
+                                            const pureHours = stats.statusDwellTimes.filter(d => d.status !== 'ARCHIVE_WAITING').reduce((acc, curr) => acc + curr.avgHours, 0);
+                                            return `Status: ${pureHours < 4 ? 'Sürətli' : pureHours < 10 ? 'Normal' : 'Ləng'}`;
                                         })()}
                                     </span>
                                 </div>
@@ -791,18 +806,23 @@ export default function AnalyticsPage() {
                                     <InfoTooltip title="Arxiv Performansı" text="Gündəlik 8 saatlıq iş rejimi əsasında hər bir arxivləşdirilmiş sənədə sərf olunan orta müddət." />
                                 </div>
                                 <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">
-                                    {stats.archiveStats.avgHoursPerDoc < 1
-                                        ? <>{Math.round(stats.archiveStats.avgHoursPerDoc * 60)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Dəqiqə</span></>
-                                        : <>{stats.archiveStats.avgHoursPerDoc.toFixed(2)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saat</span></>
+                                    {stats.archiveStats.pureAvgHoursPerDoc < (1 / 60)
+                                        ? <>{Math.max(1, Math.round(stats.archiveStats.pureAvgHoursPerDoc * 3600))} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saniyə</span></>
+                                        : stats.archiveStats.pureAvgHoursPerDoc < 1
+                                            ? <>{Math.max(1, Math.round(stats.archiveStats.pureAvgHoursPerDoc * 60))} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Dəqiqə</span></>
+                                            : <>{stats.archiveStats.pureAvgHoursPerDoc.toFixed(2)} <span className="text-sm text-slate-400 font-bold uppercase ml-1">Saat</span></>
                                     }
                                 </h2>
                                 <div className="mt-4 flex flex-col gap-1">
                                     <div className="flex items-center gap-2 text-[10px] font-black uppercase text-emerald-500">
-                                        <CheckCircle size={12} /> Səmərəlilik: +{((1 - stats.archiveStats.avgHoursPerDoc) * 100).toFixed(0)}%
+                                        <CheckCircle size={12} /> Səmərəlilik: +{((1 - stats.archiveStats.pureAvgHoursPerDoc) * 100).toFixed(0)}%
                                     </div>
                                     <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
                                         {stats.archiveStats.totalArchivedDays} İş Günü / {stats.archiveStats.totalArchivedDocs} Sənəd
                                     </div>
+                                    <div className="text-[9px] font-bold text-slate-400/60 uppercase tracking-widest mt-1 border-t border-slate-100 pt-1">
+                                        Ortalama Arxiv sənədinin yüklənmə müddəti:
+                                        <span className="text-indigo-600/80 ml-1">{formatDetailedTime(stats.statusDwellTimes.find(d => d.status === 'ARCHIVE_WAITING')?.avgHours || 0)}</span>                                    </div>
                                 </div>
                             </motion.div>
 
@@ -1024,7 +1044,7 @@ export default function AnalyticsPage() {
                                 <div className="flex items-start justify-between mb-6">
                                     <div>
                                         <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Vaxt Qənaəti</h3>
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Faktiki: 1 sənəd/saat · Bizim: {stats.archiveStats.avgHoursPerDoc.toFixed(2)} sənəd/saat</p>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Xalis Platforma: {Math.round(stats.archiveStats.pureAvgHoursPerDoc * 60)} dəq/sənəd · Arxiv Payı: {Math.round(stats.archiveStats.archivePortionHours * 60)} dəq/sənəd</p>
                                     </div>
                                     <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 px-4 py-2 rounded-2xl">
                                         <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Qənaət</span>
@@ -1283,18 +1303,31 @@ export default function AnalyticsPage() {
 
                         {(() => {
                             const totalHours = stats.statusDwellTimes.reduce((acc, curr) => acc + curr.avgHours, 0);
+                            const archiveWaitHours = stats.statusDwellTimes.find(d => d.status === 'ARCHIVE_WAITING')?.avgHours || 0;
+                            const pureHours = totalHours - archiveWaitHours;
                             return (
-                                <div className=" mt-8 border-t border-slate-100 flex items-center justify-between">
-                                    <div>
-                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Cəmi Orta Müddət</p>
-                                        <h4 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Toplam İcraat Müddəti</h4>
+                                <div className=" mt-8 border-t border-slate-100 pt-6 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Xalis Proses Müddəti</p>
+                                            <h4 className="text-xl font-black text-slate-900 uppercase tracking-tighter">İcraat Müddəti (Arxivsiz)</h4>
+                                        </div>
+                                        <div className="bg-emerald-50 px-6 py-3 rounded-2xl border border-emerald-100 flex items-center gap-3">
+                                            <Clock size={20} className="text-emerald-600" />
+                                            <span className="text-lg font-black text-emerald-700 tracking-tight">
+                                                {formatWorkTime(pureHours)}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="bg-indigo-50 px-6 py-3 rounded-2xl border border-indigo-100 flex items-center gap-3">
-                                        <Clock size={20} className="text-indigo-600" />
-                                        <div className="text-right">
-                                            <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ümumi Gözləmə</span>
-                                            <span className="text-lg font-black text-indigo-700 tracking-tight">
-                                                {formatWorkTime(totalHours)}
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Kənar Gözləmə</p>
+                                            <h4 className="text-sm font-black text-slate-400 uppercase tracking-tighter">Ortalama Arxiv sənədinin yüklənmə müddəti</h4>
+                                        </div>
+                                        <div className="bg-amber-50 px-5 py-2.5 rounded-2xl border border-amber-100 flex items-center gap-3">
+                                            <Clock size={18} className="text-amber-600" />
+                                            <span className="text-base font-black text-amber-700 tracking-tight">
+                                                {formatWorkTime(archiveWaitHours)}
                                             </span>
                                         </div>
                                     </div>

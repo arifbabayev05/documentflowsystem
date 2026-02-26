@@ -78,6 +78,7 @@ const normalizeAZ = (str: string | undefined) => {
         .replace(/ş/g, 's')
         .replace(/ğ/g, 'g')
         .replace(/[^a-z0-9\s]/g, "")
+        .replace(/\s+/g, " ")
         .trim();
 };
 
@@ -460,7 +461,7 @@ function buildInvoiceData(
     };
 }
 
-const prepareTemplateData = (customer: any, companyInfo: any, template: any, selectedCourt: any, allUsers: any) => {
+const prepareTemplateData = (customer: any, companyInfo: any, template: any, selectedCourt: any, allUsers: any, currentUser?: any) => {
     const AZ_MONTHS_CAP = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
 
     const originalFullName = (customer.fullName || "").trim().replace(/\s+/g, ' ');
@@ -529,6 +530,18 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
     const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
     const inspectorPhone2 = "012 310 07 75";
+
+    // MUHASIB_IMZA logic: Initial. Surname (e.g., S.İsmayılova)
+    const currentUserName = currentUser?.displayName || "";
+    let muhasibImza = "";
+    if (currentUserName) {
+        const uparts = currentUserName.trim().split(/\s+/);
+        if (uparts.length >= 2) {
+            muhasibImza = `${uparts[0][0].toUpperCase()}.${uparts[uparts.length - 1]}`;
+        } else {
+            muhasibImza = currentUserName;
+        }
+    }
 
     // IMEI logic
     const uniqueImeis = new Set<string>();
@@ -641,7 +654,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         ELAQE_TEL1: inspectorPhone1,
         ELAQE_TEL2: inspectorPhone2,
         NUMAYENDE_IMZA: "Süleymanlı.R.X",
-        MUHASIB_IMZA: "S.İsmayılova",
+        MUHASIB_IMZA: muhasibImza,
         ICRACI_AD_SOYAD: formatExecutorName(customer.details?.executorName || ""),
     };
 };
@@ -838,7 +851,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     return;
                 }
 
-                const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers);
+                const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
 
                 // Apply highlighter marker to the focused value
                 const FIELD_TO_TAG: any = {
@@ -1286,100 +1299,104 @@ function GenerateDocumentContent() {
                     }
                 }
 
-                // Auto-select court matching based on address
-                // We try Actual Address first, then Registration Address if no match
-                const addressesToTry = [
-                    typedCust.details?.actualAddress,
-                    typedCust.details?.address
-                ].filter(Boolean) as string[];
-
+                // 1. Prioritize SAVED court from database
                 let finalMatchedCourt: Court | null = null;
-                const MAJOR_CITIES = ['baki', 'gence', 'naxcivan'];
+                if (typedCust.courtName) {
+                    const savedNormalizedName = normalizeAZ(typedCust.courtName);
+                    finalMatchedCourt = (courtsData as Court[]).find(c => normalizeAZ(c.name) === savedNormalizedName) || null;
+                }
 
-                for (const rawAddr of addressesToTry) {
-                    const targetAddress = normalizeAZ(rawAddr);
-                    if (!targetAddress) continue;
+                // 2. If no saved court, auto-select based on address
+                if (!finalMatchedCourt) {
+                    const addressesToTry = [
+                        typedCust.details?.actualAddress,
+                        typedCust.details?.address
+                    ].filter(Boolean) as string[];
 
-                    const addressWords = targetAddress.split(/\s+/);
-                    const addressKeywords: { word: string; weight: number }[] = [];
-                    const addressMajorCity = MAJOR_CITIES.find(city => targetAddress.includes(city));
+                    const MAJOR_CITIES = ['baki', 'gence', 'naxcivan'];
 
-                    const rayonMarkers = ['rayon', 'rayonu', 'r', 'mr'];
-                    const cityMarkers = ['seher', 'seheri', 'seh', 'sh', 's'];
-                    const settlementMarkers = ['qesebe', 'qes', 'q', 'kend', 'kendi', 'k'];
+                    for (const rawAddr of addressesToTry) {
+                        const targetAddress = normalizeAZ(rawAddr);
+                        if (!targetAddress) continue;
 
-                    addressWords.forEach((word, i) => {
-                        if (i > 0) {
-                            const prevWord = addressWords[i - 1];
-                            if (prevWord.length < 3 && !['r', 'q', 'm'].includes(prevWord)) return;
+                        const addressWords = targetAddress.split(/\s+/);
+                        const addressKeywords: { word: string; weight: number }[] = [];
+                        const addressMajorCity = MAJOR_CITIES.find(city => targetAddress.includes(city));
 
-                            if (rayonMarkers.includes(word)) {
-                                addressKeywords.push({ word: prevWord, weight: 20 });
-                            } else if (cityMarkers.includes(word)) {
-                                addressKeywords.push({ word: prevWord, weight: 15 });
-                            } else if (settlementMarkers.includes(word)) {
-                                addressKeywords.push({ word: prevWord, weight: 5 });
-                            }
-                        }
-                    });
+                        const rayonMarkers = ['rayon', 'rayonu', 'r', 'mr'];
+                        const cityMarkers = ['seher', 'seheri', 'seh', 'sh', 's'];
+                        const settlementMarkers = ['qesebe', 'qes', 'q', 'kend', 'kendi', 'k'];
 
-                    // Scoring system to find the BEST match
-                    let bestScore = 0;
-                    let bestMatchedCourt: Court | null = null;
+                        addressWords.forEach((word, i) => {
+                            if (i > 0) {
+                                const prevWord = addressWords[i - 1];
+                                if (prevWord.length < 3 && !['r', 'q', 'm'].includes(prevWord)) return;
 
-                    for (const court of (courtsData as Court[])) {
-                        const courtName = normalizeAZ(court.name);
-                        const courtWords = courtName
-                            .replace(/rayon|mehkeme|seher|kommersiya|inzibati|muxtar|respublikasi/g, " ")
-                            .split(/\s+/)
-                            .filter(w => w.length >= 3);
-
-                        // 3 Cities Rule
-                        const courtMajorCity = MAJOR_CITIES.find(city => courtName.includes(city));
-                        if (addressMajorCity && courtMajorCity && addressMajorCity !== courtMajorCity) {
-                            continue;
-                        }
-
-                        let score = 0;
-
-                        // Check 1: Score based on identified address keywords with weights
-                        addressKeywords.forEach(ak => {
-                            if (courtWords.includes(ak.word) || courtName.includes(ak.word)) {
-                                score += ak.weight;
+                                if (rayonMarkers.includes(word)) {
+                                    addressKeywords.push({ word: prevWord, weight: 20 });
+                                } else if (cityMarkers.includes(word)) {
+                                    addressKeywords.push({ word: prevWord, weight: 15 });
+                                } else if (settlementMarkers.includes(word)) {
+                                    addressKeywords.push({ word: prevWord, weight: 5 });
+                                }
                             }
                         });
 
-                        // Check 2: Baseline match (any court word appearing in address)
-                        // This handles cases like "Gence s, Kepez r" where "Gence" is not explicitly 
-                        // matched by marker but exists in the address.
-                        courtWords.forEach(cw => {
-                            if (targetAddress.includes(cw)) {
-                                score += 5;
-                            }
-                        });
+                        // Scoring system to find the BEST match
+                        let bestScore = 0;
+                        let bestMatchedCourt: Court | null = null;
 
-                        // Check 2: Token match (any long-enough word from court appearing in address)
-                        // This helps if the address isn't perfectly formatted with 'r', 'rayon'
-                        courtWords.forEach(cw => {
-                            if (targetAddress.includes(cw)) {
-                                score += 2;
-                            }
-                        });
+                        for (const court of (courtsData as Court[])) {
+                            const courtName = normalizeAZ(court.name);
+                            const courtWords = courtName
+                                .replace(/rayon|mehkeme|seher|kommersiya|inzibati|muxtar|respublikasi/g, " ")
+                                .split(/\s+/)
+                                .filter(w => w.length >= 3);
 
-                        // Check 3: Major city bonus
-                        if (addressMajorCity === courtMajorCity && addressMajorCity) {
-                            score += 1;
+                            // 3 Cities Rule
+                            const courtMajorCity = MAJOR_CITIES.find(city => courtName.includes(city));
+                            if (addressMajorCity && courtMajorCity && addressMajorCity !== courtMajorCity) {
+                                continue;
+                            }
+
+                            let score = 0;
+
+                            // Check 1: Score based on identified address keywords with weights
+                            addressKeywords.forEach(ak => {
+                                if (courtWords.includes(ak.word) || courtName.includes(ak.word)) {
+                                    score += ak.weight;
+                                }
+                            });
+
+                            // Check 2: Baseline match (any court word appearing in address)
+                            courtWords.forEach(cw => {
+                                if (targetAddress.includes(cw)) {
+                                    score += 5;
+                                }
+                            });
+
+                            // Check 2: Token match (any long-enough word from court appearing in address)
+                            courtWords.forEach(cw => {
+                                if (targetAddress.includes(cw)) {
+                                    score += 2;
+                                }
+                            });
+
+                            // Check 3: Major city bonus
+                            if (addressMajorCity === courtMajorCity && addressMajorCity) {
+                                score += 1;
+                            }
+
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMatchedCourt = court;
+                            }
                         }
 
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestMatchedCourt = court;
+                        if (bestMatchedCourt && bestScore >= 10) {
+                            finalMatchedCourt = bestMatchedCourt;
+                            break;
                         }
-                    }
-
-                    if (bestMatchedCourt && bestScore >= 10) {
-                        finalMatchedCourt = bestMatchedCourt;
-                        break;
                     }
                 }
 
@@ -2241,7 +2258,7 @@ function GenerateDocumentContent() {
                 nullGetter: () => ""
             });
 
-            const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers);
+            const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
             doc.render(data);
             const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}.docx`;
 
@@ -2394,6 +2411,7 @@ function GenerateDocumentContent() {
                                                         e.preventDefault();
                                                         if (filteredCourts[courtSelectedIndex]) {
                                                             setSelectedCourt(filteredCourts[courtSelectedIndex]);
+                                                            setIsModified(true);
                                                             setIsCourtDropdownOpen(false);
                                                             setCourtSearch("");
                                                         }
@@ -2410,7 +2428,7 @@ function GenerateDocumentContent() {
                                         {filteredCourts.map((court, cIdx) => (
                                             <button
                                                 key={court.id}
-                                                onClick={() => { setSelectedCourt(court); setIsCourtDropdownOpen(false); setCourtSearch(""); }}
+                                                onClick={() => { setSelectedCourt(court); setIsModified(true); setIsCourtDropdownOpen(false); setCourtSearch(""); }}
                                                 className={cn(
                                                     "w-full text-left p-4 rounded-xl transition-all group flex flex-col gap-1 mb-1",
                                                     courtSelectedIndex === cIdx ? "bg-primary text-white" : "hover:bg-primary/5 text-slate-800"

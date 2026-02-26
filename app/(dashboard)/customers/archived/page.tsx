@@ -318,6 +318,11 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
         return { timeline: unique, durationText: duration };
     }, [row]);
 
+    const displayStatus = useMemo(() => {
+        if (timeline.length < 2) return 'UNFINISHED_ARCHIVE' as ProcessStatus;
+        return (row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus;
+    }, [row.process_status, timeline.length]);
+
     return (
         <div className="flex items-stretch gap-4 group/row">
             <div className="hidden lg:flex flex-col gap-2 shrink-0 w-[120px] transition-all opacity-90 group-hover/row:opacity-100 cursor-default">
@@ -397,10 +402,10 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                                 <div className="flex flex-col gap-3">
                                     <div className={cn(
                                         "px-4 py-3 rounded-xl border font-bold text-[11px] uppercase tracking-wider",
-                                        STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].bg,
-                                        STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].color
+                                        STATUS_LABELS[displayStatus].bg,
+                                        STATUS_LABELS[displayStatus].color
                                     )}>
-                                        {STATUS_LABELS[(row.process_status || 'INSPECTOR_ENTERED') as ProcessStatus].label}
+                                        {STATUS_LABELS[displayStatus].label}
                                     </div>
                                     <div className="p-3 bg-white border border-slate-100 rounded-xl space-y-2">
                                         <div className="flex items-center justify-between text-[9px] font-bold uppercase text-slate-400">
@@ -631,6 +636,7 @@ export default function ArchivedCustomersPage() {
     const [stores, setStores] = useState<any[]>([]);
     const [appUsers, setAppUsers] = useState<any[]>([]);
     const [executorFilter, setExecutorFilter] = useState<string>("all");
+    const [statusFilter, setStatusFilter] = useState<string>("all");
     const [page, setPage] = useState(1);
     const itemsPerPage = 50;
 
@@ -660,7 +666,7 @@ export default function ArchivedCustomersPage() {
 
     useEffect(() => {
         setPage(1);
-    }, [searchTerm, startDate, endDate, executorFilter]);
+    }, [searchTerm, startDate, endDate, executorFilter, statusFilter]);
 
     const handleSave = async (data: CustomerRow, email?: string) => {
         if (!data.id) return;
@@ -716,9 +722,20 @@ export default function ArchivedCustomersPage() {
                 if (c.assignedTo !== executorFilter) return false;
             }
 
+            // Status filter (simplified effective status check)
+            if (statusFilter !== "all") {
+                const historyCount = (c.statusHistory || []).length;
+                // Add 1 for createdAt if not already in history as CREATE
+                const hasCreateInHistory = (c.statusHistory || []).some(h => h.action === 'CREATE');
+                const effectiveCount = historyCount + (c.createdAt && !hasCreateInHistory ? 1 : 0);
+                const effectiveStatus = effectiveCount < 2 ? 'UNFINISHED_ARCHIVE' : (c.process_status || 'INSPECTOR_ENTERED');
+
+                if (effectiveStatus !== statusFilter) return false;
+            }
+
             return true;
         });
-    }, [rows, searchTerm, startDate, endDate, user, executorFilter]);
+    }, [rows, searchTerm, startDate, endDate, user, executorFilter, statusFilter]);
 
     if (!user || !can('page_archive_customers')) {
         return (
@@ -775,6 +792,22 @@ export default function ArchivedCustomersPage() {
                                 <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                             </div>
                         )}
+
+                        {/* Status Filter */}
+                        <div className="relative group/sel bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <Smartphone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
+                            <select
+                                value={statusFilter}
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                                className="pl-11 pr-10 py-2.5 bg-transparent outline-none text-[12px] font-bold cursor-pointer appearance-none min-w-[200px] uppercase tracking-wider"
+                            >
+                                <option value="all">Bütün Statuslar</option>
+                                <option value="UNFINISHED_ARCHIVE">Tamamlanmayan Sənədlər</option>
+                                <option value="COMPLETED">Tamamlanan sənədlər</option>
+                                <option value="ASSIGNED_BY_MANAGER">İcraatdakı sənədlər</option>
+                            </select>
+                            <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        </div>
 
                         <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                             <div className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 transition-colors border-r border-slate-100">

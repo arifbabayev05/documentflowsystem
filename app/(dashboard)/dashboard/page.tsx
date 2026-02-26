@@ -373,6 +373,7 @@ interface CustomerRow {
     isArchived?: boolean; // If true, it moves to archive list
     store?: string; // Store name
     createdBy?: string; // Track who added the customer
+    courtName?: string; // Store selected court
     details?: {
         address?: string;
         actualAddress?: string;
@@ -405,6 +406,7 @@ interface CustomerRow {
         invoices?: Array<{
             id: string;
             invoiceNumber: string;
+            store?: string;
             archiveUrl?: string;
             archiveBase64?: string;
             archiveName?: string;
@@ -602,7 +604,8 @@ const CustomerCard = memo(({
                         paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00",
                         hasImieFee: undefined
-                    }]
+                    }],
+                    store: prev.store || ""
                 };
 
                 return {
@@ -709,8 +712,13 @@ const CustomerCard = memo(({
             const newData = { ...prev, details: { ...prev.details, invoices } };
 
             // Backward compatibility sync
-            if (idx === 0 && field === 'invoiceNumber' && newData.details) {
-                newData.details.contractNumber = value;
+            if (idx === 0) {
+                if (field === 'invoiceNumber' && newData.details) {
+                    newData.details.contractNumber = value;
+                }
+                if (field === 'store') {
+                    newData.store = value;
+                }
             }
 
             return newData;
@@ -840,7 +848,8 @@ const CustomerCard = memo(({
                         paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00",
                         hasImieFee: undefined
-                    }]
+                    }],
+                    store: prev.store || ""
                 }];
             }
 
@@ -859,7 +868,8 @@ const CustomerCard = memo(({
                     paidAmount: "0.00",
                     totalPrice: "0.00",
                     hasImieFee: undefined
-                }]
+                }],
+                store: ""
             };
             toast.success("Yeni faktura üçün hissə yaradıldı");
             return { ...prev, details: { ...prev.details, invoices: [newInv, ...currentInvoices] } };
@@ -1796,7 +1806,8 @@ const CustomerCard = memo(({
                                         totalPrice: getValue("details.totalPrice"),
                                         hasImieFee: undefined,
                                         checkedImeis: []
-                                    }]
+                                    }],
+                                    store: localData.store || ""
                                 }]).map((inv, idx, allInvs) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
 
@@ -1876,7 +1887,7 @@ const CustomerCard = memo(({
                                                                 className="w-full h-11 pl-10 pr-4 bg-white text-[11px] font-bold text-slate-800 outline-none flex items-center justify-between rounded-xl border-2 border-slate-900 hover:border-black focus:ring-4 focus:ring-slate-100 transition-all shadow-sm"
                                                             >
                                                                 <Store size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
-                                                                <span className="truncate flex-1 text-left">{localData.store || "Mağaza Seç"}</span>
+                                                                <span className="truncate flex-1 text-left">{inv.store || "Mağaza Seç"}</span>
                                                                 <ChevronDown size={14} className={cn("transition-transform duration-300", openStoreDropdownId === inv.id && "rotate-180")} />
                                                             </button>
 
@@ -1909,7 +1920,7 @@ const CustomerCard = memo(({
                                                                                         } else if (e.key === 'Enter') {
                                                                                             e.preventDefault();
                                                                                             if (filtered[dropdownSelectedIndex]) {
-                                                                                                setLocalData(prev => ({ ...prev, store: filtered[dropdownSelectedIndex].name }));
+                                                                                                updateInvoice(inv.id, 'store', filtered[dropdownSelectedIndex].name);
                                                                                                 setOpenStoreDropdownId(null);
                                                                                                 setStoreSearch("");
                                                                                             }
@@ -1926,7 +1937,7 @@ const CustomerCard = memo(({
                                                                             <button
                                                                                 onClick={(e) => {
                                                                                     e.stopPropagation();
-                                                                                    setLocalData(prev => ({ ...prev, store: "" }));
+                                                                                    updateInvoice(inv.id, 'store', "");
                                                                                     setOpenStoreDropdownId(null);
                                                                                     setStoreSearch("");
                                                                                 }}
@@ -1941,13 +1952,13 @@ const CustomerCard = memo(({
                                                                                         key={s.id}
                                                                                         onClick={(e) => {
                                                                                             e.stopPropagation();
-                                                                                            setLocalData(prev => ({ ...prev, store: s.name }));
+                                                                                            updateInvoice(inv.id, 'store', s.name);
                                                                                             setOpenStoreDropdownId(null);
                                                                                             setStoreSearch("");
                                                                                         }}
                                                                                         className={cn(
                                                                                             "w-full text-left px-3 py-2 rounded-lg transition-all text-[11px] font-bold mb-0.5",
-                                                                                            localData.store === s.name || dropdownSelectedIndex === sIdx ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
+                                                                                            inv.store === s.name || dropdownSelectedIndex === sIdx ? "bg-slate-900 text-white" : "hover:bg-slate-100 text-slate-800"
                                                                                         )}
                                                                                     >
                                                                                         {s.name}
@@ -1964,10 +1975,10 @@ const CustomerCard = memo(({
                                                     ) : (
                                                         <div className={cn(
                                                             "h-11 px-4 flex items-center gap-2 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm",
-                                                            localData.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-50 text-slate-400 border-slate-500"
+                                                            inv.store ? "bg-white text-slate-700 border-slate-200" : "bg-slate-50 text-slate-400 border-slate-500"
                                                         )}>
-                                                            <Store size={14} className={localData.store ? "text-primary" : "text-slate-400"} />
-                                                            <span className="truncate max-w-[120px]">{localData.store || "Mağaza Seçilməyib"}</span>
+                                                            <Store size={14} className={inv.store ? "text-primary" : "text-slate-400"} />
+                                                            <span className="truncate max-w-[120px]">{inv.store || "Mağaza Seçilməyib"}</span>
                                                         </div>
                                                     )}
                                                 </div>
@@ -2446,8 +2457,8 @@ export default function DashboardPage() {
     // Memoize handleSave to ensure stable reference for CustomerCard
     const handleSave = useCallback(async (dataToSave: CustomerRow) => {
         try {
-            // Apply status change for ADMIN
-            if (user?.role === 'ADMIN') {
+            // Apply status change for ADMIN only if not archived
+            if (user?.role === 'ADMIN' && !dataToSave.isArchived) {
                 dataToSave.process_status = 'FILLED_BY_ADMIN';
             }
 
