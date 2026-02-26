@@ -598,7 +598,7 @@ const CustomerCard = memo(({
                         contractDate: prev.details?.contractDate || "",
                         paymentPeriod: prev.details?.paymentPeriod || "",
                         monthlyPayment: prev.details?.monthlyPayment || "",
-                        initialPayment: prev.details?.initialPayment || "",
+                        initialPayment: prev.details?.initialPayment || "0.00",
                         paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00",
                         hasImieFee: undefined
@@ -786,7 +786,11 @@ const CustomerCard = memo(({
                 let aggregatedFee = 0;
                 newData.details.invoices?.forEach(inv => {
                     inv.orders?.forEach(o => {
-                        if (o.hasImieFee === true) aggregatedFee += 23.6;
+                        if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
+                            aggregatedFee += 23.6 * o.checkedImeis.length;
+                        } else if (o.hasImieFee === true) {
+                            aggregatedFee += 23.6;
+                        }
                     });
                 });
                 const fee = aggregatedFee;
@@ -832,7 +836,7 @@ const CustomerCard = memo(({
                         contractDate: prev.details?.contractDate || "",
                         paymentPeriod: prev.details?.paymentPeriod || "",
                         monthlyPayment: prev.details?.monthlyPayment || "",
-                        initialPayment: prev.details?.initialPayment || "",
+                        initialPayment: prev.details?.initialPayment || "0.00",
                         paidAmount: prev.details?.paidAmount || "0.00",
                         totalPrice: prev.details?.totalPrice || "0.00",
                         hasImieFee: undefined
@@ -851,7 +855,7 @@ const CustomerCard = memo(({
                     contractDate: "",
                     paymentPeriod: "",
                     monthlyPayment: "",
-                    initialPayment: "",
+                    initialPayment: "0.00",
                     paidAmount: "0.00",
                     totalPrice: "0.00",
                     hasImieFee: undefined
@@ -875,7 +879,7 @@ const CustomerCard = memo(({
                 contractDate: "",
                 paymentPeriod: "",
                 monthlyPayment: "",
-                initialPayment: "",
+                initialPayment: "0.00",
                 paidAmount: "0.00",
                 totalPrice: "0.00",
                 hasImieFee: undefined
@@ -901,7 +905,11 @@ const CustomerCard = memo(({
                     const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
                     totalPrice += (p * m) + i;
                     totalPaid += parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
-                    if (o.hasImieFee === true || o.hasImieFee === 'true') fee += 23.6;
+                    if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
+                        fee += 23.6 * o.checkedImeis.length;
+                    } else if (o.hasImieFee === true || o.hasImieFee === 'true') {
+                        fee += 23.6;
+                    }
                 });
             });
             const unpaid = Math.max(0, totalPrice - totalPaid);
@@ -943,7 +951,11 @@ const CustomerCard = memo(({
                     const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
                     totalPrice += (p * m) + i;
                     totalPaid += parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
-                    if (o.hasImieFee === true || o.hasImieFee === 'true') fee += 23.6;
+                    if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
+                        fee += 23.6 * o.checkedImeis.length;
+                    } else if (o.hasImieFee === true || o.hasImieFee === 'true') {
+                        fee += 23.6;
+                    }
                 });
             });
             const unpaid = Math.max(0, totalPrice - totalPaid);
@@ -1779,13 +1791,13 @@ const CustomerCard = memo(({
                                         contractDate: getValue("details.contractDate"),
                                         paymentPeriod: getValue("details.paymentPeriod"),
                                         monthlyPayment: getValue("details.monthlyPayment"),
-                                        initialPayment: getValue("details.initialPayment"),
+                                        initialPayment: getValue("details.initialPayment") || "0.00",
                                         paidAmount: getValue("details.paidAmount") || "0.00",
                                         totalPrice: getValue("details.totalPrice"),
                                         hasImieFee: undefined,
                                         checkedImeis: []
                                     }]
-                                }]).map((inv, idx) => (
+                                }]).map((inv, idx, allInvs) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
 
                                         {/* HEADER SECTION */}
@@ -1793,7 +1805,7 @@ const CustomerCard = memo(({
                                             {/* Left: Invoice Number */}
                                             <div className="flex items-end gap-4 w-full xl:w-auto">
                                                 <div className="shrink-0 h-11 w-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-sm font-black text-slate-500 shadow-sm mb-0.5">
-                                                    {idx + 1}
+                                                    {allInvs.length - idx}
                                                 </div>
                                                 <div className="space-y-1.5 flex-1 xl:flex-none">
                                                     <div className="flex items-center gap-2">
@@ -1984,15 +1996,26 @@ const CustomerCard = memo(({
                                                 <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
                                                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
                                                         {/* Məhsul Adı */}
-                                                        <div className="lg:col-span-3 space-y-2.5">
+                                                        <div className="lg:col-span-5 space-y-2.5">
                                                             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 h-[20px] flex items-center">MƏHSUL ADI</label>
-                                                            <input
+                                                            <textarea
                                                                 readOnly={!isEditing}
                                                                 value={ord.productDescription || ""}
                                                                 onChange={(e) => updateOrder(inv.id, ord.id, 'productDescription', e.target.value)}
+                                                                onInput={(e) => {
+                                                                    const target = e.currentTarget;
+                                                                    target.style.height = 'auto';
+                                                                    target.style.height = target.scrollHeight + 'px';
+                                                                }}
                                                                 onKeyDown={(e) => keyboardNavigation(e, isEditing)}
-                                                                className={cn("w-full h-11 px-4 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm", isEditing ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100" : "bg-slate-50 border border-slate-500")}
+                                                                className={cn(
+                                                                    "w-full min-h-[44px] px-4 py-2.5 rounded-xl text-[13px] font-bold text-slate-800 outline-none transition-all shadow-sm resize-none overflow-hidden",
+                                                                    isEditing
+                                                                        ? "bg-white border-2 border-slate-900 focus:border-black focus:ring-4 focus:ring-slate-100"
+                                                                        : "bg-slate-50 border border-slate-500"
+                                                                )}
                                                                 placeholder="Məhsul adı..."
+                                                                rows={1}
                                                             />
                                                             <div className="mt-1.5 flex flex-wrap gap-2">
                                                                 {(() => {
@@ -2036,14 +2059,14 @@ const CustomerCard = memo(({
                                                                                     updateOrder(inv.id, ord.id, 'checkedImeis', nextChecked);
                                                                                 }}
                                                                                 className={cn(
-                                                                                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                                    "flex items-center gap-2 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border shrink-0",
                                                                                     isActive
                                                                                         ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
                                                                                         : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                                                                                 )}
                                                                             >
                                                                                 <Smartphone size={14} />
-                                                                                <span className="truncate max-w-[150px]">{item.name}: {isActive ? "DEAKTİV" : "YOXLA"}</span>
+                                                                                <span className="whitespace-nowrap">İMEİ {item.name}: {isActive ? "DEAKTİV" : "AKTİV"}</span>
                                                                             </button>
                                                                         );
                                                                     });
@@ -2065,7 +2088,7 @@ const CustomerCard = memo(({
                                                         </div>
 
                                                         {/* Ödəmə Parametrləri */}
-                                                        <div className="lg:col-span-6 grid grid-cols-4 gap-3">
+                                                        <div className="lg:col-span-4 grid grid-cols-4 gap-3">
                                                             <div className="space-y-2.5">
                                                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center leading-tight h-[20px] flex items-center justify-center">Müddət</label>
                                                                 <input
