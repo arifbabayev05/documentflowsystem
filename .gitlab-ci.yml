@@ -1,0 +1,10 @@
+variables:
+  MS_NAME: $CI_PROJECT_NAME
+  PROJECT_PREFIX: $PROJECT_PREFIX         ## can be also provided from project group ci/cd variables
+  GITOPS_REPO: $GITOPS_REPO               ## can be also provided from project group ci/cd variables
+  CI_REGISTRY_GROUP: $CI_REGISTRY_GROUP   ## can be also provided from project group ci/cd variables
+
+include:
+  - project: 'gitops/template-pipeline'
+    ref: master
+    file: 'pipeline/backend/.all.yml'
