@@ -92,6 +92,8 @@ interface AnalyticsData {
     topBadCourts: { name: string; count: number; amount: number }[];
     regionalData: { name: string; count: number; amount: number }[];
     totalCases: number;
+    activeAssignedCount: number;
+    activeReadyCount: number;
     demographics: {
         gender: { male: number; female: number; unknown: number };
         ageGroups: { young: number; mid: number; senior: number };
@@ -285,6 +287,8 @@ export default function AnalyticsPage() {
             topBadCourts: [],
             regionalData: [],
             totalCases: 0,
+            activeAssignedCount: 0,
+            activeReadyCount: 0,
             demographics: {
                 gender: { male: 0, female: 0, unknown: 0 },
                 ageGroups: { young: 0, mid: 0, senior: 0 }
@@ -383,6 +387,11 @@ export default function AnalyticsPage() {
             else if (status === "WAITING_FOR_ARCHIVE") initial.processFunnel.waiting++;
             else if (status === "ARCHIVE_UPLOADED") initial.processFunnel.ready++;
             else if (status === "COMPLETED") initial.processFunnel.filed++;
+
+            if (!c.isArchived && c.assignedTo) {
+                initial.activeAssignedCount++;
+                if (isDocReady) initial.activeReadyCount++;
+            }
 
             initial.totalCases++;
 
@@ -680,7 +689,7 @@ export default function AnalyticsPage() {
     }, [filteredCustomers, auditLogs, selectedPerfUser]);
 
 
-    const riskScore = Math.round((stats.readyForCourtCount / Math.max(1, stats.totalCases)) * 100);
+    const riskScore = Math.round((stats.activeReadyCount / Math.max(1, stats.activeAssignedCount)) * 100);
 
     if (loading) return (
         <div className="flex h-screen items-center justify-center bg-white">
@@ -774,7 +783,7 @@ export default function AnalyticsPage() {
                                     İcraatın Çevikliyi
                                 </h4>
                                 <p className="text-xl font-medium leading-relaxed mb-2">
-                                    İşlərin ortalama xalis icraat müddəti <span className="font-black text-emerald-300">
+                                    İşlərin ortalama gecikmə müddəti <span className="font-black text-emerald-300">
                                         {formatDetailedTime(stats.statusDwellTimes.filter(d => d.status !== 'ARCHIVE_WAITING').reduce((acc, curr) => acc + curr.avgHours, 0))}
                                     </span> təşkil edir (arxivsiz).
                                 </p>
@@ -959,7 +968,7 @@ export default function AnalyticsPage() {
                         </div>
                         <h2 className="text-3xl font-black mt-3 text-slate-900 tracking-tight">{stats.readyForCourtCount} <span className="text-sm text-slate-400 font-bold uppercase ml-1">İş</span></h2>
                         <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase text-indigo-500">
-                            <Activity size={12} /> {(stats.readyForCourtCount / Math.max(1, stats.totalCases) * 100).toFixed(0)}% Hazırlıq Oranı
+                            <Activity size={12} /> {(stats.activeReadyCount / Math.max(1, stats.activeAssignedCount) * 100).toFixed(0)}% Hazırlıq Oranı
                         </div>
                     </motion.div>
 
