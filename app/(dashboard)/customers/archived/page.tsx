@@ -627,6 +627,7 @@ CustomerCard.displayName = "CustomerCard";
 
 export default function ArchivedCustomersPage() {
     const { user, can } = useAuth();
+    const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER" || user?.role === "DEP_HEAD";
     const [rows, setRows] = useState<CustomerRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -688,7 +689,6 @@ export default function ArchivedCustomersPage() {
 
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER" || user?.role === "DEP_HEAD";
 
         return rows.filter(c => {
             if (!c.isArchived) return false;
@@ -696,6 +696,12 @@ export default function ArchivedCustomersPage() {
             // Archiver restriction
             if (!isManager && user?.role === "ARCHIVER") {
                 if (c.archiveAssignedTo !== user.email) return false;
+            }
+
+            // Admin (Inzibatçı) restriction
+            if (!isManager && user?.role === "ADMIN") {
+                const whoArchived = c.statusHistory?.find(h => h.action === "ARCHIVE")?.user;
+                if (whoArchived !== user.email) return false;
             }
 
             // Search filter
@@ -776,7 +782,7 @@ export default function ArchivedCustomersPage() {
 
                     <div className="flex flex-wrap items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-200/60 shadow-inner">
                         {/* Executor Filter */}
-                        {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'ARCHIVE_MANAGER' || user?.role === 'DEP_HEAD') && (
+                        {(isManager || user?.role === 'ADMIN') && (
                             <div className="relative group/sel bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                                 <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
                                 <select

@@ -1309,8 +1309,8 @@ function GenerateDocumentContent() {
                 // 2. If no saved court, auto-select based on address
                 if (!finalMatchedCourt) {
                     const addressesToTry = [
-                        typedCust.details?.actualAddress,
-                        typedCust.details?.address
+                        typedCust.details?.address,
+                        typedCust.details?.actualAddress
                     ].filter(Boolean) as string[];
 
                     const MAJOR_CITIES = ['baki', 'gence', 'naxcivan'];
@@ -1440,7 +1440,11 @@ function GenerateDocumentContent() {
             const invPenalty = invUnpaid * 0.10;
             let invIlmFee = 0;
             (inv.orders || []).forEach(ord => {
-                if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') invIlmFee += 23.6;
+                if (Array.isArray((ord as any).checkedImeis) && (ord as any).checkedImeis.length > 0) {
+                    invIlmFee += 23.6 * (ord as any).checkedImeis.length;
+                } else if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
+                    invIlmFee += 23.6;
+                }
             });
             return acc + invUnpaid + invPenalty + invIlmFee;
         }, 0);
