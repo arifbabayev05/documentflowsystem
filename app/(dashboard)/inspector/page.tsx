@@ -4,10 +4,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { bulkAddCustomers, getInspectorCustomers, getCustomer } from "@/lib/db";
+import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
+import { bulkAddCustomers, getInspectorCustomers, getCustomer } from "@/lib/db";
 
 interface EntryRow {
     customer_code: string;
@@ -165,7 +166,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
         const day = String(date.getDate()).padStart(2, "0");
         const month = String(date.getMonth() + 1).padStart(2, "0");
         const year = date.getFullYear();
-        return `${day}.${month}.${year}`;
+        return `${day}.${month}.${year} `;
     };
 
     const days = generateCalendarDays();
@@ -222,7 +223,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
                                 key={idx}
                                 onClick={() => handleSelectDate(dayInfo.date)}
                                 className={`
-                                    w-9 h-9 rounded-xl text-[13px] font-semibold transition-all
+w - 9 h - 9 rounded - xl text - [13px] font - semibold transition - all
                                     ${!dayInfo.isCurrentMonth ? "text-slate-300" : "text-slate-700"}
                                     ${isSelected(dayInfo.date)
                                         ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
@@ -230,7 +231,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
                                             ? "bg-blue-50 text-blue-600 ring-2 ring-blue-200"
                                             : "hover:bg-slate-100"
                                     }
-                                `}
+`}
                             >
                                 {dayInfo.day}
                             </button>
@@ -275,19 +276,6 @@ export default function InspectorPage() {
     } | null>(null);
 
     const tableRef = useRef<HTMLDivElement>(null);
-
-    const formatAZDate = (val: any) => {
-        if (!val) return "naməlum";
-        let d: Date;
-        if (val && typeof val.toDate === 'function') d = val.toDate();
-        else d = new Date(val);
-
-        if (isNaN(d.getTime())) return "naməlum";
-        const day = String(d.getDate()).padStart(2, '0');
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const year = d.getFullYear();
-        return `${day}.${month}.${year}`;
-    };
 
     const askConfirmation = (message: string) => {
         return new Promise<boolean>((resolve) => {
@@ -389,7 +377,7 @@ export default function InspectorPage() {
                 // Layout: Code | Soyad | Ad | Ata Adı | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: [p[1], p[2], p[3]].filter(Boolean).join(" "),
+                    full_name: toTitleCase([p[1], p[2], p[3]].filter(Boolean).join(" ")),
                     fin: p[4] || "",
                     serial_number: p[5] || "",
                     total_debt: p[6] || "",
@@ -398,7 +386,7 @@ export default function InspectorPage() {
                 // Layout from screenshot: Code | Name | (Blank) | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: p[1] || "",
+                    full_name: toTitleCase(p[1] || ""),
                     fin: p[3] || "",
                     serial_number: p[4] || "",
                     total_debt: p[5] || "",
@@ -407,7 +395,7 @@ export default function InspectorPage() {
                 // Standard Layout: Code | Name | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: p[1] || "",
+                    full_name: toTitleCase(p[1] || ""),
                     fin: p[2] || "",
                     serial_number: p[3] || "",
                     total_debt: p[4] || "",
@@ -453,19 +441,20 @@ export default function InspectorPage() {
             const finalPayload = [];
 
             for (const r of validRows) {
+                const cleanCode = r.customer_code.trim();
                 // Check for duplicates in DB
-                const existing = await getCustomer(r.customer_code) as any;
+                const existing = await getCustomer(cleanCode) as any;
                 if (existing) {
                     const dateStr = formatAZDate(existing.createdAt);
                     const confirmed = await askConfirmation(
-                        `Müştəri ${r.customer_code} (${r.full_name}) artıq ${dateStr} tarixində sistemə qeyd edilib.\nYenidən daxil etmək istəyirsiniz?`
+                        `Müştəri ${cleanCode} (${r.full_name}) artıq ${dateStr} tarixində sistemə qeyd edilib.\nYenidən daxil etmək istəyirsiniz ? `
                     );
                     if (!confirmed) continue;
                 }
 
                 finalPayload.push({
-                    customerCode: r.customer_code,
-                    fullName: r.full_name,
+                    customerCode: cleanCode,
+                    fullName: toTitleCase(r.full_name),
                     debtAmount: r.total_debt,
                     process_status: "INSPECTOR_ENTERED" as ProcessStatus,
                     createdBy: user?.email,
@@ -509,8 +498,8 @@ export default function InspectorPage() {
         const minutes = String(date.getMinutes()).padStart(2, "0");
 
         return {
-            date: `${day}/${month}/${year}`,
-            time: `${hours}:${minutes}`,
+            date: `${day} /${month}/${year} `,
+            time: `${hours}:${minutes} `,
         };
     };
 
@@ -522,7 +511,7 @@ export default function InspectorPage() {
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data-r="${rowIdx + 1}"][data-c="${colIdx}"]`
+                    `[data - r= "${rowIdx + 1}"][data - c="${colIdx}"]`
                 );
                 next?.focus();
             }, 0);
@@ -532,7 +521,7 @@ export default function InspectorPage() {
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data-r="${rowIdx + 1}"][data-c="0"]`
+                    `[data - r= "${rowIdx + 1}"][data - c="0"]`
                 );
                 next?.focus();
             }, 0);
@@ -600,6 +589,11 @@ export default function InspectorPage() {
                                                 }
 
                                                 updateCell(ri, col.key, v);
+                                            }}
+                                            onBlur={e => {
+                                                if (col.key === "full_name") {
+                                                    updateCell(ri, col.key, toTitleCase(e.target.value));
+                                                }
                                             }}
                                             onKeyDown={e => handleKeyDown(e, ri, ci)}
                                             className="w-full h-12 px-4 rounded-xl border border-border-soft focus:border-blue-500 focus:bg-white focus:shadow-sm outline-none text-[17px] font-black text-slate-900 bg-transparent transition-all"
@@ -733,9 +727,9 @@ export default function InspectorPage() {
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
                                     <div className="px-4 py-4 w-100">
                                         <span
-                                            className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
+                                            className={`text - [10px] font - black px - 3 py - 1.5 rounded - lg uppercase tracking - wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
                                                 } ${STATUS_LABELS[row.process_status as ProcessStatus]?.color || "text-slate-500"
-                                                }`}
+                                                } `}
                                         >
                                             {STATUS_LABELS[row.process_status as ProcessStatus]?.label || "Daxil edildi"}
                                         </span>

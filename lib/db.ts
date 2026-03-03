@@ -183,10 +183,12 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
         const results = [];
         const timestamp = new Date().toISOString();
         for (const customer of customers) {
-            const customerId = customer.customerCode || Math.random().toString(36).substring(7);
+            const cleanCode = customer.customerCode?.toString().trim();
+            const customerId = cleanCode || Math.random().toString(36).substring(7);
             const customerRef = doc(db, CUSTOMERS_COLLECTION, customerId);
             const data = {
                 ...customer,
+                customerCode: cleanCode,
                 id: customerId,
                 createdBy: userEmail,
                 updatedAt: serverTimestamp(),
@@ -214,7 +216,7 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
 export async function getCustomers() {
     try {
         const querySnap = await getDocs(collection(db, CUSTOMERS_COLLECTION));
-        return querySnap.docs.map(doc => ({ ...doc.data() }));
+        return querySnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     } catch (e) {
         return [];
     }
@@ -224,7 +226,7 @@ export async function getInspectorCustomers(email: string) {
     try {
         const q = query(collection(db, CUSTOMERS_COLLECTION), where("createdBy", "==", email));
         const querySnap = await getDocs(q);
-        return querySnap.docs.map(doc => ({ ...doc.data() }));
+        return querySnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     } catch (e) {
         return [];
     }
@@ -242,9 +244,36 @@ export async function deleteCustomer(id: string, userEmail: string = "system") {
 
 export async function getCustomer(id: string) {
     try {
-        const docRef = doc(db, CUSTOMERS_COLLECTION, id);
+        if (!id) return null;
+        const cleanId = id.toString().trim();
+        const docRef = doc(db, CUSTOMERS_COLLECTION, cleanId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) return { id: docSnap.id, ...docSnap.data() };
+
+        // If not found by ID, try querying by customerCode field as fallback
+        return await findCustomerByCode(cleanId);
+    } catch (e) {
+        return null;
+    }
+}
+
+/** 
+ * Find a customer by the customerCode field (case insensitive/trimmed)
+ */
+export async function findCustomerByCode(code: string) {
+    try {
+        if (!code) return null;
+        const cleanCode = code.trim();
+        const q = query(
+            collection(db, CUSTOMERS_COLLECTION),
+            where("customerCode", "==", cleanCode),
+            limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            const d = snap.docs[0];
+            return { id: d.id, ...d.data() };
+        }
         return null;
     } catch (e) {
         return null;
@@ -603,4 +632,39 @@ export async function deleteTemplate(id: string, userEmail: string = "system") {
 export async function updateTemplate(id: string, data: any, userEmail: string = "system") {
     await updateDoc(doc(db, TEMPLATES_COLLECTION, id), sanitizeFirebaseData({ ...data, updatedAt: serverTimestamp() }));
     await addAuditLog("TEMPLATE_UPDATE", `Şablon yeniləndi: ${data.name}`, userEmail, "SYSTEM", { targetId: id });
+}
+
+/**
+ * "Moves" a customer record to a new ID.
+ * Creates a new document with the new ID/code and deletes the old one.
+ */
+export async function moveCustomer(oldId: string, newCode: string, userEmail: string) {
+    try {
+        const oldDocRef = doc(db, CUSTOMERS_COLLECTION, oldId);
+        const docSnap = await getDoc(oldDocRef);
+        if (!docSnap.exists()) throw new Error("Müştəri tapılmadı");
+
+        const data = docSnap.data();
+        const cleanNewCode = newCode.trim();
+        const newDocRef = doc(db, CUSTOMERS_COLLECTION, cleanNewCode);
+
+        // Check if new code already exists
+        const checkNew = await getDoc(newDocRef);
+        if (checkNew.exists()) throw new Error("Bu kodlu müştəri artıq mövcuddur");
+
+        // Start a batch or just consecutive calls
+        await setDoc(newDocRef, {
+            ...data,
+            id: cleanNewCode,
+            customerCode: cleanNewCode,
+            updatedAt: serverTimestamp(),
+            updatedBy: userEmail
+        });
+
+        await deleteDoc(oldDocRef);
+        return true;
+    } catch (e: any) {
+        console.error("Move error:", e);
+        throw e;
+    }
 }

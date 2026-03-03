@@ -37,7 +37,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
-import { formatDateInput } from "@/lib/format";
+import { formatDateInput, toTitleCase } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 
@@ -990,6 +990,9 @@ const CustomerCard = memo(({
         e.stopPropagation();
 
         const dataToSave = { ...localData };
+        if (dataToSave.fullName) {
+            dataToSave.fullName = toTitleCase(dataToSave.fullName);
+        }
         const currentStatus = dataToSave.process_status || 'INSPECTOR_ENTERED';
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
