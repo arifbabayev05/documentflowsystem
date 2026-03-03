@@ -130,6 +130,9 @@ export default function AnalyticsPage() {
     const [timeRange, setTimeRange] = useState<string>('all');
     const [dateFrom, setDateFrom] = useState<string>('');
     const [dateTo, setDateTo] = useState<string>('');
+    const [courtTimeFilter, setCourtTimeFilter] = useState<string>('all');
+    const [courtDateFrom, setCourtDateFrom] = useState<string>('');
+    const [courtDateTo, setCourtDateTo] = useState<string>('');
 
     const [drillDown, setDrillDown] = useState<{ title: string; customers: any[] } | null>(null);
     const [selectedPerfUser, setSelectedPerfUser] = useState<string | null>(null);
@@ -543,10 +546,41 @@ export default function AnalyticsPage() {
 
             if (c.courtName) {
                 const court = c.courtName.trim();
-                if (!courtMap[court]) courtMap[court] = { count: 0, amount: 0 };
-                courtMap[court].count++;
-                courtMap[court].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
-                addToGroup(`court:${court}`, c);
+                let addCourt = true;
+                const cDateToFilter = parseDate(c.createdAt || c.statusHistory?.[0]?.timestamp);
+                if (cDateToFilter) {
+                    const ctY = cDateToFilter.getFullYear();
+                    const ctM = cDateToFilter.getMonth();
+                    const tNow = new Date();
+                    const tY = tNow.getFullYear();
+                    const tM = tNow.getMonth();
+                    if (courtTimeFilter === 'current') {
+                        if (ctY !== tY || ctM !== tM) addCourt = false;
+                    } else if (courtTimeFilter === '3m') {
+                        const check = new Date(tNow); check.setMonth(tNow.getMonth() - 3);
+                        if (cDateToFilter < check) addCourt = false;
+                    } else if (courtTimeFilter === '6m') {
+                        const check = new Date(tNow); check.setMonth(tNow.getMonth() - 6);
+                        if (cDateToFilter < check) addCourt = false;
+                    } else if (courtTimeFilter === '1y') {
+                        const check = new Date(tNow); check.setFullYear(tNow.getFullYear() - 1);
+                        if (cDateToFilter < check) addCourt = false;
+                    } else if (courtTimeFilter === 'custom') {
+                        const from = courtDateFrom ? new Date(courtDateFrom) : null;
+                        const to = courtDateTo ? new Date(courtDateTo + 'T23:59:59') : null;
+                        if (from && cDateToFilter < from) addCourt = false;
+                        if (to && cDateToFilter > to) addCourt = false;
+                    }
+                } else {
+                    if (courtTimeFilter !== 'all') addCourt = false;
+                }
+                
+                if (addCourt) {
+                    if (!courtMap[court]) courtMap[court] = { count: 0, amount: 0 };
+                    courtMap[court].count++;
+                    courtMap[court].amount += isNaN(totalUnpaid) ? 0 : totalUnpaid;
+                    addToGroup(`court:${court}`, c);
+                }
             }
 
             const addr = ((c.details?.address || "") + " " + (c.details?.actualAddress || "") + " " + (c.store || "")).toLowerCase();
@@ -686,7 +720,7 @@ export default function AnalyticsPage() {
         initial.regionalData = Object.entries(regionMap).map(([name, val]) => ({ name, ...val })).sort((a, b) => b.amount - a.amount).slice(0, 100);
 
         return initial;
-    }, [filteredCustomers, auditLogs, selectedPerfUser]);
+    }, [filteredCustomers, auditLogs, selectedPerfUser, courtTimeFilter, courtDateFrom, courtDateTo]);
 
 
     const riskScore = Math.round((stats.activeReadyCount / Math.max(1, stats.activeAssignedCount)) * 100);
@@ -717,7 +751,7 @@ export default function AnalyticsPage() {
                         {/* Date range — native date pickers */}
                         <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-2xl px-2 py-1 shadow-sm">
                             {/* From */}
-                            <div className="relative flex items-center">
+                            <div className="relative flex items-center cursor-pointer" onClick={(e) => { const el = e.currentTarget.querySelector('input'); if (el) { try { (el as any).showPicker(); } catch {} } }}>
                                 <svg className="absolute left-2 text-slate-300 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                     <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                                 </svg>
@@ -731,7 +765,7 @@ export default function AnalyticsPage() {
                             </div>
                             <span className="text-slate-200 font-bold text-xs select-none px-0.5">—</span>
                             {/* To */}
-                            <div className="relative flex items-center">
+                            <div className="relative flex items-center cursor-pointer" onClick={(e) => { const el = e.currentTarget.querySelector('input'); if (el) { try { (el as any).showPicker(); } catch {} } }}>
                                 <svg className="absolute left-2 text-slate-300 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                     <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                                 </svg>
@@ -1411,13 +1445,51 @@ export default function AnalyticsPage() {
 
                 {/* Courts & Financial Analysis */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pb-10">
-                    <div className="lg:col-span-8 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative group overflow-hidden">
+                    <div className="lg:col-span-12 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative group overflow-hidden">
                         <div className="flex items-center justify-between mb-8">
                             <div>
                                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-3">
                                     <Gavel size={20} className="text-indigo-600" />
                                     Məhkəmələr üzrə İş Bölgüsü
                                 </h3>
+                            </div>
+                            <div className="flex flex-col md:flex-row items-center gap-3">
+                                {courtTimeFilter === 'custom' && (
+                                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-2xl px-2 py-1 shadow-sm mr-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                                        <div className="relative flex items-center cursor-pointer" onClick={(e) => { const el = e.currentTarget.querySelector('input'); if (el) { try { (el as any).showPicker(); } catch {} } }}>
+                                            <input
+                                                type="date"
+                                                value={courtDateFrom}
+                                                onChange={e => setCourtDateFrom(e.target.value)}
+                                                className="pl-2 pr-2 py-1.5 text-[11px] font-bold text-slate-600 bg-transparent border-none outline-none cursor-pointer w-[110px]"
+                                                style={{ colorScheme: 'light' }}
+                                            />
+                                        </div>
+                                        <span className="text-slate-200 font-bold text-xs select-none px-0.5">—</span>
+                                        <div className="relative flex items-center cursor-pointer" onClick={(e) => { const el = e.currentTarget.querySelector('input'); if (el) { try { (el as any).showPicker(); } catch {} } }}>
+                                            <input
+                                                type="date"
+                                                value={courtDateTo}
+                                                onChange={e => setCourtDateTo(e.target.value)}
+                                                className="pl-2 pr-2 py-1.5 text-[11px] font-bold text-slate-600 bg-transparent border-none outline-none cursor-pointer w-[110px]"
+                                                style={{ colorScheme: 'light' }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                                <select 
+                                    value={courtTimeFilter} 
+                                    onChange={(e) => { setCourtTimeFilter(e.target.value); if (e.target.value !== 'custom') { setCourtDateFrom(''); setCourtDateTo(''); } }}
+                                    className="bg-white border border-slate-200 text-slate-700 text-[11px] font-black uppercase tracking-widest rounded-2xl px-4 py-2.5 outline-none hover:border-indigo-300 focus:border-indigo-500 transition-colors cursor-pointer shadow-sm"
+                                    style={{ colorScheme: 'light' }}
+                                >
+                                    <option value="all">Bütün Dönəm</option>
+                                    <option value="current">Cari Ay</option>
+                                    <option value="3m">Son 3 Ay</option>
+                                    <option value="6m">Son 6 Ay</option>
+                                    <option value="1y">Son 1 İl</option>
+                                    <option value="custom">Xüsusi Tarix</option>
+                                </select>
                             </div>
                         </div>
                         <div className="h-[300px] w-full mt-4">
@@ -1460,7 +1532,7 @@ export default function AnalyticsPage() {
                         </div>
                     </div>
 
-                    <div className="lg:col-span-4 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative overflow-hidden group">
+                    <div className="hidden lg:col-span-4 bg-white p-10 rounded-[3rem] border border-slate-300 shadow-sm relative overflow-hidden group">
                         <div className="flex items-center justify-between mb-8 relative z-10">
                             <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter flex items-center gap-2">
                                 <StoreIcon size={18} className="text-indigo-600" />

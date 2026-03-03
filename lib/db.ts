@@ -66,7 +66,7 @@ export async function getRolePermissions(role: string) {
     }
 
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
-    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list"];
+    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list", "page_analytics"];
     if (role === "INSPECTOR_LEAD") return ["page_inspector", "page_inspectors", "page_users"];
     if (role === "ADMIN") return ["page_customers", "page_archive_customers", "page_letter_list"];
     if (role === "INSPECTOR") return ["page_inspector"];

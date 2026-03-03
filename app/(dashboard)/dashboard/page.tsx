@@ -31,17 +31,19 @@ import {
     Shield,
     Store,
     FolderArchive,
-    ArrowDownToLine
+    ArrowDownToLine,
+    Info
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
-import { formatDateInput, toTitleCase } from "@/lib/format";
+import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
 import { API_ENDPOINTS } from "@/config/api";
-
+import * as XLSX from "xlsx";
+import { MultiSelect } from "@/components/shared/MultiSelect";
 
 
 /** Internal helper for conditional classes */
@@ -415,6 +417,15 @@ interface CustomerRow {
             archiveName?: string;
             archiveRequested?: boolean;
             archiveRequestedAt?: string;
+            isException?: boolean;
+            exceptionDate?: string;
+            exceptionInvoice?: string;
+            exceptionInvoiceDate?: string;
+            exceptionProduct?: string;
+            exceptionProductQty?: string;
+            exceptionDeductedAmount?: string;
+            exceptionReturnedPrice?: string;
+            exceptionXahisText?: string;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -440,6 +451,7 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
     const handleValueChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         let val = e.target.value;
         const datePaths = ['details.contractDate', 'details.issueDate', 'details.warningDate', 'details.birthDate'];
+        const addressPaths = ['details.address', 'details.actualAddress'];
         const numericPaths = [
             'details.totalPrice', 'details.paidAmount', 'details.unpaidAmount',
             'details.fee', 'details.penalty', 'details.discountAmount',
@@ -449,6 +461,13 @@ const CustomerField = memo(({ label, path, placeholder, className, isFin, isCemi
 
         if (datePaths.includes(path)) {
             val = formatDateInput(val);
+        } else if (addressPaths.includes(path)) {
+            // Apply title case but preserve trailing space if user is typing
+            const endsWithSpace = e.target.value.endsWith(' ');
+            val = toTitleCase(val);
+            if (endsWithSpace && !val.endsWith(' ')) {
+                val += ' ';
+            }
         } else if (numericPaths.includes(path)) {
             // Allow only digits, dots, and commas
             val = val.replace(/[^0-9.,]/g, "");
@@ -731,6 +750,61 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                 }
             }
 
+            // Recalculate if we modify an exception-related field
+            if (field === 'isException' || field === 'exceptionReturnedPrice') {
+                if (newData.details) {
+                    let totalAggregatedPrice = 0;
+                    let totalAggregatedPaid = 0;
+                    let totalPhoneCount = 0;
+
+                    newData.details.invoices?.forEach((inv: any) => {
+                        inv.orders?.forEach((o: any) => {
+                            const p = parseFloat((o.paymentPeriod || "0").toString().replace(',', '.')) || 0;
+                            const m = parseFloat((o.monthlyPayment || "0").toString().replace(',', '.')) || 0;
+                            const i = parseFloat((o.initialPayment || "0").toString().replace(',', '.')) || 0;
+                            const paid = parseFloat((o.paidAmount || "0").toString().replace(',', '.')) || 0;
+
+                            totalAggregatedPrice += (p * m) + i;
+                            totalAggregatedPaid += paid;
+                        });
+                    });
+
+                    // Sum Exception Returned Price
+                    let exceptionSum = 0;
+                    newData.details.invoices?.forEach((inv: any) => {
+                        if (inv.isException) {
+                            exceptionSum += parseFloat(inv.exceptionReturnedPrice || "0") || 0;
+                        }
+                    });
+
+                    // Recalculate global debt fields
+                    const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid - exceptionSum);
+                    let aggregatedFee = 0;
+                    newData.details.invoices?.forEach((inv: any) => {
+                        inv.orders?.forEach((o: any) => {
+                            if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
+                                aggregatedFee += 23.6 * o.checkedImeis.length;
+                            } else if (o.hasImieFee === true) {
+                                aggregatedFee += 23.6;
+                            }
+                        });
+                    });
+                    const fee = aggregatedFee;
+                    const penalty = unpaid * 0.10;
+                    const totalDebt = unpaid + fee + penalty;
+                    const discount = Math.max(0, unpaid - penalty);
+
+                    newData.details.totalPrice = totalAggregatedPrice.toFixed(2);
+                    newData.details.paidAmount = totalAggregatedPaid.toFixed(2);
+                    newData.details.unpaidAmount = unpaid.toFixed(2);
+                    newData.details.fee = fee.toFixed(2);
+                    newData.details.penalty = penalty.toFixed(2);
+                    newData.details.totalUnpaid = totalDebt.toFixed(2);
+                    newData.details.discountAmount = discount.toFixed(2);
+                    newData.debtAmount = totalDebt.toFixed(2);
+                }
+            }
+
             return newData;
         });
     };
@@ -799,11 +873,19 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                 newData.details.paidAmount = totalAggregatedPaid.toFixed(2);
                 newData.details.phoneCount = totalPhoneCount;
 
+                // Sum Exception Returned Price
+                let exceptionSum = 0;
+                newData.details.invoices?.forEach((inv: any) => {
+                    if (inv.isException) {
+                        exceptionSum += parseFloat(inv.exceptionReturnedPrice || "0") || 0;
+                    }
+                });
+
                 // Recalculate global debt fields
-                const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid);
+                const unpaid = Math.max(0, totalAggregatedPrice - totalAggregatedPaid - exceptionSum);
                 let aggregatedFee = 0;
-                newData.details.invoices?.forEach(inv => {
-                    inv.orders?.forEach(o => {
+                newData.details.invoices?.forEach((inv: any) => {
+                    inv.orders?.forEach((o: any) => {
                         if (Array.isArray(o.checkedImeis) && o.checkedImeis.length > 0) {
                             aggregatedFee += 23.6 * o.checkedImeis.length;
                         } else if (o.hasImieFee === true) {
@@ -932,10 +1014,18 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                     }
                 });
             });
-            const unpaid = Math.max(0, totalPrice - totalPaid);
+            // Sum Exception Returned Price
+            let exceptionSum = 0;
+            invoices.forEach((inv: any) => {
+                if (inv.isException) {
+                    exceptionSum += parseFloat(inv.exceptionReturnedPrice || "0") || 0;
+                }
+            });
+
+            const unpaid = Math.max(0, totalPrice - totalPaid - exceptionSum);
             const penalty = unpaid * 0.10;
             const totalDebt = unpaid + fee + penalty;
-            const discount = unpaid + penalty;
+            const discount = Math.max(0, unpaid - penalty);
             if (newData.details) {
                 newData.details.totalPrice = totalPrice.toFixed(2);
                 newData.details.paidAmount = totalPaid.toFixed(2);
@@ -978,10 +1068,18 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                     }
                 });
             });
-            const unpaid = Math.max(0, totalPrice - totalPaid);
+            // Sum Exception Returned Price
+            let exceptionSum = 0;
+            invoices.forEach((inv: any) => {
+                if (inv.isException) {
+                    exceptionSum += parseFloat(inv.exceptionReturnedPrice || "0") || 0;
+                }
+            });
+
+            const unpaid = Math.max(0, totalPrice - totalPaid - exceptionSum);
             const penalty = unpaid * 0.10;
             const totalDebt = unpaid + fee + penalty;
-            const discount = unpaid + penalty;
+            const discount = Math.max(0, unpaid - penalty);
             if (newData.details) {
                 newData.details.totalPrice = totalPrice.toFixed(2);
                 newData.details.paidAmount = totalPaid.toFixed(2);
@@ -2016,7 +2114,14 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                         hasImieFee: undefined,
                                         checkedImeis: []
                                     }],
-                                    store: localData.store || ""
+                                    store: localData.store || "",
+                                    isException: false,
+                                    exceptionDate: new Date().toISOString().split('T')[0],
+                                    exceptionInvoice: "",
+                                    exceptionInvoiceDate: "",
+                                    exceptionProduct: "",
+                                    exceptionDeductedAmount: "",
+                                    exceptionReturnedPrice: ""
                                 }]).map((inv, idx, allInvs) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
 
@@ -2055,6 +2160,21 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                                 Sorğu göndərilib...
                                                             </div>
                                                         )}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (!isEditing) setIsEditing(true);
+                                                                updateInvoice(inv.id, 'isException', !inv.isException);
+                                                            }}
+                                                            className={cn(
+                                                                "h-11 px-6 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border flex items-center gap-2 shrink-0",
+                                                                inv.isException
+                                                                    ? "bg-purple-600 text-white border-purple-700 shadow-md shadow-purple-200"
+                                                                    : "bg-purple-50 text-purple-600 border-purple-200/50 hover:bg-purple-100"
+                                                            )}
+                                                        >
+                                                            İstisna
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2210,8 +2330,214 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                             </div>
                                         </div>
 
+                                        {/* EXCEPTION FIELDS */}
+                                        {inv.isException && (
+                                            <div className="mt-4 p-4 rounded-xl bg-purple-50 border border-purple-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                <h5 className="text-[10px] font-black text-purple-800 uppercase tracking-widest mb-3">İstisna Təfərrüatları</h5>
+
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-4">
+                                                    <div className="space-y-1.5 min-w-0">
+                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmtina Tarixi</label>
+                                                        <input
+                                                            type="date"
+                                                            readOnly={!isEditing}
+                                                            value={inv.exceptionDate || ""}
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionDate', e.target.value)}
+                                                            onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1.5 min-w-0">
+                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Faktura №</label>
+                                                        <input
+                                                            readOnly={!isEditing}
+                                                            value={inv.exceptionInvoice || ""}
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoice', e.target.value)}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                            placeholder="Məs: 020910768"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1.5 min-w-0">
+                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Fakt. Tarixi</label>
+                                                        <input
+                                                            type="date"
+                                                            readOnly={!isEditing}
+                                                            value={inv.exceptionInvoiceDate || ""}
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', e.target.value)}
+                                                            onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1.5 min-w-0 md:col-span-2 lg:col-span-1">
+                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block truncate">Məhsul & Say</label>
+                                                        {(() => {
+                                                            // Parse products from all orders in this invoice
+                                                            const parseProducts = () => {
+                                                                const products: { raw: string; name: string; qty: number }[] = [];
+                                                                (inv.orders || []).forEach((ord: any) => {
+                                                                    const desc = (ord.productDescription || "").trim();
+                                                                    if (!desc) return;
+                                                                    // Split by comma to handle "2 ədəd X, 2 ədəd Y"
+                                                                    desc.split(",").forEach((part: string) => {
+                                                                        const trimmed = part.trim();
+                                                                        if (!trimmed) return;
+                                                                        // Check for "N ədəd" prefix
+                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                        if (qtyMatch) {
+                                                                            products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                        } else {
+                                                                            // Check for IMEI patterns - keep as single item
+                                                                            products.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        }
+                                                                    });
+                                                                });
+                                                                return products;
+                                                            };
+                                                            const parsedProducts = parseProducts();
+                                                            const selectedProduct = inv.exceptionProduct || "";
+                                                            const selectedQty = parseInt(inv.exceptionProductQty || "1") || 1;
+                                                            const matchedProduct = parsedProducts.find(p => p.name === selectedProduct || p.raw === selectedProduct);
+                                                            const maxQty = matchedProduct?.qty || 1;
+
+                                                            return (
+                                                                <div className="flex gap-2 min-w-0">
+                                                                    <select
+                                                                        disabled={!isEditing}
+                                                                        value={selectedProduct}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            updateInvoice(inv.id, 'exceptionProduct', val);
+                                                                            const mt = parsedProducts.find(p => p.name === val || p.raw === val);
+                                                                            // Set default selection to the max available quantity instead of 1
+                                                                            updateInvoice(inv.id, 'exceptionProductQty', mt?.qty ? String(mt.qty) : "1");
+                                                                        }}
+                                                                        className="flex-1 min-w-0 h-11 px-2 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white cursor-pointer truncate"
+                                                                    >
+                                                                        <option value="">Seçin...</option>
+                                                                        {parsedProducts.map((p, pi) => (
+                                                                            <option key={pi} value={p.name}>
+                                                                                {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <select
+                                                                        disabled={!isEditing || !selectedProduct}
+                                                                        value={selectedQty}
+                                                                        onChange={(e) => updateInvoice(inv.id, 'exceptionProductQty', e.target.value)}
+                                                                        className="w-[80px] h-11 px-1 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                                                                        title="Qaytarılan sayı seçin"
+                                                                    >
+                                                                        {Array.from({ length: maxQty }, (_, i) => i + 1).map(n => (
+                                                                            <option key={n} value={n}>{n} əd.</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                    <div className="space-y-1.5 min-w-0">
+                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">Silinən Borc AZN</label>
+                                                        <input
+                                                            readOnly={!isEditing}
+                                                            value={inv.exceptionReturnedPrice || ""}
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {/* XAHİŞ PREVIEW */}
+                                                <div className="bg-white p-3 rounded-xl border border-purple-200 space-y-1.5 mt-2 shadow-sm">
+                                                    <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider flex items-center justify-between">
+                                                        <span>Xahiş Mətni Görümüşü</span>
+                                                        <span className="text-[8px] font-normal opacity-70">Sənəddəki mətni buradan dəyişə bilərsiniz</span>
+                                                    </label>
+                                                    {(() => {
+                                                        // Calculate default xahis text
+                                                        let totalUnpaid = 0;
+                                                        let totalPrice = 0;
+                                                        let hasImei = false;
+                                                        const contractDates = new Set<string>();
+
+                                                        const products: { raw: string; name: string; qty: number }[] = [];
+                                                        let invPaid = 0;
+                                                        (inv.orders || []).forEach((ord: any) => {
+                                                            const tp = parseFloat(ord.totalPrice) || 0;
+                                                            totalPrice += tp;
+
+                                                            const op = parseFloat(ord.paidAmount) || 0;
+                                                            invPaid += op;
+
+                                                            if (ord.contractDate) contractDates.add(ord.contractDate);
+                                                            if (ord.hasImieFee || (ord.productDescription || "").toLowerCase().includes("imei") || (ord.checkedImeis && ord.checkedImeis.length > 0)) {
+                                                                hasImei = true;
+                                                            }
+
+                                                            const desc = (ord.productDescription || "").trim();
+                                                            if (!desc) return;
+                                                            desc.split(",").forEach((part: string) => {
+                                                                const trimmed = part.trim();
+                                                                if (!trimmed) return;
+                                                                const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                if (qtyMatch) {
+                                                                    products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                } else {
+                                                                    products.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                }
+                                                            });
+                                                        });
+
+                                                        let calculatedUnpaid = Math.max(0, totalPrice - invPaid);
+
+                                                        const deducted = parseFloat(inv.exceptionReturnedPrice || "0");
+                                                        if (deducted > 0) calculatedUnpaid = Math.max(0, calculatedUnpaid - deducted);
+
+                                                        const calculatedPenalty = calculatedUnpaid * 0.10;
+
+                                                        const selectedProduct = inv.exceptionProduct || "";
+                                                        const selectedQty = parseInt(inv.exceptionProductQty || "1") || 1;
+
+                                                        // rebuild mehsul
+                                                        const rebuilt: string[] = [];
+                                                        products.forEach(p => {
+                                                            if (p.name === selectedProduct || p.raw === selectedProduct) {
+                                                                const remaining = p.qty - selectedQty;
+                                                                if (remaining > 1) rebuilt.push(`${remaining} ədəd ${p.name}`);
+                                                                else if (remaining === 1) rebuilt.push(p.name);
+                                                            } else {
+                                                                rebuilt.push(p.raw);
+                                                            }
+                                                        });
+                                                        const finalMehsul = rebuilt.join(", ");
+                                                        const cDate = Array.from(contractDates)[0] || "";
+                                                        const cDateOrd = cDate ? `${cDate}-cü` : ""; // approximate ordinal
+
+                                                        // Only render default phrase if there are remaining products
+                                                        let defaultText = "";
+                                                        if (finalMehsul.trim().length > 0) {
+                                                            defaultText = `${cDateOrd} il tarixli müqaviləyə əsasən, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu borcu yaranmışdır.`;
+                                                        } else {
+                                                            defaultText = "";
+                                                        }
+
+                                                        const textValue = inv.exceptionXahisText !== undefined ? inv.exceptionXahisText : defaultText;
+
+                                                        return (
+                                                            <textarea
+                                                                readOnly={!isEditing}
+                                                                value={textValue}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionXahisText', e.target.value)}
+                                                                className="w-full h-20 px-3 py-2 text-[11px] leading-relaxed rounded-lg outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white resize-none text-slate-700"
+                                                            />
+                                                        );
+                                                    })()}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* ORDERS LIST */}
-                                        <div className="grid gap-4">
+                                        <div className="grid gap-4 mt-6">
                                             {(inv.orders || []).map((ord, oidx) => (
                                                 <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
                                                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -2572,7 +2898,16 @@ export default function DashboardPage() {
     const [statusFilter, setStatusFilter] = useState<ProcessStatus | "all">("all");
     const [page, setPage] = useState(1);
     const itemsPerPage = 50;
-    const [onlyMyEntries, setOnlyMyEntries] = useState(false);
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [exportStartDate, setExportStartDate] = useState("");
+    const [exportEndDate, setExportEndDate] = useState("");
+    const [exportInspector, setExportInspector] = useState<string[]>([]);
+    const [exportType, setExportType] = useState<"invoice" | "customer">("invoice");
+    const [exportSearch, setExportSearch] = useState("");
+    const [exportExecutor, setExportExecutor] = useState<string[]>([]);
+    const [exportStatus, setExportStatus] = useState<string[]>([]);
+    const [exportMinDebt, setExportMinDebt] = useState("");
+    const [exportMaxDebt, setExportMaxDebt] = useState("");
     const [warningFilter, setWarningFilter] = useState<"all" | "sent" | "overdue" | "unsent">("all");
     const [invoiceCount, setInvoiceCount] = useState<string>("");
     const [invoiceMode, setInvoiceMode] = useState<"exact" | "min" | "max" | "all">("all");
@@ -2671,7 +3006,7 @@ export default function DashboardPage() {
 
     useEffect(() => {
         setPage(1);
-    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, executorFilter]);
+    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter]);
 
     const addRow = () => {
         const newRow: CustomerRow = {
@@ -2773,11 +3108,6 @@ export default function DashboardPage() {
                 if (statusFilter !== 'UNFINISHED_ARCHIVE') return false;
             }
 
-            // My Entries filter (only for DEP_HEAD and SUPERADMIN)
-            if (onlyMyEntries && (user?.role === 'DEP_HEAD' || user?.role === 'SUPERADMIN' || user?.role === 'MANAGER')) {
-                if (c.createdBy !== user?.email) return false;
-            }
-
             // First level: Role based access
             // Inspectors/Admins see only what's assigned to them
             // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE tasks that are unassigned
@@ -2828,7 +3158,7 @@ export default function DashboardPage() {
 
             return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus && matchesExecutor;
         });
-    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, onlyMyEntries, executorFilter, user?.email, user?.role]);
+    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter, user?.email, user?.role]);
 
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
@@ -2840,26 +3170,249 @@ export default function DashboardPage() {
         return map;
     }, [rows]);
 
+    const handleExcelExport = () => {
+        let dataToExport = filteredRows.filter(c => {
+            if (exportStartDate || exportEndDate) {
+                if (!c.createdAt) return false;
+                const createdAt = new Date(c.createdAt);
+                if (isNaN(createdAt.getTime())) return false;
+
+                createdAt.setHours(0, 0, 0, 0);
+                if (exportStartDate) {
+                    const s = new Date(exportStartDate);
+                    s.setHours(0, 0, 0, 0);
+                    if (createdAt < s) return false;
+                }
+                if (exportEndDate) {
+                    const e = new Date(exportEndDate);
+                    e.setHours(0, 0, 0, 0);
+                    if (createdAt > e) return false;
+                }
+            }
+            if (exportInspector.length > 0) {
+                if (!exportInspector.includes(c.createdBy as string)) return false;
+            }
+
+
+
+            if (exportExecutor.length > 0) {
+                if (!exportExecutor.includes(c.assignedTo as string)) return false;
+            }
+
+            if (exportStatus.length > 0) {
+                if (!exportStatus.includes(c.process_status as string)) return false;
+            }
+
+            if (exportMinDebt) {
+                const debt = parseFloat(c.debtAmount || "0");
+                const min = parseFloat(exportMinDebt);
+                if (!isNaN(min) && debt < min) return false;
+            }
+
+            if (exportMaxDebt) {
+                const debt = parseFloat(c.debtAmount || "0");
+                const max = parseFloat(exportMaxDebt);
+                if (!isNaN(max) && debt > max) return false;
+            }
+
+            return true;
+        });
+
+        let snCounter = 1;
+
+        const excelData = dataToExport.flatMap((item, i) => {
+            const dateObj = item.createdAt ? new Date(item.createdAt) : null;
+            const validDateStr = (dateObj && !isNaN(dateObj.getTime())) ? dateObj.toLocaleDateString('az-AZ') : "";
+
+            const rawPassportSeries = item.details?.passportSeries || "";
+            const finStr = item.details?.fin || "";
+            const cleanSeries = rawPassportSeries.replace(new RegExp(`[- ]?${finStr}$`, 'i'), '').trim();
+
+            const baseRowData: any = {
+                "Müştəri Nömrəsi": item.customerCode || "",
+                "FİN": finStr || "",
+                "A.S.A": item.fullName || "",
+                "Ünvan": item.details?.address || "",
+                "Faktiki Ünvan": item.details?.actualAddress || "",
+                "Əlaqə nömrəsi": item.details?.phone || "",
+                "Doğum tarixi": item.details?.birthDate || "",
+                "Seriya Nömrəsi": cleanSeries,
+                "Borc məbləği": item.debtAmount || "0.00",
+                "Məhsul (Ümumi)": item.details?.productDescription || "",
+                "Daxil edilib": validDateStr,
+                "Daxil edən": item.createdBy || "",
+                "İnzibatçı": item.assignedTo || "",
+                "Status": STATUS_LABELS[item.process_status as ProcessStatus]?.label || item.process_status || ""
+            };
+
+            if (exportType === "invoice") {
+                const invoices = item.details?.invoices || [];
+
+                if (invoices.length > 0) {
+                    return invoices.flatMap((inv) => {
+                        const orders = inv.orders || [];
+                        if (orders.length > 0) {
+                            return orders.map(o => ({
+                                "S/N": snCounter++,
+                                ...baseRowData,
+                                "Mağaza": inv.store || "",
+                                "Faktura Nömrəsi": inv.invoiceNumber || "",
+                                "Məhsul (Faktura)": o.productDescription || "",
+                                "Müqavilə Tarixi": o.contractDate || "",
+                                "Müddət (ay)": o.paymentPeriod || "",
+                                "İlkin Ödəniş": o.initialPayment || "",
+                                "Aylıq Ödəniş": o.monthlyPayment || "",
+                                "Ödənilmiş": o.paidAmount || "",
+                                "Alqı-Satqı Qiyməti (Faktura)": o.totalPrice || "",
+                                "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Var" : "Yoxdur"
+                            }));
+                        } else {
+                            // Invoice without explicit orders array
+                            return [{
+                                "S/N": snCounter++,
+                                ...baseRowData,
+                                "Mağaza": inv.store || "",
+                                "Faktura Nömrəsi": inv.invoiceNumber || "",
+                                "Məhsul (Faktura)": "",
+                                "Müqavilə Tarixi": "",
+                                "Müddət (ay)": "",
+                                "İlkin Ödəniş": "",
+                                "Aylıq Ödəniş": "",
+                                "Ödənilmiş": "",
+                                "Alqı-Satqı Qiyməti (Faktura)": "",
+                                "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Var" : "Yoxdur"
+                            }];
+                        }
+                    });
+                } else {
+                    // Fallback to general contract info if no invoices attached to customer
+                    return [{
+                        "S/N": snCounter++,
+                        ...baseRowData,
+                        "Mağaza": "",
+                        "Faktura Nömrəsi": item.details?.contractNumber || "",
+                        "Məhsul (Faktura)": item.details?.productDescription || "",
+                        "Müqavilə Tarixi": item.details?.contractDate || "",
+                        "Müddət (ay)": item.details?.paymentPeriod || "",
+                        "İlkin Ödəniş": item.details?.initialPayment || "",
+                        "Aylıq Ödəniş": item.details?.monthlyPayment || "",
+                        "Ödənilmiş": item.details?.paidAmount || "",
+                        "Alqı-Satqı Qiyməti (Faktura)": item.details?.totalPrice || "",
+                        "Qoşma Sənəd (Arxiv)": ""
+                    }];
+                }
+            }
+
+            return [{ "S/N": snCounter++, ...baseRowData }];
+        });
+
+        if (excelData.length === 0) {
+            toast.error("Göstərilən filtrlərə uyğun məlumat tapılmadı");
+            return;
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const objectMaxLength: number[] = [];
+        excelData.forEach(obj => {
+            Object.entries(obj).forEach(([key, val], idx) => {
+                const v = val ? val.toString() : "";
+                const max = Math.max(key.length, v.length) + 2;
+                objectMaxLength[idx] = Math.max(objectMaxLength[idx] || 0, max);
+            });
+        });
+        worksheet["!cols"] = Object.keys(excelData[0]).map((_, idx) => ({
+            width: Math.min(objectMaxLength[idx], 50)
+        }));
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Müştərilər");
+        XLSX.writeFile(workbook, `Musteriler_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        setIsExportModalOpen(false);
+        toast.success("Excel faylı hazırlandı və yükləndi!");
+    };
+
     const myStats = useMemo(() => {
-        if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0 };
+        if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0, breakdown: null };
 
         const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD';
         const targetEmail = (executorFilter !== 'all') ? executorFilter : (isManager ? null : user.email);
 
-        // Banner 'Active' counts should only include ASSIGNED tasks for consistency with the Assignment dropdown.
-        // Unassigned tasks are shown in a separate card for Managers.
-        const active = rows.filter(r => (targetEmail ? r.assignedTo === targetEmail : !!r.assignedTo) && !r.isArchived).length;
-        const archived = rows.filter(r => (targetEmail ? r.assignedTo === targetEmail : !!r.assignedTo) && r.isArchived).length;
+        const validRows = rows.filter(r => r.id);
 
-        // Unassigned should only count those needing attention (not archived)
-        const unassigned = rows.filter(r => !r.assignedTo && !r.isArchived).length;
+        // Filter counts
+        // "Yeni daxil edildi" (Not started yet). These are items that haven't progressed.
+        // Usually they are unassigned, but even if assigned, they haven't started.
+        const newRows = validRows.filter(r =>
+            !r.isArchived &&
+            r.process_status !== "UNFINISHED_ARCHIVE" &&
+            r.process_status === "INSPECTOR_ENTERED" &&
+            (targetEmail ? r.assignedTo === targetEmail : true)
+        );
+
+        // Active (Davam Edən) means anything that is NOT archived, NOT unfinished, and HAS STARTED (!= INSPECTOR_ENTERED).
+        const activeRows = validRows.filter(r =>
+            (targetEmail ? r.assignedTo === targetEmail : true) &&
+            !r.isArchived &&
+            r.process_status !== "UNFINISHED_ARCHIVE" &&
+            r.process_status !== "INSPECTOR_ENTERED"
+        );
+
+        // Archived is defined mathematically as anything marked isArchived OR process_status is UNFINISHED_ARCHIVE
+        const archivedRows = validRows.filter(r => {
+            const matchesAssignee = targetEmail ? r.assignedTo === targetEmail : true;
+            return matchesAssignee && (r.isArchived || r.process_status === "UNFINISHED_ARCHIVE");
+        });
+
+        // Warning breakdown for Active (Ongoing) - kept for potential future use or debugging
+        const activeWarningSent = activeRows.filter(r => !!r.details?.isWarningSent && !isOverdue(r.details?.warningDate)).length;
+        const activeOverdue = activeRows.filter(r => !!r.details?.isWarningSent && isOverdue(r.details?.warningDate)).length;
+        const activeUnsent = activeRows.length - activeWarningSent - activeOverdue;
+
+        // Təyinat Edilməyən card specifically filters for unassigned. This can overlap with Active if an admin works on it without assigning.
+        // We calculate this just for the dedicated "TƏYİNAT EDİLMƏYƏN" box on the dashboard (if manager).
+        const unassignedRows = validRows.filter(r => !r.assignedTo && !r.isArchived && r.process_status !== "UNFINISHED_ARCHIVE");
+
+        // Total is simply the sum of all valid rows in the user's scope
+        const total = targetEmail
+            ? validRows.filter(r => r.assignedTo === targetEmail).length
+            : validRows.filter(r => true).length; // length of all validRows
+
+        // Breakdown for Archived
+        const archivedCompleted = archivedRows.filter(r => r.process_status !== "UNFINISHED_ARCHIVE").length;
+        const archivedUnfinished = archivedRows.filter(r => r.process_status === "UNFINISHED_ARCHIVE").length;
+
+        const archivedBreakdown = [
+            { label: 'Sənədlər tamamlandı', value: archivedCompleted },
+            { label: 'Tamamlanmayan Sənəd', value: archivedUnfinished }
+        ].filter(b => b.value > 0);
+
+        // Breakdown for Active (Ongoing) by Process Status
+        const activeBreakdownMap = activeRows.reduce((acc, r) => {
+            const statusLabel = (r.process_status && STATUS_LABELS[r.process_status as ProcessStatus]?.label) || "Təyinat edilmiş";
+            acc[statusLabel] = (acc[statusLabel] || 0) + 1;
+            return acc;
+        }, {} as Record<string, number>);
+
+        const activeStatusBreakdown = Object.entries(activeBreakdownMap)
+            .map(([label, value]) => ({ label, value }))
+            .sort((a, b) => b.value - a.value);
 
         return {
-            active,
-            archived,
-            total: active + archived,
-            unassigned,
-            isGlobal: !targetEmail
+            active: activeRows.length,
+            archived: archivedRows.length,
+            total,
+            unassigned: unassignedRows.length,
+            isGlobal: !targetEmail,
+            breakdown: {
+                active: activeStatusBreakdown,
+                archived: archivedBreakdown,
+                total: [
+                    { label: 'Davam edən işlər', value: activeRows.length },
+                    { label: 'Yeni daxil edildi', value: newRows.length },
+                    { label: 'Arxivə Göndərilən', value: archivedRows.length }
+                ].filter(b => b.value > 0)
+            }
         };
     }, [rows, user?.email, user?.role, executorFilter]);
 
@@ -2883,44 +3436,95 @@ export default function DashboardPage() {
                     "grid grid-cols-1 gap-4 mb-6 mt-4",
                     (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') ? "md:grid-cols-4" : "md:grid-cols-3"
                 )}>
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-blue-400 transition-all">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-blue-400 transition-all relative z-40 hover:z-[60]">
                         <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-110 transition-transform">
                             <Zap size={24} />
                         </div>
                         <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                {myStats.isGlobal || executorFilter !== 'all' ? "Aktiv İşlər" : "Aktiv İşlərim"}
-                            </p>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 group/tooltip relative w-max cursor-help">
+                                {myStats.isGlobal ? "Davam Edən İşlər" : "Davam Edən İşlərim"}
+                                <Info size={12} className="text-slate-300 hover:text-blue-500 transition-colors" />
+                                <div className="absolute left-0 top-full mt-2 hidden group-hover/tooltip:flex flex-col gap-1 w-[220px] bg-slate-800 text-white p-3 rounded-xl shadow-xl text-[10px] normal-case tracking-normal z-50 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="font-bold text-slate-300 mb-1 border-b border-slate-700 pb-1">Hesablanma ({myStats.active}):</div>
+                                    {myStats.breakdown?.active?.length ? (
+                                        myStats.breakdown.active.map((item: any, i: number) => (
+                                            <div key={i} className="flex justify-between items-center text-slate-200">
+                                                <span>{item.label}</span>
+                                                <span className="font-bold">{item.value}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-slate-200">Hazırda üzərində iş getdiyi üçün aktiv sayılan işlərin sayı. Yeni daxil edilən və arxivlənən işlər daxil deyil.</div>
+                                    )}
+                                </div>
+                            </div>
                             <p className="text-2xl font-black text-slate-900">{myStats.active}</p>
                         </div>
                     </div>
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-emerald-400 transition-all">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-emerald-400 transition-all relative z-40 hover:z-[60]">
                         <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-110 transition-transform">
                             <FolderArchive size={24} />
                         </div>
                         <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Arxivə Göndərilən</p>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 group/tooltip relative w-max cursor-help">
+                                Arxivə Göndərilən
+                                <Info size={12} className="text-slate-300 hover:text-emerald-500 transition-colors" />
+                                <div className="absolute left-0 top-full mt-2 hidden group-hover/tooltip:flex flex-col gap-1 w-[220px] bg-slate-800 text-white p-3 rounded-xl shadow-xl text-[10px] normal-case tracking-normal z-50 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="font-bold text-slate-300 mb-1 border-b border-slate-700 pb-1">Hesablanma ({myStats.archived}):</div>
+                                    {myStats.breakdown?.archived?.length ? (
+                                        myStats.breakdown.archived.map((item: any, i: number) => (
+                                            <div key={i} className="flex justify-between items-center text-slate-200">
+                                                <span>{item.label}</span>
+                                                <span className="font-bold">{item.value}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-slate-200">İşi tam yekunlaşıb arxivə göndərilən və ya imtina edilən işlərin sayı.</div>
+                                    )}
+                                </div>
+                            </div>
                             <p className="text-2xl font-black text-slate-900">{myStats.archived}</p>
                         </div>
                     </div>
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-purple-400 transition-all">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-purple-400 transition-all relative z-40 hover:z-[60]">
                         <div className="h-12 w-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 group-hover:scale-110 transition-transform">
                             <RefreshCw size={24} />
                         </div>
                         <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ümumi İş Sayı</p>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 group/tooltip relative w-max cursor-help">
+                                Ümumi İş Sayı
+                                <Info size={12} className="text-slate-300 hover:text-purple-500 transition-colors" />
+                                {myStats.breakdown?.total?.length ? (
+                                    <div className="absolute left-0 top-full mt-2 hidden group-hover/tooltip:flex flex-col gap-1 w-[220px] bg-slate-800 text-white p-3 rounded-xl shadow-xl text-[10px] normal-case tracking-normal z-50 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="font-bold text-slate-300 mb-1 border-b border-slate-700 pb-1">Hesablanma ({myStats.total}):</div>
+                                        {myStats.breakdown.total.map((item: any, i: number) => (
+                                            <div key={i} className="flex justify-between items-center text-slate-200">
+                                                <span>{item.label}</span>
+                                                <span className="font-bold">{item.value}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : null}
+                            </div>
                             <p className="text-2xl font-black text-slate-900">{myStats.total}</p>
                         </div>
                     </div>
 
                     {/* New: Unassigned status for Managers/Admins */}
                     {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
-                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-orange-400 transition-all animate-in fade-in slide-in-from-right-4 duration-500">
+                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-orange-400 transition-all animate-in fade-in slide-in-from-right-4 duration-500 relative z-40 hover:z-[60]">
                             <div className="h-12 w-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100 group-hover:scale-110 transition-transform">
                                 <Users size={24} />
                             </div>
                             <div>
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Təyinat edilməyən</p>
+                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 group/tooltip relative w-max cursor-help">
+                                    Təyinat edilməyən
+                                    <Info size={12} className="text-slate-300 hover:text-orange-500 transition-colors" />
+                                    <div className="absolute right-0 md:left-0 top-full mt-2 hidden group-hover/tooltip:flex flex-col gap-1 w-[220px] bg-slate-800 text-white p-3 rounded-xl shadow-xl text-[10px] normal-case tracking-normal z-50 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="font-bold text-slate-300 mb-1 border-b border-slate-700 pb-1">Məlumat:</div>
+                                        <div className="text-slate-200">Heç bir icraçıya təyin edilməmiş və hələ arxivlənməmiş yeni işlər. (Bura TAMAMLANMAYAN SƏNƏDLƏR aid deyil)</div>
+                                    </div>
+                                </div>
                                 <p className="text-2xl font-black text-slate-900">{myStats.unassigned}</p>
                             </div>
                         </div>
@@ -3029,18 +3633,13 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
+                            {(user?.role === 'SUPERADMIN' || user?.role === 'DEP_HEAD') && (
                                 <button
-                                    onClick={() => setOnlyMyEntries(!onlyMyEntries)}
-                                    className={cn(
-                                        "flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-[11px] font-black uppercase tracking-wider",
-                                        onlyMyEntries
-                                            ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
-                                            : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-                                    )}
+                                    onClick={() => setIsExportModalOpen(true)}
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-emerald-600 text-white rounded-xl shadow-[0_0_15px_rgba(22,163,74,0.3)] transition-all text-[11px] font-black uppercase tracking-wider scale-100 active:scale-95"
                                 >
-                                    <UserCircle size={16} className={onlyMyEntries ? "text-white" : "text-slate-400"} />
-                                    Mənim daxil etdiklərim
+                                    <Download size={16} className="text-white drop-shadow-md" />
+                                    Excel Export
                                 </button>
                             )}
                         </div>
@@ -3194,6 +3793,151 @@ export default function DashboardPage() {
                                     Ləğv Et
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* EXPORT MODAL */}
+            {isExportModalOpen && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
+                    onClick={() => setIsExportModalOpen(false)}
+                >
+                    <div
+                        className="bg-white rounded-xl p-8 max-w-4xl w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default flex flex-col gap-6"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex flex-col text-center gap-2">
+                            <div className="h-16 w-16 bg-green-50 text-green-600 rounded-xl flex items-center justify-center border border-green-100 mx-auto mb-2">
+                                <Download size={32} />
+                            </div>
+                            <h3 className="text-xl font-black text-slate-800 uppercase">Excel Export</h3>
+                            <p className="text-sm text-slate-600 font-medium">Məlumatları filtrləyin və yükləyin</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Başlanğıc Tarix</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={exportStartDate}
+                                        onClick={(e) => "showPicker" in HTMLInputElement.prototype && (e.target as any).showPicker()}
+                                        onChange={(e) => setExportStartDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Bitiş Tarix</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={exportEndDate}
+                                        onClick={(e) => "showPicker" in HTMLInputElement.prototype && (e.target as any).showPicker()}
+                                        onChange={(e) => setExportEndDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+
+
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">İnzibatçı</label>
+                                <MultiSelect
+                                    options={appUsers.map(u => ({ value: u.email, label: u.displayName || u.email }))}
+                                    selected={exportExecutor}
+                                    onChange={setExportExecutor}
+                                    placeholder="Bütün inzibatçılar"
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Status</label>
+                                <MultiSelect
+                                    options={Object.entries(STATUS_LABELS).map(([status, { label }]) => ({ value: status, label }))}
+                                    selected={exportStatus}
+                                    onChange={setExportStatus}
+                                    placeholder="Bütün statuslar"
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Daxil edən müfəttiş</label>
+                                <MultiSelect
+                                    options={Array.from(new Set(rows.map(r => r.createdBy).filter(Boolean))).map(id => ({ value: id as string, label: id as string }))}
+                                    selected={exportInspector}
+                                    onChange={setExportInspector}
+                                    placeholder="Bütün müfəttişlər"
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Min. Borc</label>
+                                <input
+                                    type="number"
+                                    placeholder="Min.."
+                                    value={exportMinDebt}
+                                    onChange={(e) => setExportMinDebt(e.target.value)}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-[11px] h-[36px] focus:border-primary transition-colors"
+                                />
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Max. Borc</label>
+                                <input
+                                    type="number"
+                                    placeholder="Max.."
+                                    value={exportMaxDebt}
+                                    onChange={(e) => setExportMaxDebt(e.target.value)}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-[11px] h-[36px] focus:border-primary transition-colors"
+                                />
+                            </div>
+
+                            <div className="col-span-1 md:col-span-2 lg:col-span-3 flex flex-col gap-2 mt-2">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Excel Formatı</label>
+                                <div className="flex items-center gap-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="exportType"
+                                            value="invoice"
+                                            checked={exportType === "invoice"}
+                                            onChange={() => setExportType("invoice")}
+                                            className="w-4 h-4 text-primary focus:ring-primary border-slate-300"
+                                        />
+                                        <span className="text-[12px] font-black text-slate-700">Faktura üzrə</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="exportType"
+                                            value="customer"
+                                            checked={exportType === "customer"}
+                                            onChange={() => setExportType("customer")}
+                                            className="w-4 h-4 text-primary focus:ring-primary border-slate-300"
+                                        />
+                                        <span className="text-[12px] font-black text-slate-700">Müştəri üzrə</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col w-full gap-3 mt-2">
+                            <button
+                                onClick={handleExcelExport}
+                                className="w-full bg-green-600 text-white py-3.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                <Download size={14} />
+                                Export Seçimi Yüklə
+                            </button>
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="w-full bg-slate-50 text-slate-600 py-3.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
+                            >
+                                Ləğv Et
+                            </button>
                         </div>
                     </div>
                 </div>

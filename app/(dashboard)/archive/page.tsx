@@ -34,7 +34,9 @@ import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
+import * as XLSX from 'xlsx';
 import { ProcessStatus } from "../dashboard/page";
+import { MultiSelect } from "@/components/shared/MultiSelect";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -46,6 +48,7 @@ interface Invoice {
     archiveRequested?: boolean;
     archiveRequestedAt?: string;
     orders?: any[];
+    store?: string;
 }
 
 interface CustomerRow {
@@ -54,13 +57,48 @@ interface CustomerRow {
     fullName: string;
     debtAmount: string;
     process_status: ProcessStatus;
-    details?: { invoices?: Invoice[] };
+    createdBy?: string;
+    assignedTo?: string;
+    createdAt?: string;
+    details?: { 
+        invoices?: Invoice[];
+        fin?: string;
+        address?: string;
+        actualAddress?: string;
+        phone?: string;
+        birthDate?: string;
+        passportSeries?: string;
+        productDescription?: string;
+        contractNumber?: string;
+        contractDate?: string;
+        paymentPeriod?: string;
+        initialPayment?: string;
+        monthlyPayment?: string;
+        paidAmount?: string;
+        totalPrice?: string;
+    };
     updatedAt?: any;
     statusHistory?: any[];
     archiveAssignedTo?: string;
     archiveAssignedAt?: string;
     store?: string;
 }
+
+// Ensure STATUS_LABELS exact mapping is present
+const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+    CONTACT_CENTER: { label: "1. Əlaqə mərkəzindədir", color: "text-amber-500", bg: "bg-amber-50" },
+    ASSIGNED: { label: "2. İcraçıya təyin olundu", color: "text-blue-500", bg: "bg-blue-50" },
+    IN_PROCESS: { label: "3. Müştəri ilə əlaqə yaradıldı", color: "text-blue-600", bg: "bg-blue-50" },
+    CANT_REACH: { label: "Zəng Çatmır", color: "text-rose-500", bg: "bg-rose-50" },
+    ARCHIVED: { label: "Arxiv", color: "text-slate-500", bg: "bg-slate-100" },
+    LAWYER: { label: "Rəhbərdə", color: "text-indigo-500", bg: "bg-indigo-50" },
+    COURT: { label: "Məhkəmədədir", color: "text-purple-500", bg: "bg-purple-50" },
+    DECISION_OBTAINED: { label: "Qərar alınmışdır", color: "text-green-600", bg: "bg-green-50" },
+    ICRA_YONELTILDI: { label: "İcraya yönəldilmişdir", color: "text-red-500", bg: "bg-red-50" },
+    CLOSED: { label: "Bağlanmış", color: "text-slate-500", bg: "bg-slate-100" },
+    ARCHIVE_REQUESTED: { label: "Arxiv Sənədi İstənilib", color: "text-orange-500", bg: "bg-orange-50" },
+    ARCHIVE_UPLOADED: { label: "Arxiv Sənədi Yükləndi", color: "text-emerald-500", bg: "bg-emerald-50" }
+};
 
 const months = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
 const formatRequestDate = (dateVal: any) => {
@@ -98,6 +136,12 @@ export default function ArchiveDocumentsPage() {
     const dropdownRef = useRef<HTMLDivElement>(null);
     const bulkDropdownRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [exportStartDate, setExportStartDate] = useState("");
+    const [exportEndDate, setExportEndDate] = useState("");
+    const [exportExecutor, setExportExecutor] = useState<string[]>([]);
+    const [exportArchiveStatus, setExportArchiveStatus] = useState<string[]>([]);
 
     const fetchData = useCallback(async () => {
         try {
@@ -428,6 +472,148 @@ export default function ArchiveDocumentsPage() {
         }
     };
 
+    const handleExcelExport = () => {
+        let dataToExport = filteredCustomers.filter(c => {
+            if (exportStartDate || exportEndDate) {
+                if (!c.createdAt) return false;
+                const createdAt = new Date(c.createdAt);
+                if (isNaN(createdAt.getTime())) return false;
+
+                createdAt.setHours(0, 0, 0, 0);
+                if (exportStartDate) {
+                    const s = new Date(exportStartDate);
+                    s.setHours(0, 0, 0, 0);
+                    if (createdAt < s) return false;
+                }
+                if (exportEndDate) {
+                    const e = new Date(exportEndDate);
+                    e.setHours(0, 0, 0, 0);
+                    if (createdAt > e) return false;
+                }
+            }
+            if (exportExecutor.length > 0) {
+                if (!exportExecutor.includes(c.archiveAssignedTo as string)) return false;
+            }
+            if (exportArchiveStatus.length > 0) {
+                const isDone = c.details?.invoices?.some(inv => inv.archiveUrl);
+                const isPending = (c.process_status as string) === 'ARCHIVE_REQUESTED';
+                
+                let matches = false;
+                if (exportArchiveStatus.includes("done") && isDone) matches = true;
+                if (exportArchiveStatus.includes("pending") && isPending) matches = true;
+                if (exportArchiveStatus.includes("unassigned") && !c.archiveAssignedTo) matches = true;
+                
+                if (!matches) return false;
+            }
+            return true;
+        });
+
+        let snCounter = 1;
+        const excelData = dataToExport.flatMap((item, i) => {
+            const dateObj = item.createdAt ? new Date(item.createdAt) : null;
+            const validDateStr = (dateObj && !isNaN(dateObj.getTime())) ? dateObj.toLocaleDateString('az-AZ') : "";
+
+            const rawPassportSeries = item.details?.passportSeries || "";
+            const finStr = item.details?.fin || "";
+            const cleanSeries = rawPassportSeries.replace(new RegExp(`[- ]?${finStr}$`, 'i'), '').trim();
+
+            const baseRowData: any = {
+                "Müştəri Nömrəsi": item.customerCode || "",
+                "FİN": finStr || "",
+                "A.S.A": item.fullName || "",
+                "Ünvan": item.details?.address || "",
+                "Faktiki Ünvan": item.details?.actualAddress || "",
+                "Əlaqə nömrəsi": item.details?.phone || "",
+                "Doğum tarixi": item.details?.birthDate || "",
+                "Seriya Nömrəsi": cleanSeries,
+                "Borc məbləği": item.debtAmount || "0.00",
+                "Məhsul (Ümumi)": item.details?.productDescription || "",
+                "Daxil edilib": validDateStr,
+                "Daxil edən": item.createdBy || "",
+                "İnzibatçı": item.assignedTo || "",
+                "Status": STATUS_LABELS[item.process_status as ProcessStatus]?.label || item.process_status || ""
+            };
+
+            const invoices = item.details?.invoices || [];
+            if (invoices.length > 0) {
+                return invoices.flatMap((inv) => {
+                    const orders = inv.orders || [];
+                    if (orders.length > 0) {
+                        return orders.map(o => ({
+                            "S/N": snCounter++,
+                            ...baseRowData,
+                            "Mağaza": inv.store || item.store || "",
+                            "Faktura Nömrəsi": inv.invoiceNumber || "",
+                            "Məhsul (Faktura)": o.productDescription || "",
+                            "Müqavilə Tarixi": o.contractDate || "",
+                            "Müddət (ay)": o.paymentPeriod || "",
+                            "İlkin Ödəniş": o.initialPayment || "",
+                            "Aylıq Ödəniş": o.monthlyPayment || "",
+                            "Ödənilmiş": o.paidAmount || "",
+                            "Alqı-Satqı Qiyməti (Faktura)": o.totalPrice || "",
+                            "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Yüklənib" : (inv.archiveRequested ? "İstənilib" : "Gözlənilir")
+                        }));
+                    } else {
+                        return [{
+                            "S/N": snCounter++,
+                            ...baseRowData,
+                            "Mağaza": inv.store || item.store || "",
+                            "Faktura Nömrəsi": inv.invoiceNumber || "",
+                            "Məhsul (Faktura)": "",
+                            "Müqavilə Tarixi": "",
+                            "Müddət (ay)": "",
+                            "İlkin Ödəniş": "",
+                            "Aylıq Ödəniş": "",
+                            "Ödənilmiş": "",
+                            "Alqı-Satqı Qiyməti (Faktura)": "",
+                            "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Yüklənib" : (inv.archiveRequested ? "İstənilib" : "Gözlənilir")
+                        }];
+                    }
+                });
+            } else {
+                return [{
+                    "S/N": snCounter++,
+                    ...baseRowData,
+                    "Mağaza": item.store || "",
+                    "Faktura Nömrəsi": item.details?.contractNumber || "",
+                    "Məhsul (Faktura)": item.details?.productDescription || "",
+                    "Müqavilə Tarixi": item.details?.contractDate || "",
+                    "Müddət (ay)": item.details?.paymentPeriod || "",
+                    "İlkin Ödəniş": item.details?.initialPayment || "",
+                    "Aylıq Ödəniş": item.details?.monthlyPayment || "",
+                    "Ödənilmiş": item.details?.paidAmount || "",
+                    "Alqı-Satqı Qiyməti (Faktura)": item.details?.totalPrice || "",
+                    "Qoşma Sənəd (Arxiv)": ""
+                }];
+            }
+        });
+
+        if (excelData.length === 0) {
+            toast.error("Göstərilən filtrlərə uyğun məlumat tapılmadı");
+            return;
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const objectMaxLength: number[] = [];
+        excelData.forEach(obj => {
+            Object.entries(obj).forEach(([key, val], idx) => {
+                const v = val ? val.toString() : "";
+                const max = Math.max(key.length, v.length) + 2;
+                objectMaxLength[idx] = Math.max(objectMaxLength[idx] || 0, max);
+            });
+        });
+        worksheet["!cols"] = Object.keys(excelData[0]).map((_, idx) => ({
+            width: Math.min(objectMaxLength[idx], 50)
+        }));
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Arxiv");
+        XLSX.writeFile(workbook, `Arxiv_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        setIsExportModalOpen(false);
+        toast.success("Excel faylı hazırlandı və yükləndi!");
+    };
+
     if (!user || (!can("page_archiver") && !can("page_archive_manager") && user.role !== "SUPERADMIN")) {
         return <AuthGuard><div className="h-[60vh] flex flex-col items-center justify-center opacity-40"><FileArchive size={40} /><h2 className="mt-4 font-bold">Girişə icazə yoxdur</h2></div></AuthGuard>;
     }
@@ -448,9 +634,17 @@ export default function ArchiveDocumentsPage() {
                                     <p className="text-[10px] text-slate-400 font-medium mt-1 uppercase tracking-wider">İdarəetmə Paneli</p>
                                 </div>
                             </div>
-                            <button onClick={fetchData} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
-                                <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setIsExportModalOpen(true)}
+                                    className="h-8 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-sm"
+                                >
+                                    <Download size={14} /> Export
+                                </button>
+                                <button onClick={fetchData} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
+                                    <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                                </button>
+                            </div>
                         </div>
 
                         {isManager && (
@@ -1109,6 +1303,93 @@ export default function ArchiveDocumentsPage() {
                     )}
                 </div>
             </div>
+
+            {/* EXPORT MODAL */}
+            {isExportModalOpen && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
+                    onClick={() => setIsExportModalOpen(false)}
+                >
+                    <div
+                        className="bg-white rounded-xl p-8 max-w-2xl w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default flex flex-col gap-6"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex flex-col text-center gap-2">
+                            <div className="h-16 w-16 bg-green-50 text-green-600 rounded-xl flex items-center justify-center border border-green-100 mx-auto mb-2">
+                                <Download size={32} />
+                            </div>
+                            <h3 className="text-xl font-black text-slate-800 uppercase">Excel Export (Arxiv)</h3>
+                            <p className="text-sm text-slate-600 font-medium">Məlumatları filtrləyin və yükləyin</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Başlanğıc Tarix</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={exportStartDate}
+                                        onClick={(e) => "showPicker" in HTMLInputElement.prototype && (e.target as any).showPicker()}
+                                        onChange={(e) => setExportStartDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Bitiş Tarix</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={exportEndDate}
+                                        onClick={(e) => "showPicker" in HTMLInputElement.prototype && (e.target as any).showPicker()}
+                                        onChange={(e) => setExportEndDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">İşin kimin üstündə olduğu (İcraçı)</label>
+                                <MultiSelect
+                                    options={Array.from(new Set(customers.map(c => c.archiveAssignedTo).filter(Boolean))).map(email => ({ value: email as string, label: email as string }))}
+                                    selected={exportExecutor}
+                                    onChange={setExportExecutor}
+                                    placeholder="Bütün icraçılar"
+                                />
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Arxiv Statusu</label>
+                                <MultiSelect
+                                    options={[
+                                        { value: "pending", label: "İşlənilir / Gözlənilir" },
+                                        { value: "done", label: "Tamamlanıb (Yüklənib)" },
+                                        { value: "unassigned", label: "Təyin Edilməyib" }
+                                    ]}
+                                    selected={exportArchiveStatus}
+                                    onChange={setExportArchiveStatus}
+                                    placeholder="Bütün statuslar"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row w-full gap-3 mt-4">
+                            <button
+                                onClick={handleExcelExport}
+                                className="w-full sm:flex-1 bg-green-600 text-white py-3.5 rounded-lg font-black text-[12px] uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                <Download size={16} />
+                                Export Seçimi Yüklə
+                            </button>
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="w-full sm:w-auto px-8 bg-slate-50 text-slate-600 py-3.5 rounded-lg font-black text-[12px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
+                            >
+                                Ləğv Et
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </AuthGuard >
     );
 }
