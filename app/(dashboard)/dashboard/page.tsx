@@ -37,7 +37,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
-import { formatDateInput } from "@/lib/format";
+import { formatDateInput, toTitleCase } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 
@@ -411,6 +411,7 @@ interface CustomerRow {
             archiveBase64?: string;
             archiveName?: string;
             archiveRequested?: boolean;
+            archiveRequestedAt?: string;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -519,19 +520,7 @@ CustomerField.displayName = "CustomerField";
 /** 
  * CUSTOMER CARD COMPONENT
  */
-const CustomerCard = memo(({
-    row,
-    index,
-    totalRows,
-    canUpdate,
-    canDelete,
-    appUsers,
-    userWorkload,
-    stores,
-    onSave,
-    onDelete,
-    can
-}: {
+interface CustomerCardProps {
     row: CustomerRow;
     index: number;
     totalRows: number;
@@ -541,9 +530,24 @@ const CustomerCard = memo(({
     userWorkload: Record<string, number>;
     stores: any[];
     onSave: (data: CustomerRow) => Promise<void>;
-    onDelete: (index: number) => void;
+    onDelete: (id: string | undefined, index: number) => void;
     can: (permission: any) => boolean;
-}) => {
+}
+
+const CustomerCard = memo((props: CustomerCardProps) => {
+    const {
+        row,
+        index,
+        totalRows,
+        canUpdate,
+        canDelete,
+        appUsers,
+        userWorkload,
+        stores,
+        onSave,
+        onDelete,
+        can
+    } = props;
     const router = useRouter();
     const { user } = useAuth();
     // New rows start expanded and editing
@@ -990,6 +994,9 @@ const CustomerCard = memo(({
         e.stopPropagation();
 
         const dataToSave = { ...localData };
+        if (dataToSave.fullName) {
+            dataToSave.fullName = toTitleCase(dataToSave.fullName);
+        }
         const currentStatus = dataToSave.process_status || 'INSPECTOR_ENTERED';
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
@@ -1121,7 +1128,11 @@ const CustomerCard = memo(({
 
         const updatedInvoices = [...(localData.details?.invoices || [])];
         const idx = updatedInvoices.findIndex(i => i.id === invId);
-        updatedInvoices[idx] = { ...updatedInvoices[idx], archiveRequested: true };
+        updatedInvoices[idx] = {
+            ...updatedInvoices[idx],
+            archiveRequested: true,
+            archiveRequestedAt: new Date().toISOString()
+        };
 
         const updatedData = {
             ...localData,
@@ -1143,7 +1154,7 @@ const CustomerCard = memo(({
         e.stopPropagation();
         setLocalData(JSON.parse(JSON.stringify(row)));
         setIsEditing(false);
-        if (!row.id) onDelete(index); // If it's a new unsaved row, remove it
+        if (!row.id) onDelete(undefined, index); // If it's a new unsaved row, remove it
     };
 
     const formatDateTime = (value: string | Date) => {
@@ -1361,6 +1372,9 @@ const CustomerCard = memo(({
                                         <div className="flex items-center gap-3">
                                             <h3 className="text-[18px] font-black text-slate-900 tracking-tight leading-none truncate group-hover:text-primary transition-colors">
                                                 {row.fullName || "YENİ MÜŞTƏRİ"}
+                                                <br />
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Müştəri Kodu: {row.id}</span>
+
                                             </h3>
                                             {(() => {
                                                 const invoices = row.details?.invoices || [];
@@ -1632,7 +1646,7 @@ const CustomerCard = memo(({
                                     )}
                                     {canDelete && (
                                         <button
-                                            onClick={() => onDelete(index)}
+                                            onClick={() => onDelete(row.id, index)}
                                             className="h-8 w-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                                         >
                                             <Trash2 size={14} />
@@ -2345,10 +2359,37 @@ export default function DashboardPage() {
     const [invoiceMode, setInvoiceMode] = useState<"exact" | "min" | "max" | "all">("all");
     const [executorFilter, setExecutorFilter] = useState<string>("all");
 
-    const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({
+    const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null; id: string | null }>({
         isOpen: false,
-        index: null
+        index: null,
+        id: null
     });
+
+    const updateLocalRowsCache = (data: CustomerRow[]) => {
+        try {
+            const optimizedForCache = data
+                .slice(0, 500) // Lower slice to be safer with quota
+                .map(row => ({
+                    id: row.id,
+                    customerCode: row.customerCode,
+                    fullName: row.fullName,
+                    debtAmount: row.debtAmount,
+                    process_status: row.process_status,
+                    assignedTo: row.assignedTo,
+                    createdAt: row.createdAt,
+                    isArchived: row.isArchived,
+                    details: {
+                        fin: row.details?.fin,
+                        phone: row.details?.phone,
+                        isWarningSent: row.details?.isWarningSent,
+                        warningDate: row.details?.warningDate
+                    }
+                }));
+            localStorage.setItem("legal12_customers", JSON.stringify(optimizedForCache));
+        } catch (e) {
+            localStorage.removeItem("legal12_customers");
+        }
+    };
 
     const fetchCustomers = async (isInitial = false) => {
         if (isInitial) {
@@ -2360,7 +2401,6 @@ export default function DashboardPage() {
                     setLoadingData(false);
                 }
             } catch (e) {
-                // Silent catch for initial load
                 localStorage.removeItem("legal12_customers");
             }
         }
@@ -2378,44 +2418,19 @@ export default function DashboardPage() {
 
             const finalRows = mergedRows.length > 0 ? mergedRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
 
+            // DIAGNOSTIC
+            const idsSeen = new Set();
+            const dupIds: string[] = [];
+            finalRows.forEach(r => {
+                if (r.id) {
+                    if (idsSeen.has(r.id)) dupIds.push(r.id);
+                    idsSeen.add(r.id);
+                }
+            });
+            if (dupIds.length > 0) console.warn("DUPLICATE IDs IN FETCH:", dupIds);
+
             setRows(finalRows);
-
-            // ULTRA-OPTIMIZATION: Remove EVERYTHING not absolutely needed for the list view
-            // to stay under 5MB localStorage quota.
-            const optimizedForCache = finalRows
-                .slice(0, 1000) // Only cache last 1000 to be safe
-                .map(row => ({
-                    id: row.id,
-                    customerCode: row.customerCode,
-                    fullName: row.fullName,
-                    debtAmount: row.debtAmount,
-                    process_status: row.process_status,
-                    assignedTo: row.assignedTo,
-                    createdAt: row.createdAt,
-                    isArchived: row.isArchived,
-                    details: {
-                        fin: row.details?.fin,
-                        phone: row.details?.phone,
-                        isWarningSent: row.details?.isWarningSent
-                    }
-                }));
-
-            try {
-                // Use a non-blocking timeout to ensure it doesn't slow down the UI
-                setTimeout(() => {
-                    try {
-                        localStorage.setItem("legal12_customers", JSON.stringify(optimizedForCache));
-                    } catch (quotaError) {
-                        // If 1000 is still too large, try even smaller
-                        try {
-                            localStorage.setItem("legal12_customers", JSON.stringify(optimizedForCache.slice(0, 200)));
-                        } catch (e) {
-                            localStorage.removeItem("legal12_customers");
-                        }
-                    }
-                }, 100);
-            } catch (e) { }
-
+            updateLocalRowsCache(finalRows);
         } catch (err) {
             console.error("Failed to load customers:", err);
             toast.error("Məlumatları yükləmək mümkün olmadı");
@@ -2465,46 +2480,67 @@ export default function DashboardPage() {
             if (dataToSave.id) {
                 const savedData = await updateCustomer(dataToSave.id, {
                     ...dataToSave,
-                    fullData: !!(dataToSave.details?.fin && dataToSave.details?.totalUnpaid)
+                    fullData: !!(dataToSave.details?.fin && dataToSave.details?.totalUnpaid),
+                    _forceReplaceInvoices: true
                 }, user?.email);
 
                 // Update local state immediately with returned data (includes hasFile flag)
-                setRows(prev => prev.map(r => r.id === dataToSave.id ? { ...r, ...savedData } : r));
+                setRows(prev => {
+                    const newRows = prev.map(r => r.id === dataToSave.id ? { ...r, ...savedData } : r);
+                    updateLocalRowsCache(newRows);
+                    return newRows;
+                });
             } else {
                 await bulkAddCustomers([dataToSave], user?.email);
-                fetchCustomers();
+                await fetchCustomers();
             }
         } catch (error) {
             console.error("Save error:", error);
             throw error;
         }
-    }, [user?.email, rows, fetchCustomers]);
+    }, [user?.email, rows, fetchCustomers, updateLocalRowsCache]);
 
-    const onDelete = useCallback((index: number) => {
-        setDeleteModal({ isOpen: true, index });
+    const onDelete = useCallback((id: string | undefined, index: number) => {
+        setDeleteModal({ isOpen: true, index, id: id || null });
     }, []);
 
     const confirmDelete = async () => {
-        if (deleteModal.index !== null) {
-            const index = deleteModal.index;
-            const rowToDelete = rows[index];
-
-            try {
-                if (rowToDelete.id) {
-                    await deleteCustomer(rowToDelete.id, user?.email);
-                }
-
-                if (rows.length > 1) {
-                    setRows(rows.filter((_, i) => i !== index));
-                    toast.error("Məlumat silindi");
-                } else {
-                    setRows([{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }]);
-                }
-            } catch (e) {
-                toast.error("Silmək mümkün olmadı");
-            }
+        const { index, id } = deleteModal;
+        if (index === null) {
+            setDeleteModal({ isOpen: false, index: null, id: null });
+            return;
         }
-        setDeleteModal({ isOpen: false, index: null });
+
+        try {
+            // CRITICAL FIX: Find the row by ID to avoid index mismatch when list is filtered
+            let rowToDelete = id ? rows.find(r => r.id === id) : rows[index];
+
+            if (!rowToDelete) {
+                toast.error("Müştəri tapılmadı");
+                setDeleteModal({ isOpen: false, index: null, id: null });
+                return;
+            }
+
+            if (rowToDelete.id) {
+                await deleteCustomer(rowToDelete.id, user?.email);
+
+                const nextRows = rows.filter(r => r.id !== rowToDelete.id);
+                const finalRows = nextRows.length > 0 ? nextRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+                setRows(finalRows);
+                updateLocalRowsCache(finalRows);
+                toast.error("Məlumat silindi");
+            } else {
+                // For unsaved rows
+                const nextRows = rows.filter((_, i) => i !== index);
+                const finalRows = nextRows.length > 0 ? nextRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+                setRows(finalRows);
+                updateLocalRowsCache(finalRows);
+            }
+        } catch (e) {
+            console.error("Delete error:", e);
+            toast.error("Silmək mümkün olmadı");
+        }
+        setDeleteModal({ isOpen: false, index: null, id: null });
     };
 
     const filteredRows = useMemo(() => {
@@ -2910,7 +2946,7 @@ export default function DashboardPage() {
             {deleteModal.isOpen && (
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
-                    onClick={() => setDeleteModal({ isOpen: false, index: null })}
+                    onClick={() => setDeleteModal({ isOpen: false, index: null, id: null })}
                 >
                     <div
                         className="bg-white rounded-xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default"
@@ -2932,7 +2968,7 @@ export default function DashboardPage() {
                                     Bəli, Silinsin
                                 </button>
                                 <button
-                                    onClick={() => setDeleteModal({ isOpen: false, index: null })}
+                                    onClick={() => setDeleteModal({ isOpen: false, index: null, id: null })}
                                     className="w-full bg-slate-50 text-slate-600 py-4 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
                                 >
                                     Ləğv Et

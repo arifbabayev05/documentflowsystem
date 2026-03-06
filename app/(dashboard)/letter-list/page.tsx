@@ -17,7 +17,8 @@ import {
     SearchX,
     Printer,
     CheckSquare,
-    Square
+    Square,
+    RefreshCw
 } from "lucide-react";
 import { getCustomers, getTemplates } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
@@ -353,6 +354,13 @@ export default function LetterListPage() {
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                             </div>
+                            <button
+                                onClick={fetchCustomers}
+                                className="p-2.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-indigo-600 hover:border-indigo-600 transition-all flex items-center justify-center shadow-sm"
+                                title="Yenilə"
+                            >
+                                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                            </button>
                         </div>
                     </div>
                 </div>

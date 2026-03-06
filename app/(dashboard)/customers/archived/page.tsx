@@ -168,6 +168,10 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     const [uploading, setUploading] = useState<string | null>(null);
     const [isTimelineOpen, setIsTimelineOpen] = useState(false);
 
+    const displayArchivedAt = useMemo(() => {
+        return row.archivedAt || row.statusHistory?.find((h: any) => h.action === 'ARCHIVE' || h.action === 'ARCHIVE_REQUEST')?.timestamp;
+    }, [row.archivedAt, row.statusHistory]);
+
     useEffect(() => {
         if (!isEditing) setLocalData(JSON.parse(JSON.stringify(row)));
     }, [row, isEditing]);
@@ -326,15 +330,16 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     return (
         <div className="flex items-stretch gap-4 group/row">
             <div className="hidden lg:flex flex-col gap-2 shrink-0 w-[120px] transition-all opacity-90 group-hover/row:opacity-100 cursor-default">
-                {row.createdAt && (
+
+                {displayArchivedAt && (
                     <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm text-center">
-                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Daxil Edilib</span>
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Arxivləndi</span>
                         <div className="flex flex-col items-center leading-none">
                             <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                {new Date(row.createdAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
+                                {new Date(displayArchivedAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
                             </span>
                             <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                {new Date(row.createdAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
+                                {new Date(displayArchivedAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
                             </span>
                         </div>
                     </div>
@@ -369,6 +374,9 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                             <div className="flex items-center gap-2">
                                 <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
                                     <RefreshCw size={14} /> Bərpa Et
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); router.push(`/reports/generate?id=${row.id}`); }} className="h-9 px-4 flex items-center gap-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-blue-100">
+                                    <FileText size={14} /> Sənədə Bax
                                 </button>
                                 {canDelete && (
                                     <button onClick={(e) => { e.stopPropagation(); onDelete(index); }} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100">
@@ -713,7 +721,8 @@ export default function ArchivedCustomersPage() {
             if (!matchesSearch) return false;
 
             // Date filter
-            const archTime = c.archivedAt ? new Date(c.archivedAt).getTime() : 0;
+            const archTimeVal = c.archivedAt || c.statusHistory?.find(h => h.action === "ARCHIVE" || h.action === "ARCHIVE_REQUEST")?.timestamp;
+            const archTime = archTimeVal ? new Date(archTimeVal).getTime() : 0;
             if (startDate) {
                 const s = new Date(startDate).getTime();
                 if (archTime < s) return false;

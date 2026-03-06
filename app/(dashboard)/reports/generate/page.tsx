@@ -222,6 +222,40 @@ interface CompanyInfo {
 
 // --- Multi-Invoice Helpers ---
 
+function getAZOrdinal(dateStr: string): string {
+    if (!dateStr) return "";
+    const parts = dateStr.split('.');
+    if (parts.length < 3) return "";
+    const yearStr = parts[parts.length - 1]; // Support both DD.MM.YYYY and YYYY
+    const year = parseInt(yearStr);
+    if (isNaN(year)) return "";
+
+    const lastDigit = year % 10;
+    const lastTwo = year % 100;
+
+    // Suffix rules for Azerbaijani numbers:
+    // 1, 2, 5, 7, 8, 20, 50, 70, 80, 1000 -> -ci
+    // 3, 4, 100 -> -cü
+    // 6, 40, 60, 90 -> -cı
+    // 9, 10, 30 -> -cu
+
+    if (year % 10 === 0 && year !== 0) {
+        if (lastTwo === 10 || lastTwo === 30) return "-cu";
+        if (lastTwo === 20 || lastTwo === 50 || lastTwo === 70 || lastTwo === 80) return "-ci";
+        if (lastTwo === 40 || lastTwo === 60 || lastTwo === 90) return "-cı";
+        if (lastTwo === 0) {
+            if (year % 1000 === 0) return "-ci";
+            if (year % 100 === 0) return "-cü";
+        }
+    }
+
+    if ([1, 2, 5, 7, 8].includes(lastDigit)) return "-ci";
+    if ([3, 4].includes(lastDigit)) return "-cü";
+    if ([6].includes(lastDigit)) return "-cı";
+    if ([9].includes(lastDigit)) return "-cu";
+    return "-ci";
+}
+
 function getAllContractDates(invoices: any[]): string {
     const dates: string[] = [];
     for (const inv of invoices) {
@@ -231,7 +265,28 @@ function getAllContractDates(invoices: any[]): string {
             }
         }
     }
-    return dates.map(d => `${d}-cü il`).join(", ");
+    return dates.map(d => `${d}${getAZOrdinal(d)} il`).join(", ");
+}
+
+function getMuqavileTarixiXeberdarliq(invoices: any[]): string {
+    const dates: string[] = [];
+    for (const inv of invoices) {
+        for (const ord of (inv.orders || [])) {
+            if (ord.contractDate && !dates.includes(ord.contractDate)) {
+                dates.push(ord.contractDate);
+            }
+        }
+    }
+
+    if (dates.length === 0) return "";
+
+    const formatted = dates.map(d => `${d}${getAZOrdinal(d)}`);
+
+    if (dates.length >= 2) {
+        return `${formatted.join(", ")} il tarixli müqavilələrə`;
+    } else {
+        return `${formatted[0]} il tarixli müqaviləyə`;
+    }
 }
 
 function getAllProducts(invoices: any[]): string {
@@ -599,6 +654,16 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         CAVABDEH_AD_SOYAD_S_1: adSoyadWithSuffix1,
         CAVABDEH_AD_SOYAD_S_2: adSoyadWithSuffix2,
         CAVABDEH_AD_SOYAD_S_3: adSoyadWithSuffix3,
+        CAVABDEH_TAM_BASLIQ: (() => {
+            const regAddr = (customer.details?.address || "").trim();
+            const actAddr = (customer.details?.actualAddress || "").trim();
+            const suffix1 = adSoyadWithSuffix1;
+
+            if (actAddr && actAddr !== regAddr) {
+                return `${regAddr} ünvanında qeydiyyatda olan və ${actAddr} ünvanında faktiki olaraq yaşayan ${suffix1}`;
+            }
+            return `${regAddr} ünvanında qeydiyyatda olan ${suffix1}`;
+        })(),
 
         // Financials (Global)
         UMUMI_BORC: totalBorcFromInvoices.toFixed(2),
@@ -635,6 +700,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
         // Single invoice legacy support
         MUQAVILE_TARIXI: customer.details?.contractDate || "",
+        MUQAVILE_TARIXI_XEBERDARLIQ: getMuqavileTarixiXeberdarliq(invoices),
         TAKSIT_AY: customer.details?.paymentPeriod || "",
         AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
         ILKIN_ODENIS: customer.details?.initialPayment || "",
@@ -1161,23 +1227,7 @@ function GenerateDocumentContent() {
     const router = useRouter();
     const { user, can } = useAuth();
 
-    if (!user || !can("page_customers")) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 bg-slate-50/20 w-full">
-                <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
-                    <File size={32} className="text-red-400" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
-                <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Hesabat Hazırlama icazəniz olmalıdır.</p>
-                <button
-                    onClick={() => router.push("/dashboard")}
-                    className="mt-6 px-8 py-3 bg-slate-900 text-white rounded-xl text-sm font-black transition-all hover:bg-slate-800"
-                >
-                    Geri qayıt
-                </button>
-            </div>
-        );
-    }
+
 
     const [customer, setCustomer] = useState<Customer | null>(null);
     const [allTemplates, setAllTemplates] = useState<Template[]>([]);
@@ -2238,12 +2288,12 @@ function GenerateDocumentContent() {
         //     }
         // }
 
-        const invoices = customer.details?.invoices || [];
-        const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
-        if (!isWarningOnly && invoices.length > 0 && !allArchived) {
-            if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
-            return null;
-        }
+        // const invoices = customer.details?.invoices || [];
+        // const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
+        // if (!isWarningOnly && invoices.length > 0 && !allArchived) {
+        //     if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
+        //     return null;
+        // }
 
         if (!silent) setIsGenerating(template.id);
 
@@ -2473,10 +2523,11 @@ function GenerateDocumentContent() {
                                     const invoices = customer.details?.invoices || [];
                                     const invoiceDocsUploaded = invoices.length > 0 && invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
 
-                                    if (invoices.length > 0 && !invoiceDocsUploaded) {
-                                        toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir.");
-                                        return;
-                                    }
+                                    // TEMPORARILY DISABLED: Arxiv sənədləri olmadan da çapa icazə verilir
+                                    // if (invoices.length > 0 && !invoiceDocsUploaded) {
+                                    //     toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir.");
+                                    //     return;
+                                    // }
                                 }
                                 // Auto-save if modified (ensures new uploads/changes are archived before print)
                                 if (isModified) {
