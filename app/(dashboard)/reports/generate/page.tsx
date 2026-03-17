@@ -542,7 +542,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             adSoyadWithSuffix1 = originalFullName + ataSuffix1;
             adSoyadWithSuffix2 = originalFullName + ataSuffix2;
             adSoyadWithSuffix3 = originalFullName + ataSuffix3;
-        } else if (lastPartLower.endsWith("yevna")) {
+        } else if (lastPartLower.endsWith("vna")) {
             ataSuffix1 = "ya";
             ataSuffix2 = "nın";
             ataSuffix3 = "dan";
@@ -583,7 +583,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     // Inspector logic
     const inspectorName = customer.details?.executorName || "";
     const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
-    const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
+    const inspectorPhone1 = formatPhoneInput(inspector?.phoneNumber || inspector?.phone1 || "0502801190");
     const inspectorPhone2 = "012 310 07 75";
 
     // MUHASIB_IMZA logic: Initial. Surname (e.g., S.İsmayılova)
@@ -2628,18 +2628,20 @@ function GenerateDocumentContent() {
                                     const zipContent = mainZip.generate({ type: "blob", mimeType: "application/zip" });
                                     saveAs(zipContent, `${customer.fullName.replace(/\s+/g, '_')}_BUTUN_SENEDLER.zip`);
 
-                                    // 2. Update status to COMPLETED and save Court Name
+                                    // 2. Update status to COMPLETED, archive the customer, and save Court Name
                                     await updateCustomer(customer.id, {
                                         ...customer,
                                         process_status: 'COMPLETED',
+                                        isArchived: true,
                                         courtName: selectedCourt?.name || "",
-                                        printedAt: new Date().toISOString()
+                                        printedAt: new Date().toISOString(),
+                                        archivedAt: new Date().toISOString()
                                     }, user?.email);
 
-                                    toast.success("Bütün sənədlər ZIP olaraq yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
+                                    toast.success("Bütün sənədlər ZIP olaraq yükləndi və müştəri arxivləndi", { id: loadingId });
 
                                     // Refresh local customer state
-                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt?.name || "" } : null);
+                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', isArchived: true, courtName: selectedCourt?.name || "" } : null);
 
                                     // High-Fidelity Print Pass
                                     const printContainer = document.getElementById('print-iframe') as HTMLIFrameElement;

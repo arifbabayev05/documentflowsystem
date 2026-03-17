@@ -1,5 +1,7 @@
 {
-  "projects": {},
+  "projects": {
+    "default": "legal12-kontakt"
+  },
   "targets": {},
   "etags": {}
 }

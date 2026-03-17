@@ -39,6 +39,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
 import { formatDateInput, toTitleCase } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { useBotStatus } from "@/hooks/useBotStatus";
+import { API_ENDPOINTS } from "@/config/api";
 
 
 
@@ -232,8 +234,10 @@ const getImeisFromDescription = (description: string) => {
                 .replace(/kod/gi, '')
                 .replace(/[():]/g, '')
                 .trim();
-            // Clean up leading/trailing dashes or symbols
+            // Clean up leading/trailing dashes or symbols or double IMEI keywords
             name = name.replace(/^[-. ]+|[-. ]+$/g, '');
+            // Prevent double "İMEİ" display by removing it if it's already at the start
+            name = name.replace(/^(imei|imei kod|kod)\s+/gi, '');
             results.push({ imei, name: name || "Telefon" });
         }
     });
@@ -380,7 +384,6 @@ interface CustomerRow {
         phone?: string;
         gender?: string;
         passportSeries?: string;
-        passportNumber?: string;
         birthDate?: string;
         issueDate?: string;
         authority?: string;
@@ -534,7 +537,7 @@ interface CustomerCardProps {
     can: (permission: any) => boolean;
 }
 
-const CustomerCard = memo((props: CustomerCardProps) => {
+const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; agents: any[]; onLaunchBot: () => void }) => {
     const {
         row,
         index,
@@ -546,7 +549,10 @@ const CustomerCard = memo((props: CustomerCardProps) => {
         stores,
         onSave,
         onDelete,
-        can
+        can,
+        isBotOnline,
+        agents,
+        onLaunchBot
     } = props;
     const router = useRouter();
     const { user } = useAuth();
@@ -997,6 +1003,12 @@ const CustomerCard = memo((props: CustomerCardProps) => {
         if (dataToSave.fullName) {
             dataToSave.fullName = toTitleCase(dataToSave.fullName);
         }
+        if (dataToSave.details?.address) {
+            dataToSave.details.address = toTitleCase(dataToSave.details.address);
+        }
+        if (dataToSave.details?.actualAddress) {
+            dataToSave.details.actualAddress = toTitleCase(dataToSave.details.actualAddress);
+        }
         const currentStatus = dataToSave.process_status || 'INSPECTOR_ENTERED';
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
@@ -1200,51 +1212,234 @@ const CustomerCard = memo((props: CustomerCardProps) => {
         }
 
         const fetchPromise = async () => {
-            // Step-by-step feedback for the user who can't see the console
-            toast.info(`Bot-a sorğu göndərildi: FİN: ${fin}`, { duration: 2000 });
+            toast.info(`Sorğu göndərildi: FİN: ${fin}`, { duration: 2000 });
 
-            const res = await fetch('/api/scrape', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fin, sv })
-            });
+            // Find a free agent
+            const freeAgent = (agents || []).find(a => !a.busy);
+            const targetAgentLabel = freeAgent ? freeAgent.label : (agents && agents.length > 0 ? agents[0].label : undefined);
 
-            const result = await res.json();
-            if (!res.ok) {
-                if (result.error === "LOGIN_REQUIRED") {
-                    toast.info(result.message, { duration: 10000 });
-                    throw new Error("Giriş tələb olunur");
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+            try {
+                const res = await fetch(API_ENDPOINTS.scrape, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fin, sv }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                const result = await res.json();
+                console.log(result);
+
+                // LOGIN_REQUIRED — can come as top-level (localhost) or nested (Firebase proxy)
+                const loginRequired =
+                    result.error === "LOGIN_REQUIRED" ||
+                    result.data?.error === "LOGIN_REQUIRED";
+
+                if (loginRequired) {
+                    toast.custom(
+                        () => (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '16px 20px', borderRadius: '12px', boxShadow: '0 4px 24px rgba(0,0,0,0.12)', border: '1px solid #e2e8f0', maxWidth: 380 }}>
+                                <img
+                                    src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Microsoft_Edge_logo_%282019%29.png/250px-Microsoft_Edge_logo_%282019%29.png"
+                                    alt="Edge"
+                                    style={{ width: 40, height: 40, objectFit: 'contain', flexShrink: 0 }}
+                                />
+                                <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 2, color: '#1e293b' }}>ƏMAS-a daxil olun</div>
+                                    <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
+                                        Zəhmət olmasa açılan Microsoft Edge brauzerindən Asan İmza ilə ƏMAS-a daxil olun.
+                                    </div>
+                                </div>
+                            </div>
+                        ),
+                        { duration: 15000 }
+                    );
+                    throw new Error("LOGIN_REQUIRED_MSG");
                 }
-                throw new Error(result.error || "Xəta baş verdi");
-            }
 
-            if (result.data) {
-                toast.success(`Məlumat alındı: ${result.data.fullName}`, { duration: 4000 });
-            }
-
-            const updatedData = {
-                ...localData,
-                fullName: result.data.fullName || localData.fullName,
-                details: {
-                    ...localData.details,
-                    gender: result.data.gender || localData.details?.gender,
-                    birthDate: result.data.birthDate || localData.details?.birthDate,
-                    address: result.data.address || localData.details?.address,
+                if (!res.ok) {
+                    const errMsg = result.error || result.details || "";
+                    if (errMsg.includes("already running") || errMsg.includes("Target closed")) {
+                        throw new Error("BRAUZER_LOCK");
+                    }
+                    throw new Error(errMsg || "Xəta baş verdi");
                 }
-            };
 
-            setLocalData(updatedData);
+                const d = result.data || result;
+                if (!d || (!d.name && !d.surname && !d.adı && !d.soyadı && !d.fullName)) {
+                    throw new Error("Məlumat tapılmadı");
+                }
 
-            // Auto-save logic
-            await onSave(updatedData);
+                const name = toTitleCase(d.name || d.adı || "");
+                const surname = toTitleCase(d.surname || d.soyadı || "");
+                const fatherNameWord = (d.fatherName || d["ata adı"] || "").split(" ")[0];
+                const fatherName = toTitleCase(fatherNameWord);
+                const constructedFullName = `${surname} ${name} ${fatherName}`.trim();
 
-            return `Uğurlu: ${result.data.fullName} bazaya yazıldı.`;
+                const rawGender = (d.cinsi || d.gender || d.cins || "").toString().toUpperCase();
+                const mappedGender = rawGender === "KİŞİ" || rawGender === "MALE" ? "Kişi" :
+                    (rawGender === "QADIN" || rawGender === "FEMALE" ? "Qadın" : localData.details?.gender);
+
+                const updatedData = {
+                    ...localData,
+                    fullName: constructedFullName || localData.fullName,
+                    details: {
+                        ...localData.details,
+                        gender: mappedGender,
+                        birthDate: d.birthDate || d["doğum tarixi"] || localData.details?.birthDate,
+                        address: toTitleCase(d.address || d["ünvan"] || d.allData?.["ünvan"] || localData.details?.address || ""),
+                        passportSeries: d.documentNumber || d["sənədin nömrəsi"] || d.allData?.["sənədin nömrəsi"] || localData.details?.passportSeries,
+                        issueDate: d.issueDate || d["sənədin verilmə tarixi"] || d.allData?.["sənədin verilmə tarixi"] || localData.details?.issueDate,
+                        authority: d.authority || d["sənədi verən orqan"] || d.allData?.["sənədi verən orqan"] || localData.details?.authority,
+                    }
+                };
+
+                setLocalData(updatedData);
+
+                // Auto-save logic
+                await onSave(updatedData);
+
+                const finalName = constructedFullName || d.fullName || "Məlumat";
+                return `Uğurlu: ${finalName} bazaya yazıldı.`;
+
+            } catch (error: any) {
+                clearTimeout(timeoutId);
+                if (error.name === "AbortError" || error.name === "TimeoutError") {
+                    throw new Error("TIME_OUT");
+                }
+                throw error;
+            }
         };
 
         toast.promise(fetchPromise(), {
-            loading: 'ƏMAS-a bağlanılır...',
+            loading: 'Məlumatlar gətirilir...',
             success: (msg) => msg,
-            error: (err) => err.message || "Bilinməyən xəta baş verdi"
+            error: (err: Error) => {
+                if (err.message === "BRAUZER_LOCK") {
+                    return "Brauzer donub qalıb. Soldan 'Servisi Başlat' düyməsinə klikləyin.";
+                }
+                if (err.message === "TIME_OUT") {
+                    return "Agent cavab vermir. Soldan 'Servisi Başlat' düyməsinə klikləyin.";
+                }
+                if (err.message === "LOGIN_REQUIRED_MSG") {
+                    return "Sistemə daxil olmaq lazımdır.";
+                }
+                return err.message || "Bilinməyən xəta baş verdi";
+            }
+        });
+    };
+
+    const handleCheckImei = async (invId: string, orderId: string, imei: string, isGeneric: boolean = false) => {
+        if (!imei) {
+            toast.error("Yoxlamaq üçün IMEI tapılmadı");
+            return;
+        }
+
+        const fetchPromise = async () => {
+            const freeAgent = (agents || []).find(a => !a.busy);
+            const targetAgentLabel = freeAgent ? freeAgent.label : (agents && agents.length > 0 ? agents[0].label : undefined);
+
+            let res;
+            let result: any = {};
+            let fetchFailed = false;
+
+            try {
+                res = await fetch(API_ENDPOINTS.checkImei, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imei })
+                });
+
+                if (!res.ok) {
+                    fetchFailed = true;
+                } else {
+                    const text = await res.text();
+                    try {
+                        result = JSON.parse(text);
+                    } catch (e) {
+                        console.error("IMEI parse error:", text);
+                        fetchFailed = true;
+                    }
+                }
+            } catch (e) {
+                fetchFailed = true;
+            }
+
+            // 1. BOT SUCCESS: Confirmed Deactive (Fee applied)
+            if (!fetchFailed && result.imeiFee === true) {
+                if (isGeneric) {
+                    updateOrder(invId, orderId, 'hasImieFee', true);
+                } else {
+                    const invoices = localData.details?.invoices || [];
+                    const inv = invoices.find((i: any) => i.id === invId);
+                    if (inv) {
+                        const ord = inv.orders.find((o: any) => o.id === orderId);
+                        if (ord) {
+                            const currentChecked = ord.checkedImeis || [];
+                            if (!currentChecked.includes(imei)) {
+                                updateOrder(invId, orderId, 'checkedImeis', Array.from(new Set([...currentChecked, imei])));
+                            }
+                        }
+                    }
+                }
+                return "İMEİ Deaktiv: 23.6 AZN rüsum tətbiq edildi.";
+            }
+
+            // 2. BOT SUCCESS: Confirmed Active (No Fee)
+            if (!fetchFailed && result.imeiFee === false && !result.error) {
+                if (isGeneric) {
+                    updateOrder(invId, orderId, 'hasImieFee', false);
+                } else {
+                    const invoices = localData.details?.invoices || [];
+                    const inv = invoices.find((i: any) => i.id === invId);
+                    if (inv) {
+                        const ord = inv.orders.find((o: any) => o.id === orderId);
+                        if (ord) {
+                            const currentChecked = ord.checkedImeis || [];
+                            if (currentChecked.includes(imei)) {
+                                updateOrder(invId, orderId, 'checkedImeis', currentChecked.filter((id: string) => id !== imei));
+                            }
+                        }
+                    }
+                }
+                return "İMEİ Aktiv: Rüsum tətbiq edilmədi.";
+            }
+
+            // 3. FALLBACK/MANUAL: Fetch failed or bot returned an error — Manual Toggle
+            if (fetchFailed || result.error) {
+                if (isGeneric) {
+                    const currentVal = localData.details?.invoices?.find((i: any) => i.id === invId)?.orders?.find((o: any) => o.id === orderId)?.hasImieFee;
+                    updateOrder(invId, orderId, 'hasImieFee', !currentVal);
+                } else {
+                    const invoices = localData.details?.invoices || [];
+                    const inv = invoices.find((i: any) => i.id === invId);
+                    if (inv) {
+                        const ord = inv.orders.find((o: any) => o.id === orderId);
+                        if (ord) {
+                            const currentChecked = ord.checkedImeis || [];
+                            if (currentChecked.includes(imei)) {
+                                updateOrder(invId, orderId, 'checkedImeis', currentChecked.filter((id: string) => id !== imei));
+                            } else {
+                                updateOrder(invId, orderId, 'checkedImeis', Array.from(new Set([...currentChecked, imei])));
+                            }
+                        }
+                    }
+                }
+
+                if (fetchFailed) return "Manual olaraq status dəyişdirildi.";
+                return result.error || "Xəta baş verdi, manual keçid edildi.";
+            }
+
+            return "Status bilinmir.";
+        };
+
+        toast.promise(fetchPromise(), {
+            loading: 'İMEİ yoxlanılır...',
+            success: (msg) => msg,
+            error: (err) => err.message || "Bilinməyən xəta"
         });
     };
 
@@ -1524,7 +1719,7 @@ const CustomerCard = memo((props: CustomerCardProps) => {
                                     {row.id && (
                                         <>
                                             {/* FETCH DATA BUTTON */}
-                                            {user?.role === 'SUPERADMIN' && (
+                                            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN' || user?.role === 'MANAGER') && (
                                                 <ExpandableButton
                                                     onClick={fetchDataFromPortal}
                                                     icon={<ArrowDownToLine size={14} />}
@@ -1534,7 +1729,7 @@ const CustomerCard = memo((props: CustomerCardProps) => {
                                             )}
 
                                             {/* WARNING BUTTON */}
-                                            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (() => {
+                                            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN' || user?.role === 'MANAGER') && (() => {
                                                 const overdue = isOverdue(getValue("details.warningDate"));
                                                 const hasDate = !!getValue("details.warningDate");
                                                 const warningLabel = hasDate
@@ -2048,16 +2243,25 @@ const CustomerCard = memo((props: CustomerCardProps) => {
                                                                     if (detected.length === 0) {
                                                                         return (
                                                                             <button
-                                                                                onClick={() => {
-                                                                                    if (!isEditing) setIsEditing(true);
-                                                                                    const newValue = ord.hasImieFee === true ? false : true;
-                                                                                    updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                                onClick={(e) => {
+                                                                                    e.preventDefault();
+                                                                                    const possibleImei = (ord.productDescription || "").match(/\b\d{15}\b/);
+                                                                                    if (possibleImei) {
+                                                                                        handleCheckImei(inv.id, ord.id, possibleImei[0], true);
+                                                                                    } else {
+                                                                                        if (!isEditing) setIsEditing(true);
+                                                                                        const newValue = ord.hasImieFee === true ? false : true;
+                                                                                        updateOrder(inv.id, ord.id, 'hasImieFee', newValue);
+                                                                                    }
                                                                                 }}
+                                                                                type="button"
                                                                                 className={cn(
                                                                                     "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
                                                                                     ord.hasImieFee === true
-                                                                                        ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
-                                                                                        : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                        ? "bg-red-600 text-white border-red-700 shadow-md shadow-red-200"
+                                                                                        : ord.hasImieFee === false
+                                                                                            ? "bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-200"
+                                                                                            : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                                                                                 )}
                                                                             >
                                                                                 <Smartphone size={14} />
@@ -2070,25 +2274,39 @@ const CustomerCard = memo((props: CustomerCardProps) => {
                                                                         );
                                                                     }
 
-                                                                    return detected.map((item) => {
+                                                                    return detected.map((item, idx) => {
                                                                         const isActive = (ord.checkedImeis || []).includes(item.imei);
                                                                         return (
                                                                             <button
-                                                                                key={item.imei}
-                                                                                onClick={() => {
-                                                                                    if (!isEditing) setIsEditing(true);
-                                                                                    const currentChecked = ord.checkedImeis || [];
-                                                                                    const nextChecked = isActive
-                                                                                        ? currentChecked.filter(id => id !== item.imei)
-                                                                                        : [...currentChecked, item.imei];
-                                                                                    updateOrder(inv.id, ord.id, 'checkedImeis', nextChecked);
+                                                                                key={`${item.imei}-${idx}`}
+                                                                                onClick={(e) => {
+                                                                                    if (e.altKey) {
+                                                                                        // ALT+CLICK: Manual toggle only (no API)
+                                                                                        const invoices = localData.details?.invoices || [];
+                                                                                        const targetInv = invoices.find((i: any) => i.id === inv.id);
+                                                                                        if (targetInv) {
+                                                                                            const targetOrd = targetInv.orders.find((o: any) => o.id === ord.id);
+                                                                                            if (targetOrd) {
+                                                                                                const currentChecked = targetOrd.checkedImeis || [];
+                                                                                                if (currentChecked.includes(item.imei)) {
+                                                                                                    updateOrder(inv.id, ord.id, 'checkedImeis', currentChecked.filter((id: string) => id !== item.imei));
+                                                                                                } else {
+                                                                                                    updateOrder(inv.id, ord.id, 'checkedImeis', Array.from(new Set([...currentChecked, item.imei])));
+                                                                                                }
+                                                                                                toast.success("Manual olaraq status dəyişdirildi");
+                                                                                            }
+                                                                                        }
+                                                                                    } else {
+                                                                                        handleCheckImei(inv.id, ord.id, item.imei);
+                                                                                    }
                                                                                 }}
                                                                                 className={cn(
                                                                                     "flex items-center gap-2 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border shrink-0",
                                                                                     isActive
-                                                                                        ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-200"
-                                                                                        : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                                                                        ? "bg-red-600 text-white border-red-700 shadow-md shadow-red-200"
+                                                                                        : "bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-200"
                                                                                 )}
+                                                                                title="Yoxlamaq üçün klikləyin. Manual dəyişiklik üçün Alt+Klikləyin."
                                                                             >
                                                                                 <Smartphone size={14} />
                                                                                 <span className="whitespace-nowrap">İMEİ {item.name}: {isActive ? "DEAKTİV" : "AKTİV"}</span>
@@ -2347,6 +2565,7 @@ export default function DashboardPage() {
     const [appUsers, setAppUsers] = useState<any[]>([]);
     const [stores, setStores] = useState<any[]>([]);
     const [loadingData, setLoadingData] = useState(true);
+    const { isBotOnline, agents, handleLaunchBot } = useBotStatus();
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
@@ -2842,16 +3061,14 @@ export default function DashboardPage() {
                         }
                     `}} />
 
-                    {filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, idx) => {
-                        const globalIndex = (page - 1) * itemsPerPage + idx;
+                    {filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, index) => {
                         return (
                             <CustomerCard
-                                // Important: use a unique key if possible, but fallback to idx for stability if id is missing on new rows
-                                key={row.id || globalIndex}
+                                key={row.id || `new-${index}`}
                                 row={row}
-                                index={globalIndex}
-                                totalRows={rows.length}
-                                canUpdate={can("page_customers")}
+                                index={index}
+                                totalRows={filteredRows.length}
+                                canUpdate={can('page_customers')}
                                 canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
                                 appUsers={appUsers}
                                 userWorkload={userWorkload}
@@ -2859,6 +3076,9 @@ export default function DashboardPage() {
                                 onSave={handleSave}
                                 onDelete={onDelete}
                                 can={can}
+                                isBotOnline={isBotOnline}
+                                agents={agents}
+                                onLaunchBot={handleLaunchBot}
                             />
                         );
                     })}
