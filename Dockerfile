@@ -34,5 +34,11 @@ RUN npm run build
 FROM nginx:alpine
 COPY --from=builder /app/out /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+<<<<<<< HEAD
 EXPOSE 8080
+=======
+
+EXPOSE 8080
+
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
 CMD ["nginx", "-g", "daemon off;"]

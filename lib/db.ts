@@ -68,7 +68,11 @@ export async function getRolePermissions(role: string) {
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
     if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list", "page_analytics"];
     if (role === "INSPECTOR_LEAD") return ["page_inspector", "page_inspectors", "page_users"];
+<<<<<<< HEAD
     if (role === "ADMIN") return ["page_customers", "page_archive_customers", "page_letter_list"];
+=======
+    if (role === "ADMIN") return ["page_customers", "page_archive_customers"];
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
     if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers", "page_users"];
@@ -326,6 +330,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
                 }
             }
 
+<<<<<<< HEAD
             // Construct final data object for this update
             // We merge top-level data to support partial updates
             const cleanedData = {
@@ -337,6 +342,118 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
                     invoices: mergedInvoices
                 },
                 statusHistory
+=======
+        // --- ENHANCED AUDIT LOGGING ---
+        const changes: string[] = [];
+        const auditMeta: any = { targetId: id, targetName: data.fullName };
+
+        // 1. Core Fields
+        const coreFields = ['fullName', 'customerCode', 'debtAmount', 'assignedTo', 'archiveAssignedTo', 'process_status', 'isArchived', 'store', 'courtName'];
+        coreFields.forEach(f => {
+            if (data[f] !== oldData?.[f]) {
+                changes.push(`${f}: ${oldData?.[f] || 'N/A'} -> ${data[f] || 'N/A'}`);
+                auditMeta[`old_${f}`] = oldData?.[f] || null;
+                auditMeta[`new_${f}`] = data[f] || null;
+            }
+        });
+
+        // 2. Details Fields
+        const detailsToTrack = ['fin', 'phone', 'address', 'actualAddress', 'totalPrice', 'paidAmount', 'totalUnpaid', 'fee', 'penalty', 'warningDate'];
+        detailsToTrack.forEach(f => {
+            if (data.details?.[f] !== oldData?.details?.[f]) {
+                changes.push(`details.${f}: ${oldData?.details?.[f] || 'N/A'} -> ${data.details?.[f] || 'N/A'}`);
+                auditMeta[`old_details_${f}`] = oldData?.details?.[f] || null;
+                auditMeta[`new_details_${f}`] = data.details?.[f] || null;
+            }
+        });
+
+        // 3. ULTRA-DETAILED INVOICE COMPARISON
+        const oldInvoices = oldData?.details?.invoices || [];
+        const newInvoices = data.details?.invoices || [];
+
+        const invoiceChanges: string[] = [];
+
+        // Find Removed
+        oldInvoices.forEach((oi: any) => {
+            if (!newInvoices.some((ni: any) => ni.id === oi.id)) {
+                invoiceChanges.push(`SİLİNDİ: Faktura №${oi.invoiceNumber || 'N/A'} (ID: ${oi.id})`);
+            }
+        });
+
+        // Find Added
+        newInvoices.forEach((ni: any) => {
+            if (!oldInvoices.some((oi: any) => oi.id === ni.id)) {
+                invoiceChanges.push(`ƏLAVƏ: Faktura №${ni.invoiceNumber || 'N/A'} (ID: ${ni.id})`);
+            }
+        });
+
+        // Find Modified
+        newInvoices.forEach((ni: any) => {
+            const oi = oldInvoices.find((o: any) => o.id === ni.id);
+            if (oi && JSON.stringify(oi) !== JSON.stringify(ni)) {
+                const subChanges: string[] = [];
+                if (oi.invoiceNumber !== ni.invoiceNumber) subChanges.push(`Nömrə: ${oi.invoiceNumber || 'N/A'} -> ${ni.invoiceNumber || 'N/A'}`);
+                if (JSON.stringify(oi.orders) !== JSON.stringify(ni.orders)) subChanges.push(`Sifarişlər/Məbləğ dəyişdirildi`);
+                if (oi.archiveUrl !== ni.archiveUrl) subChanges.push(`Sənəd faylı yeniləndi`);
+
+                invoiceChanges.push(`REDAKTƏ: Faktura №${ni.invoiceNumber || 'N/A'} (${subChanges.join(', ')})`);
+            }
+        });
+
+        if (invoiceChanges.length > 0) {
+            changes.push(...invoiceChanges);
+            auditMeta.oldInvoices = oldInvoices;
+            auditMeta.newInvoices = newInvoices;
+        }
+
+        // --- ALWAYS PREPARE SNAPSHOT FOR AUDIT ---
+        auditMeta.snapshot = data;
+        auditMeta.changesCount = changes.length;
+        auditMeta.changesList = changes;
+
+        // Generic update log if fields changed
+        if (changes.length > 0) {
+            await addAuditLog("UPDATE", "Məlumatlar güncəlləndi: " + changes.join(' | '), userEmail, "CUSTOMER", auditMeta);
+        }
+        // --- END ENHANCED LOGGING ---
+
+        if (data.isArchived && !oldData?.isArchived) {
+            action = "ARCHIVE";
+            category = "ARCHIVE";
+            detail = "Müştəri arxivə göndərildi";
+        } else if (oldData?.isArchived && !data.isArchived) {
+            action = "RESTORE";
+            category = "ARCHIVE";
+            detail = "Müştəri arxivdən bərpa edildi";
+        } else if (newFiles > oldFiles) {
+            action = "FILE_UPLOAD";
+            category = "ARCHIVE";
+            detail = `Arxiv sənədi yükləndi (Cəmi: ${newFiles})`;
+        } else if (oldFiles > newFiles) {
+            action = "FILE_DELETE";
+            category = "ARCHIVE";
+            detail = "Arxiv sənədi silindi";
+        } else if (newReq > oldReq) {
+            action = "ARCHIVE_REQUEST";
+            category = "ARCHIVE";
+            detail = "Arxiv sənəd sorğusu göndərildi";
+        } else if (data.details?.isWarningSent && !oldData?.details?.isWarningSent) {
+            action = "WARNING_SENT";
+            detail = "Xəbərdarlıq məktubu göndərildi";
+            category = "DOCUMENT";
+        } else if (data.process_status && oldData?.process_status !== data.process_status) {
+            action = "STATUS_CHANGE";
+            const oldStatus = oldData?.process_status || 'N/A';
+
+            // Map status to nice label
+            const statusLabels: any = {
+                'INSPECTOR_ENTERED': 'Müştəri qeydə alındı',
+                'ASSIGNED_BY_MANAGER': 'Müfəttiş təyin edildi',
+                'FILLED_BY_ADMIN': 'Məlumatlar dolduruldu',
+                'WAITING_FOR_ARCHIVE': 'Arxiv sorğusu göndərildi',
+                'ARCHIVE_UPLOADED': 'Arxiv sənədi yükləndi',
+                'COMPLETED': 'Arxiv Müştəri'
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
             };
 
             let action = "UPDATE";
@@ -372,6 +489,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
                 }
             });
 
+<<<<<<< HEAD
             // 3. ULTRA-DETAILED INVOICE COMPARISON
             const oldInvoices = oldData?.details?.invoices || [];
             const invoiceChanges: string[] = [];
@@ -488,6 +606,16 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
 
             resultData = cleanedData;
         });
+=======
+        // Trigger specific action log with FULL metadata (snapshot, etc)
+        if (action !== "UPDATE") {
+            await addAuditLog(action, detail, userEmail, category, {
+                ...auditMeta,
+                oldStatus: oldData?.process_status,
+                newStatus: data.process_status
+            });
+        }
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
 
         return resultData;
     } catch (e) {

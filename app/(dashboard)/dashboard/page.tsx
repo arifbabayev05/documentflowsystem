@@ -38,7 +38,11 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
+<<<<<<< HEAD
 import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
+=======
+import { formatDateInput, toTitleCase } from "@/lib/format";
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
 import { API_ENDPOINTS } from "@/config/api";
@@ -1101,12 +1105,15 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
         if (dataToSave.fullName) {
             dataToSave.fullName = toTitleCase(dataToSave.fullName);
         }
+<<<<<<< HEAD
         if (dataToSave.details?.address) {
             dataToSave.details.address = toTitleCase(dataToSave.details.address);
         }
         if (dataToSave.details?.actualAddress) {
             dataToSave.details.actualAddress = toTitleCase(dataToSave.details.actualAddress);
         }
+=======
+>>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
         const currentStatus = dataToSave.process_status || 'INSPECTOR_ENTERED';
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
