@@ -187,6 +187,7 @@ interface Customer {
             exceptionInvoiceDate?: string;
             exceptionProduct?: string;
             exceptionProductQty?: string;
+            exceptionProducts?: Array<{ name: string; qty: number }>;
             exceptionDeductedAmount?: string;
             exceptionReturnedPrice?: string;
             exceptionXahisText?: string;
@@ -249,12 +250,12 @@ function getAZOrdinal(dateStr: string): string {
     if (dateStr.includes('-')) {
         const parts = dateStr.split('-');
         if (parts.length >= 1) {
-            yearStr = parts[0].length === 4 ? parts[0] : parts[parts.length - 1]; 
+            yearStr = parts[0].length === 4 ? parts[0] : parts[parts.length - 1];
         }
     } else {
         const parts = dateStr.split('.');
         if (parts.length >= 1) {
-            yearStr = parts[parts.length - 1]; 
+            yearStr = parts[parts.length - 1];
         }
     }
     const year = parseInt(yearStr);
@@ -431,9 +432,9 @@ function buildInvoiceData(
         const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
         const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
         const pd = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
-        
+
         const calcTotal = (p * m) + i;
-        const ordTotalPrice = ord.totalPrice !== undefined ? parseFloat(ord.totalPrice.toString().replace(',','.')) : calcTotal;
+        const ordTotalPrice = ord.totalPrice !== undefined ? parseFloat(ord.totalPrice.toString().replace(',', '.')) : calcTotal;
 
         invTotalPrice += ordTotalPrice;
         invPaidSum += pd;
@@ -452,7 +453,7 @@ function buildInvoiceData(
 
     const actualInvoicePaid = invPaidSum;
     let invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
-    
+
     // Check for exception/return logic
     const isExceptionMode = inv.isException === true || inv.isException === 'true';
     const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
@@ -526,30 +527,31 @@ function buildInvoiceData(
         // Exception Data
         isException: isExceptionMode,
         imtina_tarixi: inv.exceptionDate || "",
-        imtina_fakturasi: inv.exceptionInvoice || "",
-        imtina_muqavile_tarix: inv.exceptionInvoiceDate || "",
+        imtina_fakturasi: inv.exceptionInvoice || inv.invoiceNumber || "",
+        imtina_muqavile_tarix: inv.exceptionInvoiceDate || contractDate || "",
         imtina_mehsul: inv.exceptionProduct || "",
         imtina_mebleg: inv.exceptionReturnedPrice || "",
         imtina_mehsul_qty: parseInt(inv.exceptionProductQty || "1") || 1,
         umumi_imtina: inv.exceptionReturnedPrice || "",
-        
+
         // Aliases for better template compatibility
         imtina_faktura_tarixi: inv.exceptionInvoiceDate || "",
         imtina_edilen_mehsul: inv.exceptionProduct || "",
         imtina_edilen_mehsul_raw: inv.exceptionProduct || "",
+        exceptionProducts: Array.isArray((inv as any).exceptionProducts) ? (inv as any).exceptionProducts : [],
         exception_xahis_text: inv.exceptionXahisText || "",
         silinen_borc: exceptionReturnedPrice > 0 ? exceptionReturnedPrice.toFixed(2) : "0.00",
         qaytarildiqdan_sonra_qiymet: (isExceptionMode && exceptionReturnedPrice > 0) ? exceptionReturnedPrice.toFixed(2) : "-",
         _rawReturnedPrice: (isExceptionMode && exceptionReturnedPrice > 0) ? exceptionReturnedPrice : 0,
         odenen_mebleg: actualInvoicePaid.toFixed(2),
         umumi_mebleg: umumiMeblegTarix > 0 ? umumiMeblegTarix.toFixed(2) : "0.00",
-        
+
         // Raw data for downstream manipulation
         orders: orders,
         _productNames: productNames,
         _invUnpaid: invUnpaid,
         _invoiceNumber: inv.invoiceNumber || "",
-        
+
         // Ümumi (Ərizə + Cədvəl)
         muqavile_tarixi: contractDate,
         mehsul_siyahi: productNames.join(", "),
@@ -569,7 +571,15 @@ function buildInvoiceData(
 
         // Ödəniş Cədvəli üçün
         inv_index: String(invIndex + 1),
-        inv_model_date: `${contractDate} ${productNames.join(", ")}`,
+        inv_model_date: (() => {
+            const cd = (contractDate || "").toString().trim();
+            const names = productNames
+                .map(n => (n || "").toString().trim())
+                .filter(Boolean)
+                .join(", ");
+            const combined = `${cd} ${names}`.trim();
+            return combined || names || cd || "";
+        })(),
         cavabdeh_ad: customerName,
         inv_odenen: actualInvoicePaid.toFixed(2),
         inv_ilm_fee: invIlmFee > 0 ? invIlmFee.toFixed(2) : "",
@@ -630,11 +640,16 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
     const templateNameNormalized = (template?.name || "").toLowerCase();
     const isIstisnaMode = templateNameNormalized.includes("istisna");
+    // "Sənədi-" → cərimə pulu (borc < 5000), "Sənədi+" → dəbbə pulu (borc ≥ 5000)
+    const penaltyWord = templateNameNormalized.includes("sənədi-") ? "cərimə" : "dəbbə";
 
     const allPreparedInvoices = invoices.map((inv: any, idx: number) => ({
         ...buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, originalFullName, feeVal, isIstisnaMode),
         _originalIndex: idx,
         _invoiceNumber: inv.invoiceNumber || "",
+        // Preserve legacy/raw fallbacks for robust downstream key resolution (e.g., inv_model_date)
+        _rawInvoiceProductDescription: inv?.productDescription || "",
+        _rawInvoiceContractDate: inv?.contractDate || "",
     }));
 
     let tableInvoicesData = [...allPreparedInvoices];
@@ -644,7 +659,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         ...inv,
         inv_index: String(idx + 1)
     }));
-    
+
     // Include all invoices so both exception and non-exception ones appear in paragraphs
     const filteredLegalInvoices = [...allPreparedInvoices];
 
@@ -652,11 +667,11 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const legalPursuitInvoices = filteredLegalInvoices.map((inv: any, idx: number, arr: any[]) => {
         const total = arr.length;
         const isLast = idx === total - 1;
-        
+
         let newSeparator = "";
         let newXahisSeparator = "";
         let newGuzestSeparator = "";
-        
+
         if (total === 1) {
             newSeparator = "pulu borcu yaranmışdır.";
             newXahisSeparator = "";
@@ -670,7 +685,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             newXahisSeparator = "";
             newGuzestSeparator = "";
         }
-        
+
         return {
             ...inv,
             inv_separator: newSeparator,
@@ -683,7 +698,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const totalUnpaidFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
     const totalPenaltyFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
     const totalAlqiSatqiFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.alqi_satqi_qiymeti) || 0), 0);
-    
+
     const totalOdenenFromInvoices = tableInvoicesData.reduce((acc: number, inv: any) => {
         const odenen = parseFloat(inv.inv_odenen) || 0;
         const qaytarilan = isIstisnaMode ? (inv._rawReturnedPrice || 0) : 0;
@@ -697,17 +712,22 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         .map((invData: any, idx: number, arr: any[]) => {
             // The current invoice ITSELF is the exception if it has the flag
             const matchingException = invData.isException ? invData : null;
-            
+
             let adjustedMehsulSiyahi = invData.mehsul_siyahi;
             let adjustedUnpaid = parseFloat(invData.odenilmemis_hisse) || 0;
             let adjustedUnpaidSozle = invData.odenilmemis_hisse_sozle;
-            
+
             if (matchingException) {
-                const returnedProduct = (matchingException.imtina_edilen_mehsul_raw || matchingException.imtina_edilen_mehsul || matchingException.imtina_mehsul || "").trim();
-                const returnedQty = matchingException.imtina_mehsul_qty || 1;
-                
-                // Remove the returned product from mehsul_siyahi
-                if (returnedProduct) {
+                // Support multi-product selection (exceptionProducts array) with legacy fallback
+                const multi: Array<{ name: string; qty: number }> = Array.isArray(matchingException.exceptionProducts) && matchingException.exceptionProducts.length > 0
+                    ? matchingException.exceptionProducts
+                    : (() => {
+                        const singleName = (matchingException.imtina_edilen_mehsul_raw || matchingException.imtina_edilen_mehsul || matchingException.imtina_mehsul || "").trim();
+                        const singleQty = matchingException.imtina_mehsul_qty || 1;
+                        return singleName ? [{ name: singleName, qty: singleQty }] : [];
+                    })();
+
+                if (multi.length > 0) {
                     const products: { raw: string; name: string; qty: number }[] = [];
                     (invData.orders || []).forEach((ord: any) => {
                         const desc = (ord.productDescription || "").trim();
@@ -715,7 +735,6 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
                         desc.split(",").forEach((part: string) => {
                             const trimmed = part.trim();
                             if (!trimmed) return;
-                            // Match "N ədəd Product" or just "Product"
                             const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
                             if (qtyMatch) {
                                 products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
@@ -727,20 +746,20 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
                     const rebuiltProducts: string[] = [];
                     products.forEach(p => {
-                        // Compare names case-insensitively and trimmed
-                        if (p.name.toLowerCase() === returnedProduct.toLowerCase() || p.raw.toLowerCase() === returnedProduct.toLowerCase()) {
-                            const remaining = p.qty - returnedQty;
+                        const sel = multi.find(s => (s.name || "").toLowerCase().trim() === p.name.toLowerCase() || (s.name || "").toLowerCase().trim() === p.raw.toLowerCase());
+                        if (sel) {
+                            const remaining = p.qty - (sel.qty || 1);
                             if (remaining > 1) rebuiltProducts.push(`${remaining} ədəd ${p.name}`);
                             else if (remaining === 1) rebuiltProducts.push(p.name);
                         } else {
                             rebuiltProducts.push(p.raw);
                         }
                     });
-                    
+
                     adjustedMehsulSiyahi = rebuiltProducts.join(", ");
                 }
             }
-            
+
             // Recalculate penalty based on adjusted unpaid
             const adjustedPenalty = adjustedUnpaid * 0.10;
             const hasImei = invData.hasImei;
@@ -749,20 +768,20 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             // Generate standard phrase if no exception text is available
             let defaultText = "";
             let skipItem = false;
-            
+
             if (adjustedMehsulSiyahi.trim().length > 0) {
-                defaultText = `${muqavileTarixiFixed}-cü il tarixli müqaviləyə əsasən, ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat dəbbə pulu borcu yaranmışdır.`;
+                defaultText = `${muqavileTarixiFixed}-cü il tarixli müqaviləyə əsasən, ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord} pulu borcu yaranmışdır.`;
             } else {
                 defaultText = "";
                 skipItem = true;
             }
-            
+
             const exceptionTextTrimmed = matchingException?.exception_xahis_text?.trim();
             const isUserExcluded = exceptionTextTrimmed && exceptionTextTrimmed.includes("BU FAKTURA SƏNƏDİN");
             if (isUserExcluded) {
                 skipItem = true;
             }
-            
+
             const tamCumleRaw = exceptionTextTrimmed ? matchingException.exception_xahis_text : defaultText;
 
             return {
@@ -793,6 +812,48 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         return Number.isInteger(num) ? `${num} manat` : `${num.toFixed(2)} manat`;
     };
 
+    // Rebuild inv_model_date unconditionally from raw orders — istisna flag MUST NOT affect it.
+    const custLegacyProduct = (customer?.details?.productDescription || "").toString().trim();
+    const custLegacyContractDate = (customer?.details?.contractDate || "").toString().trim();
+
+    const buildInvModelDate = (src: any) => {
+        const ords = Array.isArray(src?.orders) ? src.orders : [];
+        const cDate = (
+            src?._rawInvoiceContractDate
+            || ords[0]?.contractDate
+            || src?.muqavile_tarixi
+            || src?.contractDate
+            || custLegacyContractDate
+            || ""
+        ).toString().replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '').trim();
+
+        const namesFromOrders: string[] = ords
+            .map((o: any) => (o?.productDescription || o?.productName || o?.model || "").toString().trim())
+            .filter(Boolean);
+
+        let names: string[] = namesFromOrders.length > 0
+            ? namesFromOrders
+            : (Array.isArray(src?._productNames) ? src._productNames.filter(Boolean) : []);
+
+        if (names.length === 0) {
+            const rawProd = (src?._rawInvoiceProductDescription || "").toString().trim();
+            if (rawProd) names = [rawProd.replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '')];
+        }
+
+        if (names.length === 0) {
+            const mehSiy = (src?.mehsul_siyahi || "").toString().trim();
+            if (mehSiy) names = [mehSiy.replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '')];
+        }
+
+        if (names.length === 0 && custLegacyProduct) {
+            names = [custLegacyProduct];
+        }
+
+        const joinedNames = names.join(", ");
+        const combined = `${cDate} ${joinedNames}`.trim();
+        return combined || joinedNames || cDate || "";
+    };
+
     const istisnaItems = tableInvoicesData
         .filter((invData: any) => invData.isException)
         .map((invData: any, idx: number, arr: any[]) => {
@@ -806,43 +867,58 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             const imtinaMuqavileTarixiStr = formatToDDMMYYYY(rawImtinaMuqavileTarixi);
             const imtinaFakturaTarixiStr = formatToDDMMYYYY(rawImtinaFakturaTarixi);
 
-            const prodNameLower = (invData.imtina_edilen_mehsul || "").toLowerCase();
+            const multiSel: Array<{ name: string; qty: number }> = Array.isArray(invData.exceptionProducts) && invData.exceptionProducts.length > 0
+                ? invData.exceptionProducts
+                : [];
+
+            let mehsul_tam_raw: string;
+            let mehsul_tam: string;
+            let prodNameLower: string;
+
+            if (multiSel.length > 0) {
+                mehsul_tam_raw = multiSel.map(s => s.name).join(", ");
+                mehsul_tam = multiSel.map(s => (s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name)).join(", ");
+                prodNameLower = mehsul_tam_raw.toLowerCase();
+            } else {
+                mehsul_tam_raw = (invData.imtina_edilen_mehsul || "").trim();
+                const returnQty = invData.imtina_mehsul_qty || 1;
+                mehsul_tam = returnQty > 1 ? `${returnQty} ədəd ${mehsul_tam_raw}` : mehsul_tam_raw;
+                prodNameLower = (invData.imtina_edilen_mehsul || "").toLowerCase();
+            }
+
             const hasZemanet = prodNameLower.includes("zəmanət") || prodNameLower.includes("zemanet");
-            
             const suffixDen = hasZemanet ? "xidmətindən" : "məhsulundan";
             const suffixI = hasZemanet ? "xidməti" : "məhsulu";
-            
-            const mehsul_tam_raw = (invData.imtina_edilen_mehsul || "").trim();
-            const returnQty = invData.imtina_mehsul_qty || 1;
-            // Add "N ədəd" prefix only when qty > 1
-            const mehsul_tam = returnQty > 1 ? `${returnQty} ədəd ${mehsul_tam_raw}` : mehsul_tam_raw;
             const exceptionProductText = mehsul_tam ? `${mehsul_tam} ${suffixDen}` : "";
             const exceptionProductXidmeti = mehsul_tam ? `${mehsul_tam} ${suffixI}` : "";
 
             const allProducts = (invData.orders || []).map((ord: any) => ord.productDescription || ord.productName).filter(Boolean);
             const otherProducts = allProducts.filter((p: string) => p !== invData.imtina_edilen_mehsul).join(", ");
 
-            // Reconstruct model name if needed
-            let invModelDateIstisna = invData.mehsul_siyahi;
+            // Use the unified builder for istisna items too
+            const inv_model_date = buildInvModelDate(invData);
+            const B = (v: any, key: string) => `\uE000B:${key}\uE001${v}\uE000/B\uE001`;
 
             return {
                 ...invData,
-                
+
                 // Clean dates as DD.MM.YYYY
-                muqavile_tarixi: muqDateStr,
-                imtina_tarixi: imtinaDateStr,
-                imtina_fakturasi: invData.imtina_fakturasi,
-                imtina_muqavile_tarix: imtinaMuqavileTarixiStr,
-                imtina_faktura_tarixi: imtinaFakturaTarixiStr,
-                imtina_mehsul: exceptionProductText, // with suffix
-                imtina_mebleg: invData.silinen_borc,
-                imtina_meblegi: invData.silinen_borc,
-                
-                inv_model_date: invModelDateIstisna,
+                muqavile_tarixi: B(muqDateStr, "muqavile_tarixi"),
+                imtina_tarixi: B(imtinaDateStr, "imtina_tarixi"),
+                imtina_fakturasi: B(invData.imtina_fakturasi, "imtina_fakturasi"),
+                imtina_muqavile_tarix: B(imtinaMuqavileTarixiStr, "imtina_muqavile_tarix"),
+                imtina_faktura_tarixi: B(imtinaFakturaTarixiStr, "imtina_faktura_tarixi"),
+                imtina_mehsul: B(exceptionProductText, "imtina_mehsul"),
+                imtina_mebleg: B(invData.silinen_borc, "imtina_mebleg"),
+                imtina_meblegi: B(invData.silinen_borc, "imtina_meblegi"),
+                silinen_borc: B(invData.silinen_borc, "silinen_borc"),
+
+                inv_model_date: inv_model_date,
+
 
                 muqavile_tarixi_tam: muqDateStr ? `${muqDateStr}${getAZOrdinal(muqDateStr)}` : "",
                 imtina_tarixi_tam: imtinaDateStr ? `${imtinaDateStr}${getAZOrdinal(imtinaDateStr)}` : "",
-                imtina_edilen_mehsul_tam: exceptionProductText,
+                imtina_edilen_mehsul_tam: B(exceptionProductText, "imtina_edilen_mehsul_tam"),
                 silinen_borc_manat: formatManat(invData.silinen_borc),
                 odenen_mebleg_manat: formatManat(invData.odenen_mebleg),
                 qaytarildiqdan_sonra_qiymet_manat: formatManat(invData.qaytarildiqdan_sonra_qiymet),
@@ -850,24 +926,24 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
                 imtina_muqavile_tarix_ord: imtinaMuqavileTarixiStr ? `${imtinaMuqavileTarixiStr}${getAZOrdinal(imtinaMuqavileTarixiStr)}` : "",
                 imtina_tarixi_ord: imtinaDateStr ? `${imtinaDateStr}${getAZOrdinal(imtinaDateStr)}` : "",
                 istisna_separator: idx < arr.length - 1 ? ";" : "",
-                
+
                 is_multi_invoice: tableInvoicesData.length > 1,
                 diger_muqavile_odenen: (() => {
                     return tableInvoicesData.reduce((acc: number, curr: any) => {
-                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.inv_odenen) || 0) : 0);
+                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
                     }, 0).toFixed(2);
                 })(),
                 istisna_ikinci_abzas: (() => {
                     const is_multi = tableInvoicesData.length > 1;
                     const sumOtherOdenen = tableInvoicesData.reduce((acc: number, curr: any) => {
-                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.inv_odenen) || 0) : 0);
+                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
                     }, 0).toFixed(2);
                     const muqDateOrd = muqDateStr ? `${muqDateStr}${getAZOrdinal(muqDateStr)}` : "";
-                    
+
                     if (is_multi) {
-                        return `Cavabdehin ${muqDateOrd} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${invData.odenen_mebleg} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${invData.qaytarildiqdan_sonra_qiymet} manat, digər müqavilələr üzrə cəmi ödədiyi məbləğ ${sumOtherOdenen} manat təşkil edir.`;
+                        return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(invData.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(invData.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat, digər müqavilələr üzrə cəmi ödədiyi məbləğ ${B(sumOtherOdenen, "diger_muqavile_odenen")} manat təşkil edir.`;
                     } else {
-                        return `Cavabdehin ${muqDateOrd} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${invData.odenen_mebleg} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${invData.qaytarildiqdan_sonra_qiymet} manat, ümumilikdə, ${invData.umumi_mebleg} manat təşkil edir.`;
+                        return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(invData.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(invData.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat, ümumilikdə, ${B(invData.umumi_mebleg, "umumi_mebleg")} manat təşkil edir.`;
                     }
                 })()
             };
@@ -878,6 +954,49 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         guzest_meblegi: invData.guzest_meblegi,
         guzest_separator: invData.guzest_separator,
     }));
+
+    const B = (v: any, key: string) => `\uE000B:${key}\uE001${v}\uE000/B\uE001`;
+    const stripB = (s: string) => (s || "").replace(/\uE000B:[^\uE001]*\uE001/g, "").replace(/\uE000\/B\uE001/g, "");
+    let istisna_birlesmis_odeme_metni = "";
+    if (istisnaItems.length > 0) {
+        // Part 1: per-invoice exception sentence (for each exception invoice)
+        const part1Lines = istisnaItems.map((inv: any) => {
+            const rawMuq = stripB(inv.muqavile_tarixi);
+            const imtinaTarixiOrd = inv.imtina_tarixi_ord || stripB(inv.imtina_tarixi);
+            const rawMehsul = stripB(inv.imtina_edilen_mehsul_tam);
+            const rawSilinen = stripB(inv.silinen_borc);
+            return `Cavabdeh ${B(rawMuq, "muqavile_tarixi")} il tarixli müqaviləsinə əsasən, ${B(imtinaTarixiOrd, "imtina_tarixi")} il tarixində ${B(rawMehsul, "imtina_edilen_mehsul_tam")} imtina etmişdir, ${B(rawSilinen, "silinen_borc")} borcundan silinmişdir.`;
+        });
+
+        if (tableInvoicesData.length > 1) {
+            // Part 2: combined payment sentence across all exception invoices
+            const part2Segments = istisnaItems.map((inv: any) => {
+                const rawMuq = stripB(inv.muqavile_tarixi);
+                const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
+                return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat`;
+            });
+
+            const sumOtherOdenen = tableInvoicesData.reduce((acc: number, curr: any) => {
+                return acc + ((!curr.isException) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
+            }, 0).toFixed(2);
+
+            let digerText = "";
+            if (tableInvoicesData.length > istisnaItems.length) {
+                digerText = `, digər müqavilələr üzrə cəmi ödədiyi məbləğ ${B(sumOtherOdenen, "diger_muqavile_odenen")} manat təşkil edir.`;
+            } else {
+                digerText = ` təşkil edir.`;
+            }
+            const part2 = part2Segments.join(", ") + digerText;
+            istisna_birlesmis_odeme_metni = part1Lines.join("\n") + "\n" + part2;
+        } else {
+            // single total invoice (only exception invoice, no other invoices)
+            const inv = istisnaItems[0];
+            const rawMuq = stripB(inv.muqavile_tarixi);
+            const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
+            const part2 = `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat təşkil edir.`;
+            istisna_birlesmis_odeme_metni = part1Lines[0] + "\n" + part2;
+        }
+    }
 
     // Inspector logic
     const inspectorName = customer.details?.executorName || "";
@@ -913,12 +1032,23 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const isWarning = templateNameNormalized.includes("xəbərdarlıq");
 
     const finalInvoicesData = tableInvoicesData.map((inv: any) => {
+        const forcedInvModelDate = buildInvModelDate(inv);
+        const modelDateAliases = {
+            inv_model_date: forcedInvModelDate,
+            INV_MODEL_DATE: forcedInvModelDate,
+            invModelDate: forcedInvModelDate,
+            inv_model: forcedInvModelDate,
+            model_date: forcedInvModelDate,
+            MODEL_TARIX: forcedInvModelDate,
+            model_tarix: forcedInvModelDate,
+        };
         if (inv.isException) {
             const foundIstisna = istisnaItems.find((istisna: any) => istisna._invoiceNumber === inv._invoiceNumber);
             if (foundIstisna) {
-                return { 
-                    ...inv, 
-                    ...foundIstisna
+                return {
+                    ...inv,
+                    ...foundIstisna,
+                    ...modelDateAliases
                 };
             }
         }
@@ -929,19 +1059,24 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             silinen_borc: "-",
             silinen_borc_manat: "-",
             qaytarildiqdan_sonra_qiymet: "-",
-            qaytarildiqdan_sonra_qiymet_manat: "-"
+            qaytarildiqdan_sonra_qiymet_manat: "-",
+            ...modelDateAliases
         };
     });
+
+    // Also force inv_model_date on istisna_items + xahis items (templates may loop any of these)
+    istisnaItems.forEach((it: any) => { it.inv_model_date = buildInvModelDate(it); });
+    xahisItems.forEach((it: any) => { it.inv_model_date = buildInvModelDate(it); });
 
     const fixedXahisItems = xahisItems.map((item: any, idx: number, arr: any[]) => {
         const isLast = idx === arr.length - 1;
         const total = arr.length;
         const raw = item.tam_xahis_cumlesi_raw || item.tam_xahis_cumlesi;
         const tamCumleFinal = !isLast ? (raw.endsWith('.') ? raw.slice(0, -1) + ';' : raw + ';') : raw;
-        
+
         let newSeparator = "";
         let newXahisSeparator = "";
-        
+
         if (total === 1 || isLast) {
             newSeparator = "pulu borcu yaranmışdır.";
             newXahisSeparator = "";
@@ -985,6 +1120,9 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         umumi_mebleg: istisnaItems[0]?.umumi_mebleg || "0.00",
         umumi_mebleg_manat: istisnaItems[0]?.umumi_mebleg_manat || "0 manat",
         istisna_muqavile_tarixi_tam: istisnaItems[0]?.muqavile_tarixi_tam || "",
+        istisna_birlesmis_odeme_metni: istisna_birlesmis_odeme_metni,
+        // Top-level fallback so templates that reference {{inv_model_date}} outside a loop still resolve.
+        inv_model_date: finalInvoicesData[0]?.inv_model_date || istisnaItems[0]?.inv_model_date || "",
 
         // Court/Company
         MEHKEME_ADI: selectedCourt?.name || "",
@@ -1239,6 +1377,50 @@ const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placehol
 });
 CustomerField.displayName = "CustomerField";
 
+// Converts \uE000BOLD\uE001 ... \uE000/BOLD\uE001 markers embedded in rendered
+// template text into proper Word bold runs, preserving surrounding run properties.
+const applyBoldMarkersToDocx = (zip: any) => {
+    const OPEN_RE = /\uE000B(?::[^\uE001]*)?\uE001/;
+    const OPEN_RE_G = /\uE000B(?::[^\uE001]*)?\uE001/g;
+    const CLOSE = "\uE000/B\uE001";
+    ["word/document.xml", "word/header1.xml", "word/header2.xml", "word/header3.xml", "word/footer1.xml", "word/footer2.xml", "word/footer3.xml"].forEach((path) => {
+        const file = zip.file(path);
+        if (!file) return;
+        let xml: string = file.asText();
+        if (!OPEN_RE.test(xml)) return;
+        xml = xml.replace(/<w:r\b([^>]*)>([\s\S]*?)<\/w:r>/g, (match, runAttrs, inner) => {
+            if (!OPEN_RE.test(inner)) return match;
+            const rPrMatch = inner.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/);
+            const rPrInner = rPrMatch ? rPrMatch[1] : "";
+            const tMatch = inner.match(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/);
+            if (!tMatch) return match;
+            const tText = tMatch[1];
+            const parts: { bold: boolean; text: string }[] = [];
+            let remaining = tText;
+            while (remaining.length > 0) {
+                const openMatch = remaining.match(OPEN_RE);
+                if (!openMatch) { parts.push({ bold: false, text: remaining }); break; }
+                const oi = openMatch.index!;
+                if (oi > 0) parts.push({ bold: false, text: remaining.slice(0, oi) });
+                const afterOpen = remaining.slice(oi + openMatch[0].length);
+                const ci = afterOpen.indexOf(CLOSE);
+                if (ci === -1) { parts.push({ bold: true, text: afterOpen }); break; }
+                parts.push({ bold: true, text: afterOpen.slice(0, ci) });
+                remaining = afterOpen.slice(ci + CLOSE.length);
+            }
+            const rPrPlain = rPrInner ? `<w:rPr>${rPrInner}</w:rPr>` : "";
+            const rPrBold = `<w:rPr>${rPrInner}<w:b/><w:bCs/></w:rPr>`;
+            return parts
+                .filter(p => p.text.length > 0)
+                .map(p => `<w:r${runAttrs}>${p.bold ? rPrBold : rPrPlain}<w:t xml:space="preserve">${p.text}</w:t></w:r>`)
+                .join("");
+        });
+        // Remove any orphan markers left outside runs (shouldn't happen, safety net)
+        xml = xml.replace(OPEN_RE_G, "").split(CLOSE).join("");
+        zip.file(path, xml);
+    });
+};
+
 const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating, user, focusedField, allUsers }: any) => {
     const [isRendering, setIsRendering] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -1268,6 +1450,14 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 };
 
                 const bytes = secureAtob(template.content);
+                // Prepare data first so we can expose forced inv_model_date to nullGetter
+                const preData = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+                const MODEL_DATE_KEYS = new Set(["inv_model_date", "INV_MODEL_DATE", "invModelDate", "inv_model", "model_date", "MODEL_TARIX", "model_tarix"]);
+                const firstInvModelDate = (preData as any)?.invoices?.[0]?.inv_model_date
+                    || (preData as any)?.istisna_items?.[0]?.inv_model_date
+                    || (preData as any)?.inv_model_date
+                    || "";
+
                 let doc;
                 try {
                     const zip = new PizZip(bytes);
@@ -1275,7 +1465,37 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         paragraphLoop: true,
                         linebreaks: true,
                         delimiters: { start: "{{", end: "}}" },
-                        nullGetter: () => ""
+                        nullGetter: (part: any, scopeManager: any) => {
+                            const tag = part?.value;
+                            if (tag && MODEL_DATE_KEYS.has(tag)) {
+                                try {
+                                    const scopes = scopeManager?.scopeList || scopeManager?.scopes || [];
+                                    for (let i = scopes.length - 1; i >= 0; i--) {
+                                        const s = scopes[i];
+                                        if (s && typeof s === 'object') {
+                                            for (const k of MODEL_DATE_KEYS) {
+                                                const v = (s as any)[k];
+                                                // Priority: return non-empty string. If multiple available, inner scope wins.
+                                                if (typeof v === 'string' && v.trim()) return v;
+                                            }
+                                        }
+                                    }
+                                    // Deep search if not found in linear scope
+                                    const allInvoices = (preData as any)?.invoices || [];
+                                    for (const inv of allInvoices) {
+                                        if (inv?.inv_model_date) return inv.inv_model_date;
+                                    }
+                                    const allIstisna = (preData as any)?.istisna_items || [];
+                                    for (const ist of allIstisna) {
+                                        if (ist?.inv_model_date) return ist.inv_model_date;
+                                    }
+                                } catch (err) {
+                                    console.error("NullGetter inv_model_date fallback error:", err);
+                                }
+                                return firstInvModelDate || "";
+                            }
+                            return "";
+                        }
                     });
                 } catch (err: any) {
                     console.error("Docxtemplater Init Error:", err);
@@ -1284,7 +1504,8 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     return;
                 }
 
-                const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+                // Deep clone so highlight markers never leak back into the live customer state
+                const data = JSON.parse(JSON.stringify(preData));
 
                 // Apply highlighter marker to the focused value
                 const FIELD_TO_TAG: any = {
@@ -1332,8 +1553,8 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         "ALQI_SATQI_QIYMETI", "ALQI_SATQI_QIYMETI_SOZLE", "price", "total_price",
                         "alqi_satqi_qiymeti", "alqi_satqi_qiymeti_sozle", "totalPrice"
                     ],
-                    "Əsas borca ödənilmiş məbləğ": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
-                    "Ödənilən": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
+                    "Əsas borca ödənilmiş məbləğ": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid", "odenen_mebleg", "odenen_mebleg_manat"],
+                    "Ödənilən": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid", "odenen_mebleg", "odenen_mebleg_manat"],
                     "Əsas borca ödənilməmiş məbləğ": [
                         "ODENILMEMIS_HISSE", "ODENILMEMIS_HISSE_SOZLE", "unpaid_amount",
                         "odenilmemis_hisse", "odenilmemis_hisse_sozle", "unpaidAmount", "remaining"
@@ -1354,7 +1575,16 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     ],
                     "Müfəttiş": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
                     "İcraçı": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
-                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI", "xeberdarliq_tarixi", "warningDate"]
+                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI", "xeberdarliq_tarixi", "warningDate"],
+                    // Istisna / Exception detail fields
+                    "İmtina Tarixi": ["imtina_tarixi", "imtina_tarixi_ord", "imtina_tarixi_tam", "exceptionDate"],
+                    "İmt. Faktura №": ["imtina_fakturasi", "exceptionInvoice"],
+                    "İmt. Fakt. Tarixi": ["imtina_faktura_tarixi", "exceptionInvoiceDate"],
+                    "Məhsul & Say": ["imtina_edilen_mehsul", "imtina_mehsul", "imtina_edilen_mehsul_tam", "exceptionProduct"],
+                    "Silinən Borc AZN": ["silinen_borc", "silinen_borc_manat", "imtina_mebleg", "imtina_meblegi", "exceptionReturnedPrice"],
+                    "Qaytarıldıqdan Sonra Qiymət": ["qaytarildiqdan_sonra_qiymet", "qaytarildiqdan_sonra_qiymet_manat"],
+                    "Ümumi Məbləğ": ["umumi_mebleg", "umumi_mebleg_manat"],
+                    "Digər Müqavilə Ödənən": ["diger_muqavile_odenen"]
                 };
 
                 if (focusedField) {
@@ -1378,7 +1608,10 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                                 if (tagsToHighlight.includes(key)) {
                                     const val = obj[key];
                                     if (val !== undefined && val !== null && val !== "" && typeof val !== 'object') {
-                                        obj[key] = `[[FOC_S]]${val}[[FOC_E]]`;
+                                        const strVal = String(val);
+                                        if (!strVal.startsWith("[[FOC_S]]")) {
+                                            obj[key] = `[[FOC_S]]${strVal}[[FOC_E]]`;
+                                        }
                                     }
                                 } else if (typeof obj[key] === 'object') {
                                     applyMarkersToData(obj[key]);
@@ -1387,6 +1620,22 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         };
 
                         applyMarkersToData(data);
+
+                        // Also highlight values embedded in pre-built paragraphs (e.g. istisna_ikinci_abzas)
+                        // by wrapping BOLD markers whose key matches a highlighted tag.
+                        const keySet = new Set<string>(tagsToHighlight);
+                        const keyReAny = /\uE000B:([^\uE001]*)\uE001([\s\S]*?)\uE000\/B\uE001/g;
+                        const wrapFocInBold = (s: string) => s.replace(keyReAny, (m: string, k: string, v: string) => keySet.has(k) ? `\uE000B:${k}\uE001[[FOC_S]]${v}[[FOC_E]]\uE000/B\uE001` : m);
+                        const walkAndWrap = (obj: any) => {
+                            if (!obj || typeof obj !== 'object') return;
+                            if (Array.isArray(obj)) { obj.forEach(walkAndWrap); return; }
+                            Object.keys(obj).forEach(k => {
+                                const v = obj[k];
+                                if (typeof v === 'string' && v.indexOf('\uE000B:') !== -1) obj[k] = wrapFocInBold(v);
+                                else if (typeof v === 'object') walkAndWrap(v);
+                            });
+                        };
+                        walkAndWrap(data);
                     }
                 }
 
@@ -1406,6 +1655,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 }
 
                 try {
+                    applyBoldMarkersToDocx(doc.getZip());
                     const out = doc.getZip().generate({ type: "arraybuffer" });
 
                     // Use docx-preview for high-fidelity rendering
@@ -1679,12 +1929,12 @@ function GenerateDocumentContent() {
                         }]
                     }];
                 }
-                
+
                 // Initialize Qoşma items if missing
                 if (!typedCust.details?.qosmaItems || typedCust.details.qosmaItems.length === 0) {
                     if (!typedCust.details) typedCust.details = {};
                     const feeVal = parseFloat((typedCust.details?.fee || "0").toString().replace(',', '.')) || 0;
-                    typedCust.details.qosmaItems = feeVal > 0 
+                    typedCust.details.qosmaItems = feeVal > 0
                         ? [
                             "Müqavilə – əsli",
                             "Çıxarışın surəti",
@@ -1694,7 +1944,7 @@ function GenerateDocumentContent() {
                             "İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış",
                             "Əmək müqaviləsi bildirişinin surəti",
                             "Etibarnamə"
-                          ]
+                        ]
                         : [
                             "Müqavilə – əsli",
                             "Çıxarışın surəti",
@@ -1703,7 +1953,7 @@ function GenerateDocumentContent() {
                             "Xəbərdarlıq (bildiriş)",
                             "Əmək müqaviləsi bildirişi",
                             "Etibarnamə"
-                          ];
+                        ];
                 }
 
                 setCustomer(typedCust);
@@ -1950,37 +2200,43 @@ function GenerateDocumentContent() {
             return true;
         };
 
-        // 1. Strict restriction if 'template' param is present
-        if (requestedTemplate) {
-            return allTemplates.filter(t => {
-                const nl = t.name.toLowerCase();
-                const is103 = nl.includes("103_siyahisi") || nl.includes("103_siyahısı");
-                if (is103) return false;
-                if (!t.name.includes(requestedTemplate)) return false;
+        const hasException = (customer.details?.invoices || []).some((inv: any) => inv.isException === true || inv.isException === 'true');
+        const istisnaBaseKeys = new Set(
+            allTemplates
+                .filter(t => t.name.toLowerCase().startsWith("istisna_"))
+                .map(t => t.name.toLowerCase().replace(/^istisna_/, "").replace(/\+|-/g, "").replace(/no-imei/g, "").replace(/\.docx/g, "").replace(/[^a-z0-9əöüçşğıi]/g, "").trim())
+        );
 
-                return shouldShowTemplate(t.name);
-            });
-        }
-
-        const sorted = allTemplates.filter(t => {
+        // First apply istisna overrides and general shouldShow rules
+        let filteredTemplates = allTemplates.filter(t => {
             const nameLower = t.name.toLowerCase();
 
             // 0. Hide Letter List Template from general use
             if (nameLower.includes("103_siyahisi") || nameLower.includes("103_siyahısı")) return false;
 
-            // 0.5. Istisna Template Logic
-            const hasException = (customer.details?.invoices || []).some((inv: any) => inv.isException === true || inv.isException === 'true');
+            // 0.5. Istisna Template Logic — only affects documents that have both standard and istisna variants
             const isIstisnaTemplate = nameLower.startsWith("istisna_");
-            // If no exception, never show Istisna templates
+            const baseKey = nameLower.replace(/^istisna_/, "").replace(/\+|-/g, "").replace(/no-imei/g, "").replace(/\.docx/g, "").replace(/[^a-z0-9əöüçşğıi]/g, "").trim();
+            const hasIstisnaCounterpart = istisnaBaseKeys.has(baseKey);
+            // No exception → hide all istisna templates
             if (!hasException && isIstisnaTemplate) return false;
-            // If there is an exception, the user can see both standard and istisna so they can choose.
+            // Has exception → for documents that have an istisna variant, show only the istisna one.
+            if (hasException && !isIstisnaTemplate && hasIstisnaCounterpart) return false;
 
             // 1. Hide 'Arayış' templates if NO IMEI found
             if (nameLower.includes("arayış") && !hasImeiAnywhere) return false;
 
-            // 2. Main Logic
+            // 2. Main Debt/IMEI Logic
             return shouldShowTemplate(t.name);
         });
+
+        // Strict restriction if 'template' param is present
+        if (requestedTemplate) {
+            filteredTemplates = filteredTemplates.filter(t => t.name.includes(requestedTemplate));
+            return filteredTemplates;
+        }
+
+        const sorted = filteredTemplates;
 
         // 3. APPLY PRIORITY SORTING
         // Sequence: Məhkəmə Sənədi, Arayış Sənədi, Ödəniş Cədvəli, Xəbərdarlıq, Etibarnamə Sənədi, Vergi Çıxarış Sənədi, Əmək Müqaviləsi
@@ -2374,7 +2630,7 @@ function GenerateDocumentContent() {
             setIsSaving(false);
         }
     };
-    
+
     // --- Qosma (Attachments) Management ---
     const addQosmaItem = () => {
         setCustomer(prev => {
@@ -2763,15 +3019,43 @@ function GenerateDocumentContent() {
 
             const bytes = atobWithUint8(template.content);
             const zip = new PizZip(bytes.buffer);
+
+            const preData = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+            const MODEL_DATE_KEYS = new Set(["inv_model_date", "INV_MODEL_DATE", "invModelDate", "inv_model", "model_date", "MODEL_TARIX", "model_tarix"]);
+            const firstInvModelDate = (preData as any)?.invoices?.[0]?.inv_model_date
+                || (preData as any)?.istisna_items?.[0]?.inv_model_date
+                || (preData as any)?.inv_model_date
+                || "";
+
             const doc = new Docxtemplater(zip, {
                 paragraphLoop: true,
                 linebreaks: true,
                 delimiters: { start: "{{", end: "}}" },
-                nullGetter: () => ""
+                nullGetter: (part: any, scopeManager: any) => {
+                    const tag = part?.value;
+                    if (tag && MODEL_DATE_KEYS.has(tag)) {
+                        // Walk the scope chain to find a non-empty inv_model_date on any ancestor (e.g., current invoice row).
+                        try {
+                            const scopes = scopeManager?.scopeList || scopeManager?.scopes || [];
+                            for (let i = scopes.length - 1; i >= 0; i--) {
+                                const s = scopes[i];
+                                if (s && typeof s === 'object') {
+                                    for (const k of MODEL_DATE_KEYS) {
+                                        const v = (s as any)[k];
+                                        if (typeof v === 'string' && v.trim()) return v;
+                                    }
+                                }
+                            }
+                        } catch {}
+                        return firstInvModelDate;
+                    }
+                    return "";
+                }
             });
 
-            const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+            const data = preData;
             doc.render(data);
+            applyBoldMarkersToDocx(doc.getZip());
             const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}.docx`;
 
             if (silent) {
@@ -3782,22 +4066,27 @@ function GenerateDocumentContent() {
                                             {inv.isException && (
                                                 <div className="mt-3 p-3 rounded-xl bg-purple-50 border border-purple-100 animate-in fade-in slide-in-from-top-2 duration-300">
                                                     <h5 className="text-[10px] font-black text-purple-800 uppercase tracking-widest mb-3">İstisna Təfərrüatları</h5>
-                                                    
+
                                                     <div className="grid grid-cols-2 gap-3 mb-1">
                                                         <div className="space-y-1 min-w-0">
                                                             <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmtina Tarixi</label>
                                                             <input
-                                                                type="date"
                                                                 value={inv.exceptionDate || ""}
-                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionDate', e.target.value)}
-                                                                onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
-                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                                onFocus={() => setFocusedField("İmtina Tarixi")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionDate', formatDateInput(e.target.value))}
+                                                                placeholder="GG.AA.İİİİ"
+                                                                inputMode="numeric"
+                                                                maxLength={10}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
                                                             />
                                                         </div>
                                                         <div className="space-y-1 min-w-0">
                                                             <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmt. Faktura №</label>
                                                             <input
                                                                 value={inv.exceptionInvoice || ""}
+                                                                onFocus={() => setFocusedField("İmt. Faktura №")}
+                                                                onBlur={() => setFocusedField(null)}
                                                                 onChange={(e) => updateInvoice(inv.id, 'exceptionInvoice', e.target.value)}
                                                                 className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
                                                                 placeholder="Məs: 020910768"
@@ -3806,69 +4095,92 @@ function GenerateDocumentContent() {
                                                         <div className="space-y-1 min-w-0">
                                                             <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmt. Fakt. Tarixi</label>
                                                             <input
-                                                                type="date"
                                                                 value={inv.exceptionInvoiceDate || ""}
-                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', e.target.value)}
-                                                                onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
-                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                                onFocus={() => setFocusedField("İmt. Fakt. Tarixi")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', formatDateInput(e.target.value))}
+                                                                placeholder="GG.AA.İİİİ"
+                                                                inputMode="numeric"
+                                                                maxLength={10}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
                                                             />
                                                         </div>
-                                                        <div className="space-y-1 min-w-0">
-                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">Məhsul & Say</label>
+                                                        <div className="space-y-1 min-w-0 col-span-2">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">Məhsul & Say (qaytarılanları seçin)</label>
                                                             {(() => {
-                                                                const parseProducts = () => {
-                                                                    const products: { raw: string; name: string; qty: number }[] = [];
-                                                                    (inv.orders || []).forEach((ord: any) => {
-                                                                        const desc = (ord.productDescription || "").trim();
-                                                                        if (!desc) return;
-                                                                        desc.split(",").forEach((part: string) => {
-                                                                            const trimmed = part.trim();
-                                                                            if (!trimmed) return;
-                                                                            const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
-                                                                            if (qtyMatch) {
-                                                                                products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
-                                                                            } else {
-                                                                                products.push({ raw: trimmed, name: trimmed, qty: 1 });
-                                                                            }
-                                                                        });
+                                                                const parsedProducts: { raw: string; name: string; qty: number }[] = [];
+                                                                (inv.orders || []).forEach((ord: any) => {
+                                                                    const desc = (ord.productDescription || "").trim();
+                                                                    if (!desc) return;
+                                                                    desc.split(",").forEach((part: string) => {
+                                                                        const trimmed = part.trim();
+                                                                        if (!trimmed) return;
+                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                        if (qtyMatch) {
+                                                                            parsedProducts.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                        } else {
+                                                                            parsedProducts.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        }
                                                                     });
-                                                                    return products;
+                                                                });
+
+                                                                let selections: Array<{ name: string; qty: number }> = Array.isArray((inv as any).exceptionProducts) ? (inv as any).exceptionProducts : [];
+                                                                if (selections.length === 0 && inv.exceptionProduct) {
+                                                                    selections = [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }];
+                                                                }
+
+                                                                const commit = (next: Array<{ name: string; qty: number }>) => {
+                                                                    updateInvoice(inv.id, 'exceptionProducts', next as any);
+                                                                    if (next.length === 0) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', "");
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    } else if (next.length === 1) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', next[0].name);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', String(next[0].qty));
+                                                                    } else {
+                                                                        const joined = next.map(s => s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name).join(", ");
+                                                                        updateInvoice(inv.id, 'exceptionProduct', joined);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    }
                                                                 };
-                                                                const parsedProducts = parseProducts();
-                                                                const selectedProduct = inv.exceptionProduct || "";
-                                                                const selectedQty = parseInt(inv.exceptionProductQty || "1") || 1;
-                                                                const matchedProduct = parsedProducts.find(p => p.name === selectedProduct || p.raw === selectedProduct);
-                                                                const maxQty = matchedProduct?.qty || 1;
+
+                                                                if (parsedProducts.length === 0) {
+                                                                    return <div className="h-8 flex items-center px-2 text-[10px] text-purple-400 italic border border-dashed border-purple-200 rounded-lg bg-white">Məhsul tapılmadı</div>;
+                                                                }
 
                                                                 return (
-                                                                    <div className="flex gap-1.5 min-w-0">
-                                                                        <select
-                                                                            value={selectedProduct}
-                                                                            onChange={(e) => {
-                                                                                const val = e.target.value;
-                                                                                updateInvoice(inv.id, 'exceptionProduct', val);
-                                                                                const mt = parsedProducts.find(p => p.name === val || p.raw === val);
-                                                                                updateInvoice(inv.id, 'exceptionProductQty', mt?.qty ? String(mt.qty) : "1");
-                                                                            }}
-                                                                            className="flex-1 min-w-0 h-8 px-1.5 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white cursor-pointer truncate"
-                                                                        >
-                                                                            <option value="">Seçin...</option>
-                                                                            {parsedProducts.map((p, pi) => (
-                                                                                <option key={pi} value={p.name}>
-                                                                                    {p.qty > 1 ? `${p.qty}x ${p.name}` : p.name}
-                                                                                </option>
-                                                                            ))}
-                                                                        </select>
-                                                                        <select
-                                                                            disabled={!selectedProduct}
-                                                                            value={selectedQty}
-                                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionProductQty', e.target.value)}
-                                                                            className="w-[50px] h-8 px-1 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                                                                        >
-                                                                            {Array.from({ length: maxQty }, (_, i) => i + 1).map(n => (
-                                                                                <option key={n} value={n}>{n} əd.</option>
-                                                                            ))}
-                                                                        </select>
+                                                                    <div className="border border-purple-200 rounded-lg bg-white p-1.5 max-h-[140px] overflow-y-auto space-y-1">
+                                                                        {parsedProducts.map((p, pi) => {
+                                                                            const checked = !!selections.find(s => s.name === p.name);
+                                                                            const selectedQty = selections.find(s => s.name === p.name)?.qty || p.qty;
+                                                                            return (
+                                                                                <div key={pi} className={cn("flex items-center gap-1.5 px-1.5 py-1 rounded-md transition-colors", checked ? "bg-purple-50" : "hover:bg-slate-50")}>
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        checked={checked}
+                                                                                        onChange={() => {
+                                                                                            const exists = selections.find(s => s.name === p.name);
+                                                                                            commit(exists ? selections.filter(s => s.name !== p.name) : [...selections, { name: p.name, qty: p.qty }]);
+                                                                                        }}
+                                                                                        className="w-3.5 h-3.5 accent-purple-600 cursor-pointer shrink-0"
+                                                                                    />
+                                                                                    <span className="flex-1 text-[10px] font-semibold text-slate-700 truncate" title={p.name}>
+                                                                                        {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
+                                                                                    </span>
+                                                                                    {checked && p.qty > 1 && (
+                                                                                        <select
+                                                                                            value={selectedQty}
+                                                                                            onChange={(e) => commit(selections.map(s => s.name === p.name ? { ...s, qty: parseInt(e.target.value) || 1 } : s))}
+                                                                                            className="h-6 px-0.5 rounded-md text-[9px] font-bold border border-purple-200 bg-white text-center shrink-0"
+                                                                                        >
+                                                                                            {Array.from({ length: p.qty }, (_, i) => i + 1).map(n => (
+                                                                                                <option key={n} value={n}>{n} əd.</option>
+                                                                                            ))}
+                                                                                        </select>
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        })}
                                                                     </div>
                                                                 );
                                                             })()}
@@ -3877,6 +4189,8 @@ function GenerateDocumentContent() {
                                                             <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">Silinən Borc AZN</label>
                                                             <input
                                                                 value={inv.exceptionReturnedPrice || ""}
+                                                                onFocus={() => setFocusedField("Silinən Borc AZN")}
+                                                                onBlur={() => setFocusedField(null)}
                                                                 onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
                                                                 className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
                                                                 placeholder="0.00"
@@ -4017,7 +4331,7 @@ function GenerateDocumentContent() {
                                                                 Iddiaya qoşulan sənədlər (Qoşma)
                                                             </p>
                                                         </div>
-                                                        <button 
+                                                        <button
                                                             onClick={(e) => { e.preventDefault(); addQosmaItem(); }}
                                                             className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-all text-[10px] font-bold"
                                                         >
@@ -4030,14 +4344,14 @@ function GenerateDocumentContent() {
                                                                 <div className="flex-none w-6 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-[10px] font-bold text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-colors">
                                                                     {idx + 1}
                                                                 </div>
-                                                                <input 
-                                                                    type="text" 
+                                                                <input
+                                                                    type="text"
                                                                     value={item}
                                                                     onChange={(e) => updateQosmaItem(idx, e.target.value)}
                                                                     className="flex-1 px-4 py-2 bg-slate-50 border border-transparent focus:border-emerald-200 focus:bg-white rounded-xl text-xs font-medium transition-all"
                                                                     placeholder="Sənədin adı..."
                                                                 />
-                                                                <button 
+                                                                <button
                                                                     onClick={(e) => { e.preventDefault(); removeQosmaItem(idx); }}
                                                                     className="flex-none w-10 h-10 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                                                                 >
@@ -4045,11 +4359,11 @@ function GenerateDocumentContent() {
                                                                 </button>
                                                             </div>
                                                         ))}
-                                                        
+
                                                         {(customer?.details?.qosmaItems || []).length === 0 && (
                                                             <div className="py-10 text-center space-y-2">
                                                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Siyahı Boşdur</p>
-                                                                <button 
+                                                                <button
                                                                     onClick={(e) => { e.preventDefault(); addQosmaItem(); }}
                                                                     className="text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:underline"
                                                                 >

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/arif.babayev/Desktop/Projects/Legal12/legal12/user_data* -type f -name \"*.docx\")",
+      "Bash(cat next.config.*)",
+      "Bash(npx tsc *)",
+      "Read(//c/Users/arif.babayev/.claude/**)",
+      "Bash(claude mcp *)"
+    ]
+  }
+}

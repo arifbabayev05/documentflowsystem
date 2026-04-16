@@ -8,11 +8,7 @@ import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
-<<<<<<< HEAD
 import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers } from "@/lib/db";
-=======
-import { bulkAddCustomers, getInspectorCustomers, getCustomer } from "@/lib/db";
->>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
 
 interface EntryRow {
     customer_code: string;
@@ -906,22 +902,11 @@ export default function InspectorPage() {
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
-<<<<<<< HEAD
                                     <div className="px-4 py-4 truncate">
                                         <div className="flex flex-col leading-tight">
                                             <span className="text-[11px] font-black text-slate-900 truncate">{row.details?.executorName || row.createdBy?.split('@')[0]}</span>
                                             <span className="text-[9px] font-bold text-slate-400 truncate mt-0.5">{row.createdBy}</span>
                                         </div>
-=======
-                                    <div className="px-4 py-4 w-100">
-                                        <span
-                                            className={`text - [10px] font - black px - 3 py - 1.5 rounded - lg uppercase tracking - wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
-                                                } ${STATUS_LABELS[row.process_status as ProcessStatus]?.color || "text-slate-500"
-                                                } `}
-                                        >
-                                            {STATUS_LABELS[row.process_status as ProcessStatus]?.label || "Daxil edildi"}
-                                        </span>
->>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
                                     </div>
                                 </div>
                             ))

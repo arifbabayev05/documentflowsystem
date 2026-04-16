@@ -38,11 +38,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
-<<<<<<< HEAD
 import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
-=======
-import { formatDateInput, toTitleCase } from "@/lib/format";
->>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
 import { API_ENDPOINTS } from "@/config/api";
@@ -427,6 +423,7 @@ interface CustomerRow {
             exceptionInvoiceDate?: string;
             exceptionProduct?: string;
             exceptionProductQty?: string;
+            exceptionProducts?: Array<{ name: string; qty: number }>;
             exceptionDeductedAmount?: string;
             exceptionReturnedPrice?: string;
             exceptionXahisText?: string;
@@ -1105,15 +1102,12 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
         if (dataToSave.fullName) {
             dataToSave.fullName = toTitleCase(dataToSave.fullName);
         }
-<<<<<<< HEAD
         if (dataToSave.details?.address) {
             dataToSave.details.address = toTitleCase(dataToSave.details.address);
         }
         if (dataToSave.details?.actualAddress) {
             dataToSave.details.actualAddress = toTitleCase(dataToSave.details.actualAddress);
         }
-=======
->>>>>>> df47c8bbe2c3f66d5111dd4f213722b525e2f49e
         const currentStatus = dataToSave.process_status || 'INSPECTOR_ENTERED';
         const currentIndex = STATUS_ORDER.indexOf(currentStatus);
 
@@ -2123,7 +2117,7 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                     }],
                                     store: localData.store || "",
                                     isException: false,
-                                    exceptionDate: new Date().toISOString().split('T')[0],
+                                    exceptionDate: (() => { const d = new Date(); const dd = String(d.getDate()).padStart(2,'0'); const mm = String(d.getMonth()+1).padStart(2,'0'); return `${dd}.${mm}.${d.getFullYear()}`; })(),
                                     exceptionInvoice: "",
                                     exceptionInvoiceDate: "",
                                     exceptionProduct: "",
@@ -2339,19 +2333,38 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
 
                                         {/* EXCEPTION FIELDS */}
                                         {inv.isException && (
-                                            <div className="mt-4 p-4 rounded-xl bg-purple-50 border border-purple-100 animate-in fade-in slide-in-from-top-2 duration-300">
-                                                <h5 className="text-[10px] font-black text-purple-800 uppercase tracking-widest mb-3">İstisna Təfərrüatları</h5>
+                                            <div className="mt-4 rounded-2xl bg-white border border-purple-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
+                                                {/* Card header */}
+                                                <div className="px-5 py-3 bg-gradient-to-r from-purple-600 to-purple-500 flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center">
+                                                            <span className="text-white text-[11px] font-black">İ</span>
+                                                        </div>
+                                                        <h5 className="text-[11px] font-black text-white uppercase tracking-[0.15em]">İstisna Təfərrüatları</h5>
+                                                    </div>
+                                                    <span className="text-[9px] font-bold text-white/80 uppercase tracking-wider">Qaytarılan məhsul / borc silinməsi</span>
+                                                </div>
 
-                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-4">
+                                                <div className="p-5 space-y-5 bg-purple-50/40">
+
+                                                {/* SECTION 1: Tarixlər & Faktura */}
+                                                <div>
+                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                        <span>Sənəd məlumatları</span>
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                    </div>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                                                     <div className="space-y-1.5 min-w-0">
                                                         <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmtina Tarixi</label>
                                                         <input
-                                                            type="date"
                                                             readOnly={!isEditing}
                                                             value={inv.exceptionDate || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionDate', e.target.value)}
-                                                            onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionDate', formatDateInput(e.target.value))}
+                                                            placeholder="GG.AA.İİİİ"
+                                                            inputMode="numeric"
+                                                            maxLength={10}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
                                                         />
                                                     </div>
                                                     <div className="space-y-1.5 min-w-0">
@@ -2367,80 +2380,14 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                     <div className="space-y-1.5 min-w-0">
                                                         <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Fakt. Tarixi</label>
                                                         <input
-                                                            type="date"
                                                             readOnly={!isEditing}
                                                             value={inv.exceptionInvoiceDate || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', e.target.value)}
-                                                            onClick={(e: any) => e.target.showPicker && e.target.showPicker()}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', formatDateInput(e.target.value))}
+                                                            placeholder="GG.AA.İİİİ"
+                                                            inputMode="numeric"
+                                                            maxLength={10}
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
                                                         />
-                                                    </div>
-                                                    <div className="space-y-1.5 min-w-0 md:col-span-2 lg:col-span-1">
-                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block truncate">Məhsul & Say</label>
-                                                        {(() => {
-                                                            // Parse products from all orders in this invoice
-                                                            const parseProducts = () => {
-                                                                const products: { raw: string; name: string; qty: number }[] = [];
-                                                                (inv.orders || []).forEach((ord: any) => {
-                                                                    const desc = (ord.productDescription || "").trim();
-                                                                    if (!desc) return;
-                                                                    // Split by comma to handle "2 ədəd X, 2 ədəd Y"
-                                                                    desc.split(",").forEach((part: string) => {
-                                                                        const trimmed = part.trim();
-                                                                        if (!trimmed) return;
-                                                                        // Check for "N ədəd" prefix
-                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
-                                                                        if (qtyMatch) {
-                                                                            products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
-                                                                        } else {
-                                                                            // Check for IMEI patterns - keep as single item
-                                                                            products.push({ raw: trimmed, name: trimmed, qty: 1 });
-                                                                        }
-                                                                    });
-                                                                });
-                                                                return products;
-                                                            };
-                                                            const parsedProducts = parseProducts();
-                                                            const selectedProduct = inv.exceptionProduct || "";
-                                                            const selectedQty = parseInt(inv.exceptionProductQty || "1") || 1;
-                                                            const matchedProduct = parsedProducts.find(p => p.name === selectedProduct || p.raw === selectedProduct);
-                                                            const maxQty = matchedProduct?.qty || 1;
-
-                                                            return (
-                                                                <div className="flex gap-2 min-w-0">
-                                                                    <select
-                                                                        disabled={!isEditing}
-                                                                        value={selectedProduct}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            updateInvoice(inv.id, 'exceptionProduct', val);
-                                                                            const mt = parsedProducts.find(p => p.name === val || p.raw === val);
-                                                                            // Set default selection to the max available quantity instead of 1
-                                                                            updateInvoice(inv.id, 'exceptionProductQty', mt?.qty ? String(mt.qty) : "1");
-                                                                        }}
-                                                                        className="flex-1 min-w-0 h-11 px-2 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white cursor-pointer truncate"
-                                                                    >
-                                                                        <option value="">Seçin...</option>
-                                                                        {parsedProducts.map((p, pi) => (
-                                                                            <option key={pi} value={p.name}>
-                                                                                {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
-                                                                    <select
-                                                                        disabled={!isEditing || !selectedProduct}
-                                                                        value={selectedQty}
-                                                                        onChange={(e) => updateInvoice(inv.id, 'exceptionProductQty', e.target.value)}
-                                                                        className="w-[80px] h-11 px-1 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                                                                        title="Qaytarılan sayı seçin"
-                                                                    >
-                                                                        {Array.from({ length: maxQty }, (_, i) => i + 1).map(n => (
-                                                                            <option key={n} value={n}>{n} əd.</option>
-                                                                        ))}
-                                                                    </select>
-                                                                </div>
-                                                            );
-                                                        })()}
                                                     </div>
                                                     <div className="space-y-1.5 min-w-0">
                                                         <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">Silinən Borc AZN</label>
@@ -2448,17 +2395,130 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                             readOnly={!isEditing}
                                                             value={inv.exceptionReturnedPrice || ""}
                                                             onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
                                                             placeholder="0.00"
                                                         />
                                                     </div>
+                                                    </div>
                                                 </div>
 
-                                                {/* XAHİŞ PREVIEW */}
-                                                <div className="bg-white p-3 rounded-xl border border-purple-200 space-y-1.5 mt-2 shadow-sm">
+                                                {/* SECTION 2: Qaytarılan məhsullar */}
+                                                <div>
+                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                        <span>Qaytarılan məhsullar (seçin)</span>
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <label className="sr-only">Məhsul & Say</label>
+                                                        {(() => {
+                                                            const parsedProducts: { raw: string; name: string; qty: number }[] = [];
+                                                            (inv.orders || []).forEach((ord: any) => {
+                                                                const desc = (ord.productDescription || "").trim();
+                                                                if (!desc) return;
+                                                                desc.split(",").forEach((part: string) => {
+                                                                    const trimmed = part.trim();
+                                                                    if (!trimmed) return;
+                                                                    const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                    if (qtyMatch) {
+                                                                        parsedProducts.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                    } else {
+                                                                        parsedProducts.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                    }
+                                                                });
+                                                            });
+
+                                                            // Migrate legacy single-selection to array on first render
+                                                            let selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) ? inv.exceptionProducts : [];
+                                                            if (selections.length === 0 && inv.exceptionProduct) {
+                                                                selections = [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }];
+                                                            }
+
+                                                            const commitSelections = (next: Array<{ name: string; qty: number }>) => {
+                                                                updateInvoice(inv.id, 'exceptionProducts', next as any);
+                                                                if (next.length === 0) {
+                                                                    updateInvoice(inv.id, 'exceptionProduct', "");
+                                                                    updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                } else if (next.length === 1) {
+                                                                    updateInvoice(inv.id, 'exceptionProduct', next[0].name);
+                                                                    updateInvoice(inv.id, 'exceptionProductQty', String(next[0].qty));
+                                                                } else {
+                                                                    const joined = next.map(s => s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name).join(", ");
+                                                                    updateInvoice(inv.id, 'exceptionProduct', joined);
+                                                                    updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                }
+                                                            };
+
+                                                            const toggleProduct = (p: { name: string; qty: number }) => {
+                                                                const exists = selections.find(s => s.name === p.name);
+                                                                let next: Array<{ name: string; qty: number }>;
+                                                                if (exists) {
+                                                                    next = selections.filter(s => s.name !== p.name);
+                                                                } else {
+                                                                    next = [...selections, { name: p.name, qty: p.qty }];
+                                                                }
+                                                                commitSelections(next);
+                                                            };
+
+                                                            const setQty = (name: string, qty: number) => {
+                                                                const next = selections.map(s => s.name === name ? { ...s, qty } : s);
+                                                                commitSelections(next);
+                                                            };
+
+                                                            if (parsedProducts.length === 0) {
+                                                                return <div className="h-11 flex items-center px-3 text-[11px] text-purple-400 italic border border-dashed border-purple-200 rounded-xl bg-white">Sifarişlərdə məhsul tapılmadı</div>;
+                                                            }
+
+                                                            return (
+                                                                <div className="border border-purple-200 rounded-xl bg-white p-2 max-h-[180px] overflow-y-auto space-y-1.5">
+                                                                    {parsedProducts.map((p, pi) => {
+                                                                        const checked = !!selections.find(s => s.name === p.name);
+                                                                        const selectedQty = selections.find(s => s.name === p.name)?.qty || p.qty;
+                                                                        return (
+                                                                            <div key={pi} className={cn("flex items-center gap-2 p-1.5 rounded-lg transition-colors", checked ? "bg-purple-50" : "hover:bg-slate-50")}>
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    disabled={!isEditing}
+                                                                                    checked={checked}
+                                                                                    onChange={() => toggleProduct(p)}
+                                                                                    className="w-4 h-4 accent-purple-600 cursor-pointer shrink-0"
+                                                                                />
+                                                                                <span className="flex-1 text-[12px] font-semibold text-slate-700 truncate" title={p.name}>
+                                                                                    {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
+                                                                                </span>
+                                                                                {checked && p.qty > 1 && (
+                                                                                    <select
+                                                                                        disabled={!isEditing}
+                                                                                        value={selectedQty}
+                                                                                        onChange={(e) => setQty(p.name, parseInt(e.target.value) || 1)}
+                                                                                        className="h-8 px-1 rounded-lg text-[11px] font-bold border border-purple-200 bg-white text-center disabled:opacity-50 shrink-0"
+                                                                                        title="Qaytarılan sayı"
+                                                                                    >
+                                                                                        {Array.from({ length: p.qty }, (_, i) => i + 1).map(n => (
+                                                                                            <option key={n} value={n}>{n} əd.</option>
+                                                                                        ))}
+                                                                                    </select>
+                                                                                )}
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                </div>
+
+                                                {/* SECTION 3: Xahiş Mətni Görünüşü */}
+                                                <div>
+                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                        <span>Xahiş mətni görünüşü</span>
+                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                    </div>
+                                                <div className="bg-white p-3 rounded-xl border border-purple-200 space-y-1.5 shadow-sm">
                                                     <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider flex items-center justify-between">
-                                                        <span>Xahiş Mətni Görümüşü</span>
-                                                        <span className="text-[8px] font-normal opacity-70">Sənəddəki mətni buradan dəyişə bilərsiniz</span>
+                                                        <span>Sənəddəki mətn</span>
+                                                        <span className="text-[8px] font-normal opacity-70">Buradan birbaşa redaktə edə bilərsiniz</span>
                                                     </label>
                                                     {(() => {
                                                         // Calculate default xahis text
@@ -2502,14 +2562,16 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
 
                                                         const calculatedPenalty = calculatedUnpaid * 0.10;
 
-                                                        const selectedProduct = inv.exceptionProduct || "";
-                                                        const selectedQty = parseInt(inv.exceptionProductQty || "1") || 1;
+                                                        // Multi-select aware: use exceptionProducts array when present
+                                                        const selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) && inv.exceptionProducts.length > 0
+                                                            ? inv.exceptionProducts
+                                                            : (inv.exceptionProduct ? [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }] : []);
 
-                                                        // rebuild mehsul
                                                         const rebuilt: string[] = [];
                                                         products.forEach(p => {
-                                                            if (p.name === selectedProduct || p.raw === selectedProduct) {
-                                                                const remaining = p.qty - selectedQty;
+                                                            const sel = selections.find(s => s.name === p.name || s.name === p.raw);
+                                                            if (sel) {
+                                                                const remaining = p.qty - sel.qty;
                                                                 if (remaining > 1) rebuilt.push(`${remaining} ədəd ${p.name}`);
                                                                 else if (remaining === 1) rebuilt.push(p.name);
                                                             } else {
@@ -2539,6 +2601,8 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                             />
                                                         );
                                                     })()}
+                                                </div>
+                                                </div>
                                                 </div>
                                             </div>
                                         )}
