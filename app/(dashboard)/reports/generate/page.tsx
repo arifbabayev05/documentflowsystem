@@ -455,7 +455,7 @@ function buildInvoiceData(
     let invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
 
     // Check for exception/return logic
-    const isExceptionMode = inv.isException === true || inv.isException === 'true';
+    const isExceptionMode = inv.isException === true || String(inv.isException) === 'true';
     const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
     const umumiMeblegTarix = actualInvoicePaid + exceptionReturnedPrice;
 
@@ -499,16 +499,16 @@ function buildInvoiceData(
     }
 
     // Güzəşt Məbləği: Principal + Penalty (as per recalculateFinancials)
-    const invDiscount = invUnpaid + invPenalty;
+    const invDiscount = invUnpaid - invPenalty;
 
     // Əsas bölmə separator (Məhkəmə Ərizəsi body loop)
     let separator = "";
     if (totalInvoices === 1) {
-        separator = "pulu borcu yaranmışdır.";
+        separator = "pulu";
     } else if (invIndex < totalInvoices - 1) {
         separator = ";";
     } else {
-        separator = "pulu borcu yaranmışdır.";
+        separator = "pulu";
     }
 
     // XAHİŞ bölməsi separator
@@ -673,7 +673,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         let newGuzestSeparator = "";
 
         if (total === 1) {
-            newSeparator = "pulu borcu yaranmışdır.";
+            newSeparator = " pulu borcu yaranmışdır.";
             newXahisSeparator = "";
             newGuzestSeparator = "";
         } else if (!isLast) {
@@ -681,14 +681,17 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             newXahisSeparator = ";";
             newGuzestSeparator = ", ";
         } else {
-            newSeparator = "pulu borcu yaranmışdır.";
+            newSeparator = " pulu borcu yaranmışdır.";
             newXahisSeparator = "";
             newGuzestSeparator = "";
         }
 
+        const baseSeparator = (total === 1 || isLast) ? " pulu" : ";";
+
         return {
             ...inv,
             inv_separator: newSeparator,
+            base_separator: baseSeparator,
             xahis_separator: newXahisSeparator,
             guzest_separator: newGuzestSeparator
         };
@@ -770,7 +773,11 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             let skipItem = false;
 
             if (adjustedMehsulSiyahi.trim().length > 0) {
-                defaultText = `${muqavileTarixiFixed}-cü il tarixli müqaviləyə əsasən, ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord} pulu borcu yaranmışdır.`;
+                const currentIlmFee = parseFloat(invData.inv_ilm_fee) || 0;
+                const imeiReplacementText = (hasImei && currentIlmFee > 0)
+                    ? `İnnovativ Layihələr Mərkəzinə ödənilən ${currentIlmFee.toFixed(2)} (${numberToAzerbaijaniFinancialWords(currentIlmFee)}) manat rüsum, `
+                    : "";
+                defaultText = `${muqavileTarixiFixed}-cü il tarixli müqaviləyə əsasən, ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${imeiReplacementText}${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord} pulu  `;
             } else {
                 defaultText = "";
                 skipItem = true;
@@ -786,6 +793,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
             return {
                 ...invData,
+                inv_separator: invData.base_separator,
                 muqavile_tarixi: muqavileTarixiFixed,
                 mehsul_siyahi: adjustedMehsulSiyahi,
                 odenilmemis_hisse: adjustedUnpaid.toFixed(2),
@@ -1078,7 +1086,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         let newXahisSeparator = "";
 
         if (total === 1 || isLast) {
-            newSeparator = "pulu borcu yaranmışdır.";
+            newSeparator = " pulu";
             newXahisSeparator = "";
         } else {
             newSeparator = ";";
@@ -1093,9 +1101,26 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         };
     });
 
+    const invoicesWithSeparators = finalInvoicesData.map((inv: any, idx: number, arr: any[]) => {
+        const isLast = idx === arr.length - 1;
+        const total = arr.length;
+        let finalSeparator = "";
+        
+        if (total === 1 || isLast) {
+            finalSeparator = " pulu borcu yaranmışdır.";
+        } else {
+            finalSeparator = ";";
+        }
+        
+        return {
+            ...inv,
+            inv_separator: finalSeparator
+        };
+    });
+
     return {
         // Loops
-        invoices: finalInvoicesData,
+        invoices: invoicesWithSeparators,
         xahis_items: fixedXahisItems,
         istisna_items: istisnaItems,
         guzest_items: guzestItems,
@@ -2118,8 +2143,8 @@ function GenerateDocumentContent() {
         const feeValTotal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
         const hasImeiAnywhere = feeValTotal > 0;
 
-        // Calculate totalDebt exactly as in buildInvoiceData for consistency
-        const totalDebtVal = (customer.details?.invoices || []).reduce((acc, inv) => {
+        // Calculate totalDebt exactly as in buildInvoiceData for consistency, considering Istisna conditionally
+        const { regularDebt, istisnaDebt } = (customer.details?.invoices || []).reduce((acc, inv) => {
             const invTotalPrice = (inv.orders || []).reduce((ordAcc, ord) => {
                 const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -2129,8 +2154,19 @@ function GenerateDocumentContent() {
             const invPaidSum = (inv.orders || []).reduce((ordAcc, ord) => {
                 return ordAcc + (parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0);
             }, 0);
-            const invUnpaid = Math.max(0, invTotalPrice - invPaidSum);
-            const invPenalty = invUnpaid * 0.10;
+            
+            const baseUnpaid = Math.max(0, invTotalPrice - invPaidSum);
+            
+            const isExceptionMode = inv.isException === true || String(inv.isException) === 'true';
+            const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+            let istisnaUnpaid = baseUnpaid;
+            if (isExceptionMode && exceptionReturnedPrice > 0) {
+                istisnaUnpaid = Math.max(0, baseUnpaid - exceptionReturnedPrice);
+            }
+
+            const regPenalty = baseUnpaid * 0.10;
+            const istPenalty = istisnaUnpaid * 0.10;
+
             let invIlmFee = 0;
             (inv.orders || []).forEach(ord => {
                 if (Array.isArray((ord as any).checkedImeis) && (ord as any).checkedImeis.length > 0) {
@@ -2139,13 +2175,19 @@ function GenerateDocumentContent() {
                     invIlmFee += 23.6;
                 }
             });
-            return acc + invUnpaid + invPenalty + invIlmFee;
-        }, 0);
+
+            return {
+                regularDebt: acc.regularDebt + baseUnpaid + regPenalty + invIlmFee,
+                istisnaDebt: acc.istisnaDebt + istisnaUnpaid + istPenalty + invIlmFee
+            };
+        }, { regularDebt: 0, istisnaDebt: 0 });
 
         // Helper to decide if a template should be shown based on IMEI and Debt
         const shouldShowTemplate = (tName: string) => {
             const nl = tName.toLowerCase();
             const isNoImeiTemplate = nl.includes("no-imei");
+            const isIstisnaTemplate = nl.startsWith("istisna_");
+            const effectiveDebtVal = isIstisnaTemplate ? istisnaDebt : regularDebt;
 
             // Strip "no-imei" (and its dash) before checking debt markers + and -
             // This prevents the "-" in "no-imei" from being mistaken as a debt marker.
@@ -2167,7 +2209,7 @@ function GenerateDocumentContent() {
 
             // --- 2. Debt Logic: Exclusive filter for +/- variants ---
             if (hasPlus || hasMinus) {
-                if (totalDebtVal <= 5000) return hasMinus;
+                if (effectiveDebtVal < 5000) return hasMinus;
                 return hasPlus;
             }
 
@@ -2190,8 +2232,8 @@ function GenerateDocumentContent() {
                     const atMinus = anWithoutNoImei.includes("-");
                     if (!atPlus && !atMinus) return false;
 
-                    if (totalDebtVal <= 5000 && atMinus) return true;
-                    if (totalDebtVal > 5000 && atPlus) return true;
+                    if (effectiveDebtVal < 5000 && atMinus) return true;
+                    if (effectiveDebtVal >= 5000 && atPlus) return true;
                     return false;
                 });
                 if (hasSpecificMatch) return false;
@@ -3046,7 +3088,7 @@ function GenerateDocumentContent() {
                                     }
                                 }
                             }
-                        } catch {}
+                        } catch { }
                         return firstInvModelDate;
                     }
                     return "";

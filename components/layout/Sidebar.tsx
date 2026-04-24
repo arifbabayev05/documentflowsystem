@@ -117,7 +117,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 })}
             </nav>
 
-            <BotStatusIndicator isOnline={isBotOnline} onStart={handleLaunchBot} />
+            {/* <BotStatusIndicator isOnline={isBotOnline} onStart={handleLaunchBot} /> */}
             <div className="border-t border-border-soft p-6 bg-bg-main/20">
                 <div className="mb-6 px-2">
                     <div className="flex items-center gap-3">

@@ -2117,7 +2117,7 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                     }],
                                     store: localData.store || "",
                                     isException: false,
-                                    exceptionDate: (() => { const d = new Date(); const dd = String(d.getDate()).padStart(2,'0'); const mm = String(d.getMonth()+1).padStart(2,'0'); return `${dd}.${mm}.${d.getFullYear()}`; })(),
+                                    exceptionDate: (() => { const d = new Date(); const dd = String(d.getDate()).padStart(2, '0'); const mm = String(d.getMonth() + 1).padStart(2, '0'); return `${dd}.${mm}.${d.getFullYear()}`; })(),
                                     exceptionInvoice: "",
                                     exceptionInvoiceDate: "",
                                     exceptionProduct: "",
@@ -2347,262 +2347,262 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
 
                                                 <div className="p-5 space-y-5 bg-purple-50/40">
 
-                                                {/* SECTION 1: Tarixlər & Faktura */}
-                                                <div>
-                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
-                                                        <span className="h-px flex-1 bg-purple-200" />
-                                                        <span>Sənəd məlumatları</span>
-                                                        <span className="h-px flex-1 bg-purple-200" />
+                                                    {/* SECTION 1: Tarixlər & Faktura */}
+                                                    <div>
+                                                        <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                            <span>Sənəd məlumatları</span>
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                        </div>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                                            <div className="space-y-1.5 min-w-0">
+                                                                <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmtina Tarixi</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={inv.exceptionDate || ""}
+                                                                    onChange={(e) => updateInvoice(inv.id, 'exceptionDate', formatDateInput(e.target.value))}
+                                                                    placeholder="GG.AA.İİİİ"
+                                                                    inputMode="numeric"
+                                                                    maxLength={10}
+                                                                    className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1.5 min-w-0">
+                                                                <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Faktura №</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={inv.exceptionInvoice || ""}
+                                                                    onChange={(e) => updateInvoice(inv.id, 'exceptionInvoice', e.target.value)}
+                                                                    className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                                    placeholder="Məs: 020910768"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1.5 min-w-0">
+                                                                <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Fakt. Tarixi</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={inv.exceptionInvoiceDate || ""}
+                                                                    onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', formatDateInput(e.target.value))}
+                                                                    placeholder="GG.AA.İİİİ"
+                                                                    inputMode="numeric"
+                                                                    maxLength={10}
+                                                                    className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1.5 min-w-0">
+                                                                <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">Silinən Borc AZN</label>
+                                                                <input
+                                                                    readOnly={!isEditing}
+                                                                    value={inv.exceptionReturnedPrice || ""}
+                                                                    onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
+                                                                    className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
+                                                                    placeholder="0.00"
+                                                                />
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                                                    <div className="space-y-1.5 min-w-0">
-                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmtina Tarixi</label>
-                                                        <input
-                                                            readOnly={!isEditing}
-                                                            value={inv.exceptionDate || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionDate', formatDateInput(e.target.value))}
-                                                            placeholder="GG.AA.İİİİ"
-                                                            inputMode="numeric"
-                                                            maxLength={10}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1.5 min-w-0">
-                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Faktura №</label>
-                                                        <input
-                                                            readOnly={!isEditing}
-                                                            value={inv.exceptionInvoice || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoice', e.target.value)}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
-                                                            placeholder="Məs: 020910768"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1.5 min-w-0">
-                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">İmt. Fakt. Tarixi</label>
-                                                        <input
-                                                            readOnly={!isEditing}
-                                                            value={inv.exceptionInvoiceDate || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', formatDateInput(e.target.value))}
-                                                            placeholder="GG.AA.İİİİ"
-                                                            inputMode="numeric"
-                                                            maxLength={10}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1.5 min-w-0">
-                                                        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">Silinən Borc AZN</label>
-                                                        <input
-                                                            readOnly={!isEditing}
-                                                            value={inv.exceptionReturnedPrice || ""}
-                                                            onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
-                                                            className="w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
-                                                            placeholder="0.00"
-                                                        />
-                                                    </div>
-                                                    </div>
-                                                </div>
 
-                                                {/* SECTION 2: Qaytarılan məhsullar */}
-                                                <div>
-                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
-                                                        <span className="h-px flex-1 bg-purple-200" />
-                                                        <span>Qaytarılan məhsullar (seçin)</span>
-                                                        <span className="h-px flex-1 bg-purple-200" />
-                                                    </div>
-                                                    <div className="min-w-0">
-                                                        <label className="sr-only">Məhsul & Say</label>
-                                                        {(() => {
-                                                            const parsedProducts: { raw: string; name: string; qty: number }[] = [];
-                                                            (inv.orders || []).forEach((ord: any) => {
-                                                                const desc = (ord.productDescription || "").trim();
-                                                                if (!desc) return;
-                                                                desc.split(",").forEach((part: string) => {
-                                                                    const trimmed = part.trim();
-                                                                    if (!trimmed) return;
-                                                                    const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
-                                                                    if (qtyMatch) {
-                                                                        parsedProducts.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                    {/* SECTION 2: Qaytarılan məhsullar */}
+                                                    <div>
+                                                        <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                            <span>Qaytarılan məhsullar (seçin)</span>
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                        </div>
+                                                        <div className="min-w-0">
+                                                            <label className="sr-only">Məhsul & Say</label>
+                                                            {(() => {
+                                                                const parsedProducts: { raw: string; name: string; qty: number }[] = [];
+                                                                (inv.orders || []).forEach((ord: any) => {
+                                                                    const desc = (ord.productDescription || "").trim();
+                                                                    if (!desc) return;
+                                                                    desc.split(",").forEach((part: string) => {
+                                                                        const trimmed = part.trim();
+                                                                        if (!trimmed) return;
+                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                        if (qtyMatch) {
+                                                                            parsedProducts.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                        } else {
+                                                                            parsedProducts.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        }
+                                                                    });
+                                                                });
+
+                                                                // Migrate legacy single-selection to array on first render
+                                                                let selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) ? inv.exceptionProducts : [];
+                                                                if (selections.length === 0 && inv.exceptionProduct) {
+                                                                    selections = [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }];
+                                                                }
+
+                                                                const commitSelections = (next: Array<{ name: string; qty: number }>) => {
+                                                                    updateInvoice(inv.id, 'exceptionProducts', next as any);
+                                                                    if (next.length === 0) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', "");
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    } else if (next.length === 1) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', next[0].name);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', String(next[0].qty));
                                                                     } else {
-                                                                        parsedProducts.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        const joined = next.map(s => s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name).join(", ");
+                                                                        updateInvoice(inv.id, 'exceptionProduct', joined);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    }
+                                                                };
+
+                                                                const toggleProduct = (p: { name: string; qty: number }) => {
+                                                                    const exists = selections.find(s => s.name === p.name);
+                                                                    let next: Array<{ name: string; qty: number }>;
+                                                                    if (exists) {
+                                                                        next = selections.filter(s => s.name !== p.name);
+                                                                    } else {
+                                                                        next = [...selections, { name: p.name, qty: p.qty }];
+                                                                    }
+                                                                    commitSelections(next);
+                                                                };
+
+                                                                const setQty = (name: string, qty: number) => {
+                                                                    const next = selections.map(s => s.name === name ? { ...s, qty } : s);
+                                                                    commitSelections(next);
+                                                                };
+
+                                                                if (parsedProducts.length === 0) {
+                                                                    return <div className="h-11 flex items-center px-3 text-[11px] text-purple-400 italic border border-dashed border-purple-200 rounded-xl bg-white">Sifarişlərdə məhsul tapılmadı</div>;
+                                                                }
+
+                                                                return (
+                                                                    <div className="border border-purple-200 rounded-xl bg-white p-2 max-h-[180px] overflow-y-auto space-y-1.5">
+                                                                        {parsedProducts.map((p, pi) => {
+                                                                            const checked = !!selections.find(s => s.name === p.name);
+                                                                            const selectedQty = selections.find(s => s.name === p.name)?.qty || p.qty;
+                                                                            return (
+                                                                                <div key={pi} className={cn("flex items-center gap-2 p-1.5 rounded-lg transition-colors", checked ? "bg-purple-50" : "hover:bg-slate-50")}>
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        disabled={!isEditing}
+                                                                                        checked={checked}
+                                                                                        onChange={() => toggleProduct(p)}
+                                                                                        className="w-4 h-4 accent-purple-600 cursor-pointer shrink-0"
+                                                                                    />
+                                                                                    <span className="flex-1 text-[12px] font-semibold text-slate-700 truncate" title={p.name}>
+                                                                                        {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
+                                                                                    </span>
+                                                                                    {checked && p.qty > 1 && (
+                                                                                        <select
+                                                                                            disabled={!isEditing}
+                                                                                            value={selectedQty}
+                                                                                            onChange={(e) => setQty(p.name, parseInt(e.target.value) || 1)}
+                                                                                            className="h-8 px-1 rounded-lg text-[11px] font-bold border border-purple-200 bg-white text-center disabled:opacity-50 shrink-0"
+                                                                                            title="Qaytarılan sayı"
+                                                                                        >
+                                                                                            {Array.from({ length: p.qty }, (_, i) => i + 1).map(n => (
+                                                                                                <option key={n} value={n}>{n} əd.</option>
+                                                                                            ))}
+                                                                                        </select>
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* SECTION 3: Xahiş Mətni Görünüşü */}
+                                                    <div>
+                                                        <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                            <span>Xahiş mətni görünüşü</span>
+                                                            <span className="h-px flex-1 bg-purple-200" />
+                                                        </div>
+                                                        <div className="bg-white p-3 rounded-xl border border-purple-200 space-y-1.5 shadow-sm">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider flex items-center justify-between">
+                                                                <span>Sənəddəki mətn</span>
+                                                                <span className="text-[8px] font-normal opacity-70">Buradan birbaşa redaktə edə bilərsiniz</span>
+                                                            </label>
+                                                            {(() => {
+                                                                // Calculate default xahis text
+                                                                let totalUnpaid = 0;
+                                                                let totalPrice = 0;
+                                                                let hasImei = false;
+                                                                const contractDates = new Set<string>();
+
+                                                                const products: { raw: string; name: string; qty: number }[] = [];
+                                                                let invPaid = 0;
+                                                                (inv.orders || []).forEach((ord: any) => {
+                                                                    const tp = parseFloat(ord.totalPrice) || 0;
+                                                                    totalPrice += tp;
+
+                                                                    const op = parseFloat(ord.paidAmount) || 0;
+                                                                    invPaid += op;
+
+                                                                    if (ord.contractDate) contractDates.add(ord.contractDate);
+                                                                    if (ord.hasImieFee || (ord.productDescription || "").toLowerCase().includes("imei") || (ord.checkedImeis && ord.checkedImeis.length > 0)) {
+                                                                        hasImei = true;
+                                                                    }
+
+                                                                    const desc = (ord.productDescription || "").trim();
+                                                                    if (!desc) return;
+                                                                    desc.split(",").forEach((part: string) => {
+                                                                        const trimmed = part.trim();
+                                                                        if (!trimmed) return;
+                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                        if (qtyMatch) {
+                                                                            products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                        } else {
+                                                                            products.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        }
+                                                                    });
+                                                                });
+
+                                                                let calculatedUnpaid = Math.max(0, totalPrice - invPaid);
+
+                                                                const deducted = parseFloat(inv.exceptionReturnedPrice || "0");
+                                                                if (deducted > 0) calculatedUnpaid = Math.max(0, calculatedUnpaid - deducted);
+
+                                                                const calculatedPenalty = calculatedUnpaid * 0.10;
+
+                                                                // Multi-select aware: use exceptionProducts array when present
+                                                                const selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) && inv.exceptionProducts.length > 0
+                                                                    ? inv.exceptionProducts
+                                                                    : (inv.exceptionProduct ? [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }] : []);
+
+                                                                const rebuilt: string[] = [];
+                                                                products.forEach(p => {
+                                                                    const sel = selections.find(s => s.name === p.name || s.name === p.raw);
+                                                                    if (sel) {
+                                                                        const remaining = p.qty - sel.qty;
+                                                                        if (remaining > 1) rebuilt.push(`${remaining} ədəd ${p.name}`);
+                                                                        else if (remaining === 1) rebuilt.push(p.name);
+                                                                    } else {
+                                                                        rebuilt.push(p.raw);
                                                                     }
                                                                 });
-                                                            });
+                                                                const finalMehsul = rebuilt.join(", ");
+                                                                const cDate = Array.from(contractDates)[0] || "";
+                                                                const cDateOrd = cDate ? `${cDate}-cü` : ""; // approximate ordinal
 
-                                                            // Migrate legacy single-selection to array on first render
-                                                            let selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) ? inv.exceptionProducts : [];
-                                                            if (selections.length === 0 && inv.exceptionProduct) {
-                                                                selections = [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }];
-                                                            }
-
-                                                            const commitSelections = (next: Array<{ name: string; qty: number }>) => {
-                                                                updateInvoice(inv.id, 'exceptionProducts', next as any);
-                                                                if (next.length === 0) {
-                                                                    updateInvoice(inv.id, 'exceptionProduct', "");
-                                                                    updateInvoice(inv.id, 'exceptionProductQty', "1");
-                                                                } else if (next.length === 1) {
-                                                                    updateInvoice(inv.id, 'exceptionProduct', next[0].name);
-                                                                    updateInvoice(inv.id, 'exceptionProductQty', String(next[0].qty));
+                                                                // Only render default phrase if there are remaining products
+                                                                let defaultText = "";
+                                                                if (finalMehsul.trim().length > 0) {
+                                                                    defaultText = `${cDateOrd} il tarixli müqaviləyə əsasən, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu`;
                                                                 } else {
-                                                                    const joined = next.map(s => s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name).join(", ");
-                                                                    updateInvoice(inv.id, 'exceptionProduct', joined);
-                                                                    updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    defaultText = "";
                                                                 }
-                                                            };
 
-                                                            const toggleProduct = (p: { name: string; qty: number }) => {
-                                                                const exists = selections.find(s => s.name === p.name);
-                                                                let next: Array<{ name: string; qty: number }>;
-                                                                if (exists) {
-                                                                    next = selections.filter(s => s.name !== p.name);
-                                                                } else {
-                                                                    next = [...selections, { name: p.name, qty: p.qty }];
-                                                                }
-                                                                commitSelections(next);
-                                                            };
+                                                                const textValue = inv.exceptionXahisText !== undefined ? inv.exceptionXahisText : defaultText;
 
-                                                            const setQty = (name: string, qty: number) => {
-                                                                const next = selections.map(s => s.name === name ? { ...s, qty } : s);
-                                                                commitSelections(next);
-                                                            };
-
-                                                            if (parsedProducts.length === 0) {
-                                                                return <div className="h-11 flex items-center px-3 text-[11px] text-purple-400 italic border border-dashed border-purple-200 rounded-xl bg-white">Sifarişlərdə məhsul tapılmadı</div>;
-                                                            }
-
-                                                            return (
-                                                                <div className="border border-purple-200 rounded-xl bg-white p-2 max-h-[180px] overflow-y-auto space-y-1.5">
-                                                                    {parsedProducts.map((p, pi) => {
-                                                                        const checked = !!selections.find(s => s.name === p.name);
-                                                                        const selectedQty = selections.find(s => s.name === p.name)?.qty || p.qty;
-                                                                        return (
-                                                                            <div key={pi} className={cn("flex items-center gap-2 p-1.5 rounded-lg transition-colors", checked ? "bg-purple-50" : "hover:bg-slate-50")}>
-                                                                                <input
-                                                                                    type="checkbox"
-                                                                                    disabled={!isEditing}
-                                                                                    checked={checked}
-                                                                                    onChange={() => toggleProduct(p)}
-                                                                                    className="w-4 h-4 accent-purple-600 cursor-pointer shrink-0"
-                                                                                />
-                                                                                <span className="flex-1 text-[12px] font-semibold text-slate-700 truncate" title={p.name}>
-                                                                                    {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
-                                                                                </span>
-                                                                                {checked && p.qty > 1 && (
-                                                                                    <select
-                                                                                        disabled={!isEditing}
-                                                                                        value={selectedQty}
-                                                                                        onChange={(e) => setQty(p.name, parseInt(e.target.value) || 1)}
-                                                                                        className="h-8 px-1 rounded-lg text-[11px] font-bold border border-purple-200 bg-white text-center disabled:opacity-50 shrink-0"
-                                                                                        title="Qaytarılan sayı"
-                                                                                    >
-                                                                                        {Array.from({ length: p.qty }, (_, i) => i + 1).map(n => (
-                                                                                            <option key={n} value={n}>{n} əd.</option>
-                                                                                        ))}
-                                                                                    </select>
-                                                                                )}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            );
-                                                        })()}
+                                                                return (
+                                                                    <textarea
+                                                                        readOnly={!isEditing}
+                                                                        value={textValue}
+                                                                        onChange={(e) => updateInvoice(inv.id, 'exceptionXahisText', e.target.value)}
+                                                                        className="w-full h-20 px-3 py-2 text-[11px] leading-relaxed rounded-lg outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white resize-none text-slate-700"
+                                                                    />
+                                                                );
+                                                            })()}
+                                                        </div>
                                                     </div>
-                                                </div>
-
-                                                {/* SECTION 3: Xahiş Mətni Görünüşü */}
-                                                <div>
-                                                    <div className="text-[9px] font-bold text-purple-700 uppercase tracking-[0.15em] mb-2.5 flex items-center gap-2">
-                                                        <span className="h-px flex-1 bg-purple-200" />
-                                                        <span>Xahiş mətni görünüşü</span>
-                                                        <span className="h-px flex-1 bg-purple-200" />
-                                                    </div>
-                                                <div className="bg-white p-3 rounded-xl border border-purple-200 space-y-1.5 shadow-sm">
-                                                    <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider flex items-center justify-between">
-                                                        <span>Sənəddəki mətn</span>
-                                                        <span className="text-[8px] font-normal opacity-70">Buradan birbaşa redaktə edə bilərsiniz</span>
-                                                    </label>
-                                                    {(() => {
-                                                        // Calculate default xahis text
-                                                        let totalUnpaid = 0;
-                                                        let totalPrice = 0;
-                                                        let hasImei = false;
-                                                        const contractDates = new Set<string>();
-
-                                                        const products: { raw: string; name: string; qty: number }[] = [];
-                                                        let invPaid = 0;
-                                                        (inv.orders || []).forEach((ord: any) => {
-                                                            const tp = parseFloat(ord.totalPrice) || 0;
-                                                            totalPrice += tp;
-
-                                                            const op = parseFloat(ord.paidAmount) || 0;
-                                                            invPaid += op;
-
-                                                            if (ord.contractDate) contractDates.add(ord.contractDate);
-                                                            if (ord.hasImieFee || (ord.productDescription || "").toLowerCase().includes("imei") || (ord.checkedImeis && ord.checkedImeis.length > 0)) {
-                                                                hasImei = true;
-                                                            }
-
-                                                            const desc = (ord.productDescription || "").trim();
-                                                            if (!desc) return;
-                                                            desc.split(",").forEach((part: string) => {
-                                                                const trimmed = part.trim();
-                                                                if (!trimmed) return;
-                                                                const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
-                                                                if (qtyMatch) {
-                                                                    products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
-                                                                } else {
-                                                                    products.push({ raw: trimmed, name: trimmed, qty: 1 });
-                                                                }
-                                                            });
-                                                        });
-
-                                                        let calculatedUnpaid = Math.max(0, totalPrice - invPaid);
-
-                                                        const deducted = parseFloat(inv.exceptionReturnedPrice || "0");
-                                                        if (deducted > 0) calculatedUnpaid = Math.max(0, calculatedUnpaid - deducted);
-
-                                                        const calculatedPenalty = calculatedUnpaid * 0.10;
-
-                                                        // Multi-select aware: use exceptionProducts array when present
-                                                        const selections: Array<{ name: string; qty: number }> = Array.isArray(inv.exceptionProducts) && inv.exceptionProducts.length > 0
-                                                            ? inv.exceptionProducts
-                                                            : (inv.exceptionProduct ? [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }] : []);
-
-                                                        const rebuilt: string[] = [];
-                                                        products.forEach(p => {
-                                                            const sel = selections.find(s => s.name === p.name || s.name === p.raw);
-                                                            if (sel) {
-                                                                const remaining = p.qty - sel.qty;
-                                                                if (remaining > 1) rebuilt.push(`${remaining} ədəd ${p.name}`);
-                                                                else if (remaining === 1) rebuilt.push(p.name);
-                                                            } else {
-                                                                rebuilt.push(p.raw);
-                                                            }
-                                                        });
-                                                        const finalMehsul = rebuilt.join(", ");
-                                                        const cDate = Array.from(contractDates)[0] || "";
-                                                        const cDateOrd = cDate ? `${cDate}-cü` : ""; // approximate ordinal
-
-                                                        // Only render default phrase if there are remaining products
-                                                        let defaultText = "";
-                                                        if (finalMehsul.trim().length > 0) {
-                                                            defaultText = `${cDateOrd} il tarixli müqaviləyə əsasən, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu borcu yaranmışdır.`;
-                                                        } else {
-                                                            defaultText = "";
-                                                        }
-
-                                                        const textValue = inv.exceptionXahisText !== undefined ? inv.exceptionXahisText : defaultText;
-
-                                                        return (
-                                                            <textarea
-                                                                readOnly={!isEditing}
-                                                                value={textValue}
-                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionXahisText', e.target.value)}
-                                                                className="w-full h-20 px-3 py-2 text-[11px] leading-relaxed rounded-lg outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white resize-none text-slate-700"
-                                                            />
-                                                        );
-                                                    })()}
-                                                </div>
-                                                </div>
                                                 </div>
                                             </div>
                                         )}

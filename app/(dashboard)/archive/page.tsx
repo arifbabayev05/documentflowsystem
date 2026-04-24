@@ -31,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
+import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
@@ -101,10 +102,12 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
 };
 
 const months = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
+const NEW_ARCHIVE_CUTOFF = new Date("2026-04-17T00:00:00").getTime();
+
 const formatRequestDate = (dateVal: any) => {
     if (!dateVal) return "";
-    const d = new Date(dateVal);
-    if (isNaN(d.getTime())) return "";
+    const d = parseDate(dateVal);
+    if (!d || isNaN(d.getTime())) return "";
     const day = d.getDate();
     const month = months[d.getMonth()];
     const year = d.getFullYear();
@@ -136,6 +139,7 @@ export default function ArchiveDocumentsPage() {
     const dropdownRef = useRef<HTMLDivElement>(null);
     const bulkDropdownRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const [isAssigning, setIsAssigning] = useState(false);
 
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const [exportStartDate, setExportStartDate] = useState("");
@@ -276,10 +280,12 @@ export default function ArchiveDocumentsPage() {
     };
 
     const handleAssign = async (archiverEmail: string, targetId?: string) => {
+        if (isAssigning) return;
         const idsToUpdate = targetId ? [targetId] : (selectedIds.length > 0 ? selectedIds : (selectedCustomer ? [selectedCustomer.id] : []));
         if (idsToUpdate.length === 0) return;
 
         try {
+            setIsAssigning(true);
             const assignAt = archiverEmail ? new Date().toISOString() : "";
             const archiverToSet = archiverEmail || "";
 
@@ -295,7 +301,7 @@ export default function ArchiveDocumentsPage() {
 
             setCustomers(prev => prev.map(c => {
                 const foundIdx = idsToUpdate.indexOf(c.id);
-                if (foundIdx !== -1) {
+                if (foundIdx !== -1 && results[foundIdx]) {
                     return { ...c, ...results[foundIdx] };
                 }
                 return c;
@@ -303,7 +309,9 @@ export default function ArchiveDocumentsPage() {
 
             if (selectedCustomer && idsToUpdate.includes(selectedCustomer.id)) {
                 const myResult = results[idsToUpdate.indexOf(selectedCustomer.id)];
-                setSelectedCustomer(prev => prev ? { ...prev, ...myResult } : null);
+                if (myResult) {
+                    setSelectedCustomer(prev => prev ? { ...prev, ...myResult } : null);
+                }
             }
 
             setAssignOpen(false);
@@ -311,7 +319,7 @@ export default function ArchiveDocumentsPage() {
             setBulkAssignOpen(false);
             setSelectedIds([]);
             toast.success(archiverEmail ? `${idsToUpdate.length} tapşırıq təyin edildi` : "Təyinatlar ləğv edildi");
-        } catch { toast.error("Xəta baş verdi"); }
+        } catch { toast.error("Xəta baş verdi"); } finally { setIsAssigning(false); }
     };
 
     const getArchiveCounts = (c: CustomerRow) => {
@@ -337,6 +345,23 @@ export default function ArchiveDocumentsPage() {
         return total > 0 && done === 0;
     };
 
+    const getArchiveRequestTime = useCallback((c: CustomerRow) => {
+        const invoices = c.details?.invoices?.filter(inv => (inv as any).archiveRequested || inv.archiveUrl) || [];
+        const activityTimes = invoices.map(inv => {
+            if (inv.archiveRequestedAt) return parseDate(inv.archiveRequestedAt)?.getTime() || 0;
+            return 0;
+        }).filter(t => t > 0);
+
+        if (activityTimes.length > 0) return Math.max(...activityTimes);
+
+        const latestAction = c.statusHistory
+            ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
+            ?.sort((a: any, b: any) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[0];
+
+        return latestAction ? parseDate(latestAction.timestamp)?.getTime() || 0 : 0;
+    }, []);
+
+
     const getTotalInvoiceCounts = useCallback((custList: CustomerRow[]) => {
         let totalInv = 0;
         let doneInv = 0;
@@ -349,37 +374,48 @@ export default function ArchiveDocumentsPage() {
     }, []);
 
     const visibleCustomers = useMemo(() => {
-        return customers.filter(c => isManager || c.archiveAssignedTo === user?.email);
-    }, [customers, isManager, user?.email]);
+        return customers.filter(c => {
+            if (getArchiveRequestTime(c) < NEW_ARCHIVE_CUTOFF) return false;
+            return isManager || c.archiveAssignedTo === user?.email;
+        });
+    }, [customers, isManager, user?.email, getArchiveRequestTime]);
 
     const filteredCustomers = useMemo(() => {
         const s = searchTerm.toLowerCase();
         return visibleCustomers.filter(c => {
             const nameMatch = c.fullName.toLowerCase().includes(s) || (c.customerCode || "").toLowerCase().includes(s);
             if (!nameMatch) return false;
-            if (filter === "unassigned" && !isCustomerNew(c)) return false;
-            if (filter === "pending" && !isCustomerInProgress(c)) return false;
+            
+            // "Hamısı" shows assigned tasks.
+            if (filter === "all" && !c.archiveAssignedTo) return false;
+            // "Yeni" shows only unassigned and after cutoff
+            if (filter === "unassigned" && (!!c.archiveAssignedTo || getArchiveRequestTime(c) < NEW_ARCHIVE_CUTOFF)) return false;
+            // "İşlənilir" shows assigned but not yet fully done
+            if (filter === "pending" && (!c.archiveAssignedTo || isCustomerDone(c))) return false;
+            // "Tamamlanıb" shows fully done
             if (filter === "done" && !isCustomerDone(c)) return false;
             return true;
         });
-    }, [visibleCustomers, searchTerm, filter]);
+    }, [visibleCustomers, searchTerm, filter, getArchiveRequestTime]);
+
 
     const filterStats = useMemo(() => {
         const getStr = (list: CustomerRow[]) => {
-            const { totalInv } = getTotalInvoiceCounts(list);
-            return `${list.length} / ${totalInv}`;
+            const invoices = getTotalInvoiceCounts(list).totalInv;
+            return `${list.length} iş / ${invoices} faktura`;
         };
         return {
-            all: getStr(visibleCustomers),
-            unassigned: getStr(visibleCustomers.filter(c => isCustomerNew(c))),
-            pending: getStr(visibleCustomers.filter(c => isCustomerInProgress(c))),
+            all: getStr(visibleCustomers.filter(c => !!c.archiveAssignedTo)),
+            unassigned: getStr(visibleCustomers.filter(c => !c.archiveAssignedTo && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF)),
+            pending: getStr(visibleCustomers.filter(c => !!c.archiveAssignedTo && !isCustomerDone(c))),
             done: getStr(visibleCustomers.filter(c => isCustomerDone(c)))
         };
-    }, [visibleCustomers, getTotalInvoiceCounts]);
+    }, [visibleCustomers, getArchiveRequestTime, getTotalInvoiceCounts]);
+
 
     const archiverWorkloads = useMemo(() => {
         return archivers.map(a => {
-            const assigned = customers.filter(c => c.archiveAssignedTo === a.email);
+            const assigned = customers.filter(c => c.archiveAssignedTo === a.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
             const { totalInv, doneInv } = getTotalInvoiceCounts(assigned);
             return {
                 ...a,
@@ -389,11 +425,11 @@ export default function ArchiveDocumentsPage() {
                 invoiceDone: doneInv
             };
         }).sort((a, b) => b.customerCount - a.customerCount);
-    }, [customers, archivers, getTotalInvoiceCounts]);
+    }, [customers, archivers, getTotalInvoiceCounts, getArchiveRequestTime]);
 
     const myStats = useMemo(() => {
         if (!user) return { customerCount: 0, customersDone: 0, totalInvoices: 0, doneInvoices: 0, pendingInvoices: 0, completionRate: 0 };
-        const assigned = customers.filter(c => c.archiveAssignedTo === user.email);
+        const assigned = customers.filter(c => c.archiveAssignedTo === user.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
         const customersDone = assigned.filter(c => isCustomerDone(c)).length;
         const { totalInv, doneInv } = getTotalInvoiceCounts(assigned);
         return {
@@ -404,7 +440,7 @@ export default function ArchiveDocumentsPage() {
             pendingInvoices: totalInv - doneInv,
             completionRate: totalInv > 0 ? Math.round((doneInv / totalInv) * 100) : 0
         };
-    }, [customers, user, getTotalInvoiceCounts]);
+    }, [customers, user, getTotalInvoiceCounts, getArchiveRequestTime]);
 
     const filteredArchivers = useMemo(() => {
         const s = dropdownSearch.toLowerCase();
@@ -417,9 +453,11 @@ export default function ArchiveDocumentsPage() {
     }, [selectedArchiverEmail, archiverWorkloads]);
 
     const overallStats = useMemo(() => {
-        const targets = selectedArchiverEmail
+        let targets = selectedArchiverEmail
             ? customers.filter(c => c.archiveAssignedTo === selectedArchiverEmail)
             : customers;
+
+        targets = targets.filter(c => getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
 
         const { totalInv, doneInv } = getTotalInvoiceCounts(targets);
 
@@ -452,7 +490,17 @@ export default function ArchiveDocumentsPage() {
             avgInvoices: targets.length > 0 ? (totalInv / targets.length).toFixed(1) : "0",
             storeDist
         };
-    }, [customers, selectedArchiverEmail, getTotalInvoiceCounts]);
+    }, [customers, selectedArchiverEmail, getTotalInvoiceCounts, getArchiveRequestTime]);
+
+    useEffect(() => {
+        if (isExportModalOpen) {
+            if (!isManager && user?.email) {
+                setExportExecutor([user.email]);
+            } else {
+                setExportExecutor([]);
+            }
+        }
+    }, [isExportModalOpen, isManager, user?.email]);
 
     const handleKeyDown = (e: React.KeyboardEvent, targetId?: string) => {
         if (!quickAssignId && !bulkAssignOpen && !assignOpen) return;
@@ -495,13 +543,16 @@ export default function ArchiveDocumentsPage() {
                 if (!exportExecutor.includes(c.archiveAssignedTo as string)) return false;
             }
             if (exportArchiveStatus.length > 0) {
-                const isDone = c.details?.invoices?.some(inv => inv.archiveUrl);
-                const isPending = (c.process_status as string) === 'ARCHIVE_REQUESTED';
+                const isNew = isCustomerNew(c);
+                const isPending = isCustomerInProgress(c);
+                const isDone = isCustomerDone(c);
+                const isUnassigned = !c.archiveAssignedTo;
                 
                 let matches = false;
-                if (exportArchiveStatus.includes("done") && isDone) matches = true;
+                if (exportArchiveStatus.includes("new") && isNew) matches = true;
                 if (exportArchiveStatus.includes("pending") && isPending) matches = true;
-                if (exportArchiveStatus.includes("unassigned") && !c.archiveAssignedTo) matches = true;
+                if (exportArchiveStatus.includes("done") && isDone) matches = true;
+                if (exportArchiveStatus.includes("unassigned") && isUnassigned) matches = true;
                 
                 if (!matches) return false;
             }
@@ -534,41 +585,31 @@ export default function ArchiveDocumentsPage() {
                 "Status": STATUS_LABELS[item.process_status as ProcessStatus]?.label || item.process_status || ""
             };
 
-            const invoices = item.details?.invoices || [];
-            if (invoices.length > 0) {
-                return invoices.flatMap((inv) => {
+            const allInvoices = item.details?.invoices || [];
+            const relevantInvoices = allInvoices.filter(inv => (inv as any).archiveRequested || inv.archiveUrl);
+            const invoicesToUse = relevantInvoices.length > 0 ? relevantInvoices : allInvoices;
+
+            if (invoicesToUse.length > 0) {
+                return invoicesToUse.map((inv) => {
                     const orders = inv.orders || [];
-                    if (orders.length > 0) {
-                        return orders.map(o => ({
-                            "S/N": snCounter++,
-                            ...baseRowData,
-                            "Mağaza": inv.store || item.store || "",
-                            "Faktura Nömrəsi": inv.invoiceNumber || "",
-                            "Məhsul (Faktura)": o.productDescription || "",
-                            "Müqavilə Tarixi": o.contractDate || "",
-                            "Müddət (ay)": o.paymentPeriod || "",
-                            "İlkin Ödəniş": o.initialPayment || "",
-                            "Aylıq Ödəniş": o.monthlyPayment || "",
-                            "Ödənilmiş": o.paidAmount || "",
-                            "Alqı-Satqı Qiyməti (Faktura)": o.totalPrice || "",
-                            "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Yüklənib" : (inv.archiveRequested ? "İstənilib" : "Gözlənilir")
-                        }));
-                    } else {
-                        return [{
-                            "S/N": snCounter++,
-                            ...baseRowData,
-                            "Mağaza": inv.store || item.store || "",
-                            "Faktura Nömrəsi": inv.invoiceNumber || "",
-                            "Məhsul (Faktura)": "",
-                            "Müqavilə Tarixi": "",
-                            "Müddət (ay)": "",
-                            "İlkin Ödəniş": "",
-                            "Aylıq Ödəniş": "",
-                            "Ödənilmiş": "",
-                            "Alqı-Satqı Qiyməti (Faktura)": "",
-                            "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Yüklənib" : (inv.archiveRequested ? "İstənilib" : "Gözlənilir")
-                        }];
-                    }
+                    const mergedProductDesc = orders.map(o => o.productDescription).filter(Boolean).join(" + ") || "";
+                    const totalContractPrice = orders.reduce((sum, o) => sum + (parseFloat(o.totalPrice) || 0), 0);
+                    const o = orders[0] || {};
+
+                    return {
+                        "S/N": snCounter++,
+                        ...baseRowData,
+                        "Mağaza": inv.store || item.store || "",
+                        "Faktura Nömrəsi": inv.invoiceNumber || "",
+                        "Məhsul (Faktura)": mergedProductDesc,
+                        "Müqavilə Tarixi": o.contractDate || "",
+                        "Müddət (ay)": o.paymentPeriod || "",
+                        "İlkin Ödəniş": o.initialPayment || "",
+                        "Aylıq Ödəniş": o.monthlyPayment || "",
+                        "Ödənilmiş": o.paidAmount || "",
+                        "Alqı-Satqı Qiyməti (Faktura)": totalContractPrice > 0 ? totalContractPrice.toString() : "",
+                        "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Yüklənib" : (inv.archiveRequested ? "İstənilib" : "Gözlənilir")
+                    };
                 });
             } else {
                 return [{
@@ -635,6 +676,14 @@ export default function ArchiveDocumentsPage() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
+                                {selectedArchiverEmail && (
+                                    <button
+                                        onClick={() => setSelectedArchiverEmail(null)}
+                                        className="h-8 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm"
+                                    >
+                                        <X size={14} /> Ümumi Bax
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setIsExportModalOpen(true)}
                                     className="h-8 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-sm"
@@ -693,9 +742,9 @@ export default function ArchiveDocumentsPage() {
                                             const count = filterStats[f];
                                             return (
                                                 <button key={f} onClick={() => setFilter(f)}
-                                                    className={cn("h-8 px-4 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-2 border",
+                                                    className={cn("h-8 px-3 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1.5 border whitespace-nowrap shrink-0",
                                                         filter === f ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-500 border-slate-200 hover:border-slate-400")}>
-                                                    {labels[f]} <span className={cn("text-[10px] font-bold", filter === f ? "text-white/60" : "text-slate-400")}>{count}</span>
+                                                    {labels[f]} <span className={cn("text-[10px] font-bold tracking-tight whitespace-nowrap shrink-0", filter === f ? "text-white/80" : "text-slate-400")}>({count})</span>
                                                 </button>
                                             );
                                         })}
@@ -734,13 +783,29 @@ export default function ArchiveDocumentsPage() {
                                                 <div className={cn("text-[10px] truncate mt-0.5 font-medium", selectedArchiverEmail === a.email ? "text-indigo-600/70" : "text-slate-500")}>{a.email}</div>
                                             </div>
                                             <div className="text-right shrink-0">
-                                                <div className={cn("text-[12px] font-black", selectedArchiverEmail === a.email ? "text-indigo-900" : "text-slate-900")}>{a.customerCount} / {a.invoiceCount}</div>
-                                                <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Müştəri / Faktura</div>
+                                                <div className={cn("text-[12px] font-black", selectedArchiverEmail === a.email ? "text-indigo-900" : "text-slate-900")}>{a.customerCount}</div>
+                                                <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ümumi Müştəri</div>
                                             </div>
                                         </div>
-                                        <div className="flex items-center justify-between text-[10px] font-bold uppercase mb-2 px-0.5">
-                                            <span className={cn(selectedArchiverEmail === a.email ? "text-indigo-600/60" : "text-slate-400")}>İcra Faizi</span>
-                                            <span className={cn(selectedArchiverEmail === a.email ? "text-indigo-900" : "text-slate-900")}>{a.invoiceDone} / {a.invoiceCount}</span>
+                                        <div className="flex flex-col gap-2 mb-2">
+                                            <div className="flex items-center justify-between px-2 text-[9px] font-bold tracking-widest">
+                                                <span className="text-emerald-600 uppercase">Tamamlanıb</span>
+                                                <span className="text-rose-500 uppercase">Gözləyir</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="flex-1 bg-white/50 rounded-lg p-2 border border-slate-200/60 transition-colors text-center">
+                                                    <div className="text-[12px] font-black text-slate-800">
+                                                        {a.customerDone} <span className="text-[9px] text-slate-400 font-medium">iş</span>
+                                                    </div>
+                                                    <div className="text-[9px] text-slate-400 font-medium mt-0.5 whitespace-nowrap">({a.invoiceDone} fakt.)</div>
+                                                </div>
+                                                <div className="flex-1 bg-white/50 rounded-lg p-2 border border-slate-200/60 transition-colors text-center shadow-sm border-rose-100 bg-rose-50/30">
+                                                    <div className="text-[12px] font-black text-slate-800">
+                                                        {a.customerCount - a.customerDone} <span className="text-[9px] text-slate-400 font-medium">iş</span>
+                                                    </div>
+                                                    <div className="text-[9px] text-slate-400 font-medium mt-0.5 whitespace-nowrap">({a.invoiceCount - a.invoiceDone} fakt.)</div>
+                                                </div>
+                                            </div>
                                         </div>
                                         <div className={cn("h-1.5 rounded-full overflow-hidden border border-slate-300/30", selectedArchiverEmail === a.email ? "bg-indigo-200/50" : "bg-slate-200")}>
                                             <div
@@ -858,8 +923,8 @@ export default function ArchiveDocumentsPage() {
                                                             {filteredArchivers.length === 0 ? (
                                                                 <div className="py-4 text-center text-[10px] text-slate-400 font-bold uppercase italic">Tapılmadı</div>
                                                             ) : filteredArchivers.map((a, i) => (
-                                                                <button key={a.id} onClick={(e) => { e.stopPropagation(); handleAssign(a.email, c.id); }} onMouseEnter={() => setKeyboardIndex(i)}
-                                                                    className={cn("w-full p-2 rounded-lg flex items-center gap-3 text-left transition-all", keyboardIndex === i ? "bg-slate-900 shadow-lg" : "hover:bg-slate-50")}>
+                                                                <button key={a.id} disabled={isAssigning} onClick={(e) => { e.stopPropagation(); handleAssign(a.email, c.id); }} onMouseEnter={() => setKeyboardIndex(i)}
+                                                                    className={cn("w-full p-2 rounded-lg flex items-center gap-3 text-left transition-all", keyboardIndex === i ? "bg-slate-900 shadow-lg" : "hover:bg-slate-50", isAssigning && "opacity-50 cursor-not-allowed")}>
                                                                     <div className={cn("h-7 w-7 rounded-md flex items-center justify-center text-[10px] font-black shrink-0 border", keyboardIndex === i ? "bg-white/10 text-white border-white/20" : "bg-white text-slate-700 border-slate-200")}>
                                                                         {a.displayName?.[0]}
                                                                     </div>
@@ -875,6 +940,14 @@ export default function ArchiveDocumentsPage() {
                                                                 </button>
                                                             ))}
                                                         </div>
+                                                        {user?.role === "SUPERADMIN" && c.archiveAssignedTo && (
+                                                            <div className="mt-2 pt-2 border-t border-slate-100">
+                                                                <button disabled={isAssigning} onClick={(e) => { e.stopPropagation(); handleAssign("", c.id); }}
+                                                                    className={cn("w-full p-2 rounded-lg text-rose-500 hover:bg-rose-50 text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2", isAssigning && "opacity-50 cursor-not-allowed")}>
+                                                                    <Trash2 size={12} /> Təyinatı Sil
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -916,8 +989,8 @@ export default function ArchiveDocumentsPage() {
                                                 {filteredArchivers.length === 0 ? (
                                                     <div className="py-10 text-center text-[11px] text-slate-400 font-bold uppercase italic tracking-[0.3em]">Nəticə tapılmadı</div>
                                                 ) : filteredArchivers.map((a, i) => (
-                                                    <button key={a.id} onClick={() => handleAssign(a.email)} onMouseEnter={() => setKeyboardIndex(i)}
-                                                        className={cn("w-full p-4 rounded-[1.25rem] flex items-center gap-4 text-left transition-all", keyboardIndex === i ? "bg-slate-900 shadow-xl" : "hover:bg-slate-50")}>
+                                                    <button key={a.id} disabled={isAssigning} onClick={() => handleAssign(a.email)} onMouseEnter={() => setKeyboardIndex(i)}
+                                                        className={cn("w-full p-4 rounded-[1.25rem] flex items-center gap-4 text-left transition-all", keyboardIndex === i ? "bg-slate-900 shadow-xl" : "hover:bg-slate-50", isAssigning && "opacity-50 cursor-not-allowed")}>
                                                         <div className={cn("h-11 w-11 rounded-xl flex items-center justify-center text-[14px] font-black shrink-0 border transition-colors", keyboardIndex === i ? "bg-white/10 text-white border-white/20" : "bg-white text-slate-700 border-slate-200 shadow-sm")}>
                                                             {a.displayName?.[0]}
                                                         </div>
@@ -933,12 +1006,14 @@ export default function ArchiveDocumentsPage() {
                                                     </button>
                                                 ))}
                                             </div>
-                                            <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
-                                                <button onClick={() => handleAssign("")}
-                                                    className="flex-1 p-3.5 rounded-2xl border border-rose-100 text-rose-500 hover:bg-rose-50 text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2">
-                                                    <Trash2 size={14} /> Təyinatları Sil
-                                                </button>
-                                            </div>
+                                            {user?.role === "SUPERADMIN" && (
+                                                <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
+                                                    <button disabled={isAssigning} onClick={() => handleAssign("")}
+                                                        className={cn("flex-1 p-3.5 rounded-2xl border border-rose-100 text-rose-500 hover:bg-rose-50 text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2", isAssigning && "opacity-50 cursor-not-allowed")}>
+                                                        <Trash2 size={14} /> Təyinatları Sil
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -996,12 +1071,17 @@ export default function ArchiveDocumentsPage() {
                                         </div>
                                     </div>
 
-                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between group hover:border-indigo-300 transition-all">
+                                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center justify-between group hover:border-rose-300 transition-all shadow-sm">
                                         <div>
-                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Gözləyən</span>
-                                            <p className="text-2xl font-black text-slate-900 leading-none">{myStats.pendingInvoices}</p>
+                                            <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1.5 block">Qalan İş / Fakt.</span>
+                                            <div className="flex items-end gap-2">
+                                                <p className="text-2xl font-black text-slate-900 leading-none">{myStats.customerCount - myStats.customersDone}</p>
+                                                <p className="text-[9px] font-bold text-slate-400 mb-0.5">iş</p>
+                                                <p className="text-[12px] font-black text-slate-600 ml-1 leading-tight border-l pl-2 border-slate-300">{myStats.pendingInvoices}</p>
+                                                <p className="text-[9px] font-bold text-slate-400 mb-0.5 whitespace-nowrap">fakt. qalıb</p>
+                                            </div>
                                         </div>
-                                        <div className="h-10 w-10 rounded-xl bg-white text-slate-400 border border-slate-200 flex items-center justify-center shrink-0 shadow-sm group-hover:text-rose-500 group-hover:border-rose-200 transition-all">
+                                        <div className="h-10 w-10 rounded-xl bg-white text-rose-500 border border-rose-200 flex items-center justify-center shrink-0 shadow-sm transition-all">
                                             <Clock size={16} />
                                         </div>
                                     </div>
@@ -1043,11 +1123,11 @@ export default function ArchiveDocumentsPage() {
                             {/* Dense Stats Grid */}
                             <div className="grid grid-cols-5 gap-4 mb-5">
                                 {[
-                                    { label: "Müştəri", val: overallStats.totalCustomers, icon: <User size={14} />, color: "text-blue-600" },
+                                    { label: "Müştəri (İş)", val: overallStats.totalCustomers, icon: <User size={14} />, color: "text-blue-600" },
                                     { label: "Faktura", val: overallStats.totalInvoices, icon: <FileText size={14} />, color: "text-indigo-600" },
-                                    { label: "Tamamlanan", val: overallStats.doneInvoices, icon: <CheckCircle2 size={14} />, color: "text-emerald-600" },
-                                    { label: "Gözləyən", val: overallStats.pendingInvoices, icon: <Clock size={14} />, color: "text-rose-500" },
-                                    { label: "Ort. Fakt", val: overallStats.avgInvoices, icon: <BarChart3 size={14} />, color: "text-violet-600" },
+                                    { label: "BİtƏN İŞLƏR", val: overallStats.totalCustomers - overallStats.pendingCustomers, icon: <CheckCircle2 size={14} />, color: "text-emerald-600" },
+                                    { label: "QALAN İŞLƏR", val: overallStats.pendingCustomers, icon: <Clock size={14} />, color: "text-rose-500" },
+                                    { label: "Qalan Faktura", val: overallStats.pendingInvoices, icon: <BarChart3 size={14} />, color: "text-rose-700" },
                                 ].map((item, i) => (
                                     <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                                         <div>
@@ -1215,7 +1295,7 @@ export default function ArchiveDocumentsPage() {
                                         const requestDate = inv.archiveRequestedAt ||
                                             (selectedCustomer.statusHistory || [])
                                                 .filter((h: any) => h.action === "ARCHIVE_REQUEST")
-                                                .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[idx]?.timestamp ||
+                                                .sort((a: any, b: any) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[idx]?.timestamp ||
                                             (selectedCustomer.statusHistory || [])
                                                 .filter((h: any) => h.action === "ARCHIVE_REQUEST")[0]?.timestamp;
 
@@ -1348,22 +1428,28 @@ export default function ArchiveDocumentsPage() {
                                 </div>
                             </div>
 
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">İşin kimin üstündə olduğu (İcraçı)</label>
-                                <MultiSelect
-                                    options={Array.from(new Set(customers.map(c => c.archiveAssignedTo).filter(Boolean))).map(email => ({ value: email as string, label: email as string }))}
-                                    selected={exportExecutor}
-                                    onChange={setExportExecutor}
-                                    placeholder="Bütün icraçılar"
-                                />
-                            </div>
+                            {isManager && (
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">İşin kimin üstündə olduğu (İcraçı)</label>
+                                    <MultiSelect
+                                        options={Array.from(new Set(customers.map(c => c.archiveAssignedTo).filter(Boolean))).map(email => ({ 
+                                            value: email as string, 
+                                            label: archivers.find(a => a.email === email)?.displayName || email as string 
+                                        }))}
+                                        selected={exportExecutor}
+                                        onChange={setExportExecutor}
+                                        placeholder="Bütün icraçılar"
+                                    />
+                                </div>
+                            )}
                             <div className="flex flex-col gap-1.5">
                                 <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Arxiv Statusu</label>
                                 <MultiSelect
                                     options={[
+                                        { value: "new", label: "Yeni" },
                                         { value: "pending", label: "İşlənilir / Gözlənilir" },
                                         { value: "done", label: "Tamamlanıb (Yüklənib)" },
-                                        { value: "unassigned", label: "Təyin Edilməyib" }
+                                        { value: "unassigned", label: "Təyinat olunmayıb" }
                                     ]}
                                     selected={exportArchiveStatus}
                                     onChange={setExportArchiveStatus}
