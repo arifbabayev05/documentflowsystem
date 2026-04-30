@@ -287,7 +287,7 @@ function getAZOrdinal(dateStr: string): string {
     return "-ci";
 }
 
-function getAllContractDates(invoices: any[]): string {
+function getAllContractDates(invoices: any[], isSuffix: boolean = false): string {
     const dates: string[] = [];
     for (const inv of invoices) {
         if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
@@ -295,7 +295,8 @@ function getAllContractDates(invoices: any[]): string {
                 if (ord.contractDate) {
                     const extraDateOrdinal = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
                     const ordDateOrdinal = `${ord.contractDate}${getAZOrdinal(ord.contractDate)}`;
-                    const formatted = `${extraDateOrdinal} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${ordDateOrdinal} il tarixli ${inv.invoiceNumber} saylı faktura`;
+                    const endWord = isSuffix ? "fakturanın" : "fakturaya";
+                    const formatted = `${extraDateOrdinal} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${ordDateOrdinal} il tarixli ${inv.invoiceNumber} saylı ${endWord}`;
                     if (!dates.includes(formatted)) {
                         dates.push(formatted);
                     }
@@ -539,6 +540,17 @@ function buildInvoiceData(
         guzestSeparator = ", ";  // vergül + boşluq
     }
 
+    const muqavileTarixiFixed = formatToDDMMYYYY(contractDate || "");
+    let muqavileCumlesi = "";
+    if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+        const extraDateOrd = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+        const cDateOrd = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)}`;
+        const actInvNumber = inv.invoiceNumber || "";
+        muqavileCumlesi = `${extraDateOrd} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən,`;
+    } else {
+        muqavileCumlesi = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)} il tarixli müqaviləyə əsasən,`;
+    }
+
     return {
         // Exception Data
         isException: isExceptionMode,
@@ -548,7 +560,7 @@ function buildInvoiceData(
         umumi_mebleg_tarix: umumiMeblegTarix.toFixed(2),
         qaytarilmis_mebleg_sozle: numberToAzerbaijaniFinancialWords(exceptionReturnedPrice),
         umumi_mebleg_tarix_sozle: numberToAzerbaijaniFinancialWords(umumiMeblegTarix),
-        
+
         // 10-Year Contract Data
         is10Years: !!inv.is10Years,
         extraContractDate: inv.extraContractDate || "",
@@ -579,6 +591,7 @@ function buildInvoiceData(
 
         // Ümumi (Ərizə + Cədvəl)
         muqavile_tarixi: contractDate,
+        muqavile_cumlesi: muqavileCumlesi,
         mehsul_siyahi: productNames.join(", "),
         alqi_satqi_qiymeti: invTotalPrice.toFixed(2),
         alqi_satqi_qiymeti_sozle: numberToAzerbaijaniFinancialWords(invTotalPrice),
@@ -894,7 +907,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         }
 
         const joinedNames = names.join(", ");
-        
+
         if (src.is10Years && src.extraContractDate && src.extraInvoice) {
             const extraDateOrd = `${src.extraContractDate}${getAZOrdinal(src.extraContractDate)}`;
             const cDateOrd = `${cDate}${getAZOrdinal(cDate)}`;
@@ -952,6 +965,16 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             const inv_model_date = buildInvModelDate(invData);
             const B = (v: any, key: string) => `\uE000B:${key}\uE001${v}\uE000/B\uE001`;
 
+            let istisnaMuqavileCumlesi = "";
+            if (invData.is10Years && invData.extraContractDate && invData.extraInvoice) {
+                const extraDateOrd = `${invData.extraContractDate}${getAZOrdinal(invData.extraContractDate)}`;
+                const cDateOrd = `${imtinaMuqavileTarixiStr}${getAZOrdinal(imtinaMuqavileTarixiStr)}`;
+                const actInvNumber = invData.invoiceNumber || invData._invoiceNumber || "";
+                istisnaMuqavileCumlesi = `${extraDateOrd} il tarixli ${invData.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən,`;
+            } else {
+                istisnaMuqavileCumlesi = `${B(imtinaMuqavileTarixiStr, "imtina_muqavile_tarix")} il tarixli müqaviləsinə əsasən,`;
+            }
+
             return {
                 ...invData,
 
@@ -960,12 +983,13 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
                 imtina_tarixi: B(imtinaDateStr, "imtina_tarixi"),
                 imtina_fakturasi: B(invData.imtina_fakturasi, "imtina_fakturasi"),
                 imtina_muqavile_tarix: B(imtinaMuqavileTarixiStr, "imtina_muqavile_tarix"),
+                istisna_muqavile_cumlesi: istisnaMuqavileCumlesi,
                 imtina_faktura_tarixi: B(imtinaFakturaTarixiStr, "imtina_faktura_tarixi"),
                 imtina_mehsul: B(exceptionProductText, "imtina_mehsul"),
                 imtina_mebleg: B(invData.silinen_borc, "imtina_mebleg"),
                 imtina_meblegi: B(invData.silinen_borc, "imtina_meblegi"),
                 silinen_borc: B(invData.silinen_borc, "silinen_borc"),
-
+                
                 inv_model_date: inv_model_date,
 
 
@@ -1150,13 +1174,13 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         const isLast = idx === arr.length - 1;
         const total = arr.length;
         let finalSeparator = "";
-        
+
         if (total === 1 || isLast) {
             finalSeparator = " pulu borcu yaranmışdır.";
         } else {
             finalSeparator = ";";
         }
-        
+
         return {
             ...inv,
             inv_separator: finalSeparator
@@ -1259,7 +1283,8 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
 
         // Products / IMEI
-        BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
+        BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices, false),
+        BUTUN_MUQAVILE_TARIXLERI_SUFFIX: getAllContractDates(invoices, true),
         BUTUN_MEHSULLAR: getAllProducts(invoices),
         BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
         BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
@@ -2199,9 +2224,9 @@ function GenerateDocumentContent() {
             const invPaidSum = (inv.orders || []).reduce((ordAcc, ord) => {
                 return ordAcc + (parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0);
             }, 0);
-            
+
             const baseUnpaid = Math.max(0, invTotalPrice - invPaidSum);
-            
+
             const isExceptionMode = inv.isException === true || String(inv.isException) === 'true';
             const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
             let istisnaUnpaid = baseUnpaid;
