@@ -15,3 +15,5 @@ out/
 firebase_export.sql
 
 *.sql
+
+scripts/serviceAccountKey.json
