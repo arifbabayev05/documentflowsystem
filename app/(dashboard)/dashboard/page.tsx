@@ -427,6 +427,9 @@ interface CustomerRow {
             exceptionDeductedAmount?: string;
             exceptionReturnedPrice?: string;
             exceptionXahisText?: string;
+            is10Years?: boolean;
+            extraContractDate?: string;
+            extraInvoice?: string;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -1099,6 +1102,18 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
         e.stopPropagation();
 
         const dataToSave = { ...localData };
+        
+        // 10-year validation
+        const invoices = dataToSave.details?.invoices || [];
+        for (const inv of invoices) {
+            if (inv.is10Years) {
+                if (!inv.extraContractDate?.trim() || !inv.extraInvoice?.trim()) {
+                    toast.error("10 İllik Müqavilə seçildikdə 'Əlavə Müqavilə Tarixi' və 'Əlavə müqavilə Fakturası' doldurulmalıdır.");
+                    if (!isExpanded) setIsExpanded(true);
+                    return;
+                }
+            }
+        }
         if (dataToSave.fullName) {
             dataToSave.fullName = toTitleCase(dataToSave.fullName);
         }
@@ -1917,6 +1932,13 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                             if (!isExpanded) setIsExpanded(true);
                                                             return;
                                                         }
+                                                        if (inv.is10Years) {
+                                                            if (!inv.extraContractDate?.trim() || !inv.extraInvoice?.trim()) {
+                                                                toast.error("10 İllik Müqavilə seçildikdə 'Əlavə Müqavilə Tarixi' və 'Əlavə müqavilə Fakturası' doldurulmalıdır.");
+                                                                if (!isExpanded) setIsExpanded(true);
+                                                                return;
+                                                            }
+                                                        }
                                                         if (!inv.orders || inv.orders.length === 0) {
                                                             toast.error("Əskik doldurulan məlumat var: [Faktura və Sifariş] bölməsinə məhsul əlavə edin.");
                                                             if (!isExpanded) setIsExpanded(true);
@@ -2122,8 +2144,11 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                     exceptionInvoiceDate: "",
                                     exceptionProduct: "",
                                     exceptionDeductedAmount: "",
-                                    exceptionReturnedPrice: ""
-                                }]).map((inv, idx, allInvs) => (
+                                    exceptionReturnedPrice: "",
+                                    is10Years: false,
+                                    extraContractDate: "",
+                                    extraInvoice: ""
+                                } as any]).map((inv: any, idx: number, allInvs: any[]) => (
                                     <div key={inv.id} className="relative group p-6 rounded-[2rem] border-2 border-red-100 hover:border-red-200 transition-all bg-white shadow-sm">
 
                                         {/* HEADER SECTION */}
@@ -2175,6 +2200,21 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                             )}
                                                         >
                                                             İstisna
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (!isEditing) setIsEditing(true);
+                                                                updateInvoice(inv.id, 'is10Years', !inv.is10Years);
+                                                            }}
+                                                            className={cn(
+                                                                "h-11 px-6 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border flex items-center gap-2 shrink-0",
+                                                                inv.is10Years
+                                                                    ? "bg-red-600 text-white border-red-700 shadow-md shadow-red-200"
+                                                                    : "bg-red-50 text-red-600 border-red-200/50 hover:bg-red-100"
+                                                            )}
+                                                        >
+                                                            10 illik
                                                         </button>
                                                     </div>
                                                 </div>
@@ -2580,12 +2620,30 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                                 });
                                                                 const finalMehsul = rebuilt.join(", ");
                                                                 const cDate = Array.from(contractDates)[0] || "";
-                                                                const cDateOrd = cDate ? `${cDate}-cü` : ""; // approximate ordinal
+                                                                const getAZOrdinal = (dateStr: string) => {
+                                                                    if (!dateStr) return "-ci";
+                                                                    const yearMatch = dateStr.match(/\d{4}/);
+                                                                    if (!yearMatch) return "-ci";
+                                                                    const year = yearMatch[0];
+                                                                    const lastDigit = parseInt(year[year.length - 1], 10);
+                                                                    if ([3, 4].includes(lastDigit)) return "-cü";
+                                                                    if ([6].includes(lastDigit)) return "-cı";
+                                                                    if ([9].includes(lastDigit)) return "-cu";
+                                                                    return "-ci";
+                                                                };
+                                                                const cDateOrd = cDate ? `${cDate}${getAZOrdinal(cDate)}` : "";
 
                                                                 // Only render default phrase if there are remaining products
                                                                 let defaultText = "";
                                                                 if (finalMehsul.trim().length > 0) {
-                                                                    defaultText = `${cDateOrd} il tarixli müqaviləyə əsasən, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu`;
+                                                                    if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+                                                                        const extraDateOrdinal = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+                                                                        const ordDateOrdinal = `${cDate}${getAZOrdinal(cDate)}`;
+                                                                        const contractPrefix = `${extraDateOrdinal} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${ordDateOrdinal} il tarixli ${inv.invoiceNumber} saylı fakturaya əsasən`;
+                                                                        defaultText = `${contractPrefix}, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu`;
+                                                                    } else {
+                                                                        defaultText = `${cDateOrd} il tarixli müqaviləyə əsasən, ${finalMehsul} üçün ${calculatedUnpaid.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedUnpaid)}) manat ödənilməmiş hissə, ${hasImei ? "İMEİ rüsumu və" : ""} ${calculatedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(calculatedPenalty)}) manat dəbbə pulu`;
+                                                                    }
                                                                 } else {
                                                                     defaultText = "";
                                                                 }
@@ -2607,9 +2665,59 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                             </div>
                                         )}
 
+                                        {/* 10-YEAR FIELDS */}
+                                        {inv.is10Years && (
+                                            <div className="mt-4 rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
+                                                <div className="px-5 py-3 bg-gradient-to-r from-slate-700 to-slate-600 flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center">
+                                                            <span className="text-white text-[11px] font-black">10</span>
+                                                        </div>
+                                                        <h5 className="text-[11px] font-black text-white uppercase tracking-[0.15em]">10 İllik Müqavilə Təfərrüatları</h5>
+                                                    </div>
+                                                    <span className="text-[9px] font-bold text-white/80 uppercase tracking-wider">Əlavə Müqavilə Tarixi və Fakturası</span>
+                                                </div>
+
+                                                <div className="p-5 space-y-5 bg-slate-50/50">
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                                                                Əlavə Müqavilə Tarixi
+                                                            </label>
+                                                            <input
+                                                                readOnly={!isEditing}
+                                                                value={inv.extraContractDate || ""}
+                                                                onChange={(e) => updateInvoice(inv.id, 'extraContractDate', formatDateInput(e.target.value))}
+                                                                className={cn(
+                                                                    "w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border text-center",
+                                                                    !inv.extraContractDate && isEditing ? "border-slate-400 bg-slate-100 placeholder:text-slate-400" : "border-slate-200 focus:border-slate-500 bg-white"
+                                                                )}
+                                                                placeholder="GG.AA.İİİİ"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                                                                Əlavə müqavilə Fakturası
+                                                            </label>
+                                                            <input
+                                                                readOnly={!isEditing}
+                                                                value={inv.extraInvoice || ""}
+                                                                onChange={(e) => updateInvoice(inv.id, 'extraInvoice', e.target.value)}
+                                                                className={cn(
+                                                                    "w-full h-11 px-3 rounded-xl text-[12px] font-bold outline-none transition-all border text-center",
+                                                                    !inv.extraInvoice && isEditing ? "border-slate-400 bg-slate-100 placeholder:text-slate-400" : "border-slate-200 focus:border-slate-500 bg-white"
+                                                                )}
+                                                                placeholder="Faktura nömrəsi..."
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* ORDERS LIST */}
                                         <div className="grid gap-4 mt-6">
-                                            {(inv.orders || []).map((ord, oidx) => (
+                                            {(inv.orders || []).map((ord: any, oidx: number) => (
                                                 <div key={ord.id} className="bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group/ord relative">
                                                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
                                                         {/* Məhsul Adı */}

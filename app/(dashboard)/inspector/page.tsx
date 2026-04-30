@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle, Users, DollarSign, UserCheck, Search, Filter } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle, Users, DollarSign, UserCheck, Search, Filter, FileDown, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
 import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers } from "@/lib/db";
+import * as XLSX from "xlsx";
 
 interface EntryRow {
     customer_code: string;
@@ -281,6 +282,14 @@ export default function InspectorPage() {
     const [itemsPerPage, setItemsPerPage] = useState(20);
     const [selectedInspector, setSelectedInspector] = useState("ALL");
 
+    // Export Modal State
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [exportStartDate, setExportStartDate] = useState("");
+    const [exportEndDate, setExportEndDate] = useState("");
+    const [exportInspectors, setExportInspectors] = useState<string[]>([]);
+    const [exportSearchTerm, setExportSearchTerm] = useState("");
+    const [isExportComboboxOpen, setIsExportComboboxOpen] = useState(false);
+
     const tableRef = useRef<HTMLDivElement>(null);
 
     const askConfirmation = (message: string) => {
@@ -300,7 +309,7 @@ export default function InspectorPage() {
         });
     };
 
-    const isLeadOrAdmin = user?.role === "INSPECTOR_LEAD" || user?.role === "SUPERADMIN";
+    const isLeadOrAdmin = user?.role === "INSPECTOR_LEAD" || user?.role === "SUPERADMIN" || user?.role === "DEP_HEAD" || user?.role === "MANAGER";
 
     /* ── fetch history ── */
     const fetchHistory = useCallback(async () => {
@@ -428,6 +437,65 @@ export default function InspectorPage() {
     }
 
 
+
+    /* ── excel export handler ── */
+    const handleExcelExport = () => {
+        let dataToExport = history;
+
+        if (exportStartDate || exportEndDate) {
+            dataToExport = dataToExport.filter(row => {
+                if (!row.createdAt) return false;
+                const rowDate = new Date(row.createdAt);
+                rowDate.setHours(0, 0, 0, 0);
+
+                if (exportStartDate) {
+                    const start = new Date(exportStartDate);
+                    start.setHours(0, 0, 0, 0);
+                    if (rowDate < start) return false;
+                }
+                if (exportEndDate) {
+                    const end = new Date(exportEndDate);
+                    end.setHours(0, 0, 0, 0);
+                    if (rowDate > end) return false;
+                }
+                return true;
+            });
+        }
+
+        if (exportInspectors.length > 0) {
+            dataToExport = dataToExport.filter(row => exportInspectors.includes(row.createdBy));
+        }
+
+        const statsMap = new Map<string, { SAA: string, count: number }>();
+
+        dataToExport.forEach(row => {
+            const email = row.createdBy || "Bilinmir";
+            const saa = row.details?.executorName || email.split('@')[0];
+            
+            if (statsMap.has(email)) {
+                statsMap.get(email)!.count += 1;
+            } else {
+                statsMap.set(email, { SAA: saa, count: 1 });
+            }
+        });
+
+        const excelData = Array.from(statsMap.values()).map(stat => ({
+            "Daxil Edən": stat.SAA,
+            "Sayı": stat.count
+        }));
+
+        if (excelData.length === 0) {
+            toast.error("Seçilmiş kriteriyalara uyğun məlumat tapılmadı.");
+            return;
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Müfəttiş_Statistika");
+
+        XLSX.writeFile(workbook, `Mufettis_Statistika_${new Date().toISOString().split('T')[0]}.xlsx`);
+        setIsExportModalOpen(false);
+    };
 
     /* ── paste handler ── */
     const handlePaste = (e: React.ClipboardEvent) => {
@@ -847,6 +915,22 @@ export default function InspectorPage() {
                                         <X size={14} />
                                     </button>
                                 )}
+                                {isLeadOrAdmin && (
+                                    <button
+                                        onClick={() => {
+                                            setExportStartDate("");
+                                            setExportEndDate("");
+                                            setExportInspectors([]);
+                                            setExportSearchTerm("");
+                                            setIsExportModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 px-3 py-2 rounded-xl text-[13px] font-bold transition-colors shadow-sm ml-2"
+                                        title="Excel Export"
+                                    >
+                                        <FileDown size={14} />
+                                        <span className="hidden sm:inline">Export</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -979,6 +1063,141 @@ export default function InspectorPage() {
                 onConfirm={confirmModal?.onConfirm || (() => { })}
                 onCancel={confirmModal?.onCancel || (() => { })}
             />
+
+            {/* Export Modal */}
+            {isExportModalOpen && (
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsExportModalOpen(false)} />
+                    <div className="relative bg-white rounded-3xl p-8 max-w-xl w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between mb-8">
+                            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3">
+                                <FileDown className="text-emerald-500" />
+                                Məlumatları Export Et
+                            </h3>
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-xl transition-colors"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-6">
+                            {/* Date Range */}
+                            <div className="space-y-3">
+                                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Tarix Aralığı</label>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={exportStartDate}
+                                            onChange={(e) => setExportStartDate(e.target.value)}
+                                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                                        />
+                                        <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    </div>
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={exportEndDate}
+                                            onChange={(e) => setExportEndDate(e.target.value)}
+                                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                                        />
+                                        <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Inspector Combobox */}
+                            <div className="space-y-3">
+                                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Müfəttişlər</label>
+                                <div className="relative">
+                                    <div 
+                                        className="w-full flex flex-wrap items-center gap-2 pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 transition-all cursor-pointer min-h-[48px]"
+                                        onClick={() => setIsExportComboboxOpen(!isExportComboboxOpen)}
+                                    >
+                                        {exportInspectors.length === 0 ? (
+                                            <span className="text-slate-400">Bütün müfəttişlər</span>
+                                        ) : (
+                                            exportInspectors.map(email => (
+                                                <span key={email} className="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg flex items-center gap-1 text-[11px]">
+                                                    {email.split('@')[0]}
+                                                    <X 
+                                                        size={12} 
+                                                        className="cursor-pointer hover:text-red-500" 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExportInspectors(prev => prev.filter(i => i !== email));
+                                                        }} 
+                                                    />
+                                                </span>
+                                            ))
+                                        )}
+                                        <ChevronRight size={16} className={`absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${isExportComboboxOpen ? 'rotate-[-90deg]' : 'rotate-90'}`} />
+                                    </div>
+
+                                    {isExportComboboxOpen && (
+                                        <div className="absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 shadow-xl rounded-xl z-50 overflow-hidden">
+                                            <div className="p-2 border-b border-slate-100">
+                                                <div className="relative">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Müfəttiş axtar..."
+                                                        value={exportSearchTerm}
+                                                        onChange={(e) => setExportSearchTerm(e.target.value)}
+                                                        className="w-full pl-8 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-bold text-slate-700 outline-none focus:border-blue-500"
+                                                    />
+                                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                </div>
+                                            </div>
+                                            <div className="max-h-[200px] overflow-y-auto">
+                                                {inspectors.filter(email => email.toLowerCase().includes(exportSearchTerm.toLowerCase())).map(email => {
+                                                    const isSelected = exportInspectors.includes(email);
+                                                    return (
+                                                        <div
+                                                            key={email}
+                                                            onClick={() => {
+                                                                if (isSelected) {
+                                                                    setExportInspectors(prev => prev.filter(i => i !== email));
+                                                                } else {
+                                                                    setExportInspectors(prev => [...prev, email]);
+                                                                }
+                                                            }}
+                                                            className={`px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}
+                                                        >
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
+                                                                {isSelected && <Check size={12} className="text-white" />}
+                                                            </div>
+                                                            <span className="text-[13px] font-bold text-slate-700">{email}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-4 mt-8 pt-6 border-t border-slate-100">
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="flex-1 px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-[12px] hover:bg-slate-50 transition-colors shadow-sm tracking-widest"
+                            >
+                                Ləğv Et
+                            </button>
+                            <button
+                                onClick={handleExcelExport}
+                                className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-black uppercase text-[12px] hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/20 transition-all tracking-widest flex items-center justify-center gap-2"
+                            >
+                                <FileDown size={16} />
+                                Export Yarat
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </AuthGuard>
     );
 }

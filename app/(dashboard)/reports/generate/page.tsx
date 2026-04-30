@@ -290,13 +290,29 @@ function getAZOrdinal(dateStr: string): string {
 function getAllContractDates(invoices: any[]): string {
     const dates: string[] = [];
     for (const inv of invoices) {
-        for (const ord of (inv.orders || [])) {
-            if (ord.contractDate && !dates.includes(ord.contractDate)) {
-                dates.push(ord.contractDate);
+        if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+            for (const ord of (inv.orders || [])) {
+                if (ord.contractDate) {
+                    const extraDateOrdinal = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+                    const ordDateOrdinal = `${ord.contractDate}${getAZOrdinal(ord.contractDate)}`;
+                    const formatted = `${extraDateOrdinal} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${ordDateOrdinal} il tarixli ${inv.invoiceNumber} saylı faktura`;
+                    if (!dates.includes(formatted)) {
+                        dates.push(formatted);
+                    }
+                }
+            }
+        } else {
+            for (const ord of (inv.orders || [])) {
+                if (ord.contractDate) {
+                    const formatted = `${ord.contractDate}${getAZOrdinal(ord.contractDate)} il`;
+                    if (!dates.includes(formatted)) {
+                        dates.push(formatted);
+                    }
+                }
             }
         }
     }
-    return dates.map(d => `${d}${getAZOrdinal(d)} il`).join(", ");
+    return dates.join(", ");
 }
 
 function getMuqavileTarixiXeberdarliq(invoices: any[]): string {
@@ -528,6 +544,15 @@ function buildInvoiceData(
         isException: isExceptionMode,
         imtina_tarixi: inv.exceptionDate || "",
         imtina_fakturasi: inv.exceptionInvoice || inv.invoiceNumber || "",
+        qaytarilmis_mebleg: exceptionReturnedPrice.toFixed(2),
+        umumi_mebleg_tarix: umumiMeblegTarix.toFixed(2),
+        qaytarilmis_mebleg_sozle: numberToAzerbaijaniFinancialWords(exceptionReturnedPrice),
+        umumi_mebleg_tarix_sozle: numberToAzerbaijaniFinancialWords(umumiMeblegTarix),
+        
+        // 10-Year Contract Data
+        is10Years: !!inv.is10Years,
+        extraContractDate: inv.extraContractDate || "",
+        extraInvoice: inv.extraInvoice || "",
         imtina_muqavile_tarix: inv.exceptionInvoiceDate || contractDate || "",
         imtina_mehsul: inv.exceptionProduct || "",
         imtina_mebleg: inv.exceptionReturnedPrice || "",
@@ -772,12 +797,22 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             let defaultText = "";
             let skipItem = false;
 
+            let muqavileCumlesi = "";
+            if (invData.is10Years && invData.extraContractDate && invData.extraInvoice) {
+                const extraDateOrd = `${invData.extraContractDate}${getAZOrdinal(invData.extraContractDate)}`;
+                const cDateOrd = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)}`;
+                const actInvNumber = invData.invoiceNumber || invData._invoiceNumber || "";
+                muqavileCumlesi = `${extraDateOrd} il tarixli ${invData.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən`;
+            } else {
+                muqavileCumlesi = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)} il tarixli müqaviləyə əsasən,`;
+            }
+
             if (adjustedMehsulSiyahi.trim().length > 0) {
                 const currentIlmFee = parseFloat(invData.inv_ilm_fee) || 0;
                 const imeiReplacementText = (hasImei && currentIlmFee > 0)
                     ? `İnnovativ Layihələr Mərkəzinə ödənilən ${currentIlmFee.toFixed(2)} (${numberToAzerbaijaniFinancialWords(currentIlmFee)}) manat rüsum, `
                     : "";
-                defaultText = `${muqavileTarixiFixed}-cü il tarixli müqaviləyə əsasən, ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${imeiReplacementText}${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord} pulu  `;
+                defaultText = `${muqavileCumlesi} ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${imeiReplacementText}${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord}${invData.base_separator || ""}`;
             } else {
                 defaultText = "";
                 skipItem = true;
@@ -794,7 +829,8 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             return {
                 ...invData,
                 inv_separator: invData.base_separator,
-                muqavile_tarixi: muqavileTarixiFixed,
+                muqavile_tarixi: invData.is10Years ? muqavileCumlesi : muqavileTarixiFixed,
+                muqavile_cumlesi: muqavileCumlesi,
                 mehsul_siyahi: adjustedMehsulSiyahi,
                 odenilmemis_hisse: adjustedUnpaid.toFixed(2),
                 odenilmemis_hisse_sozle: adjustedUnpaidSozle,
@@ -858,6 +894,15 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         }
 
         const joinedNames = names.join(", ");
+        
+        if (src.is10Years && src.extraContractDate && src.extraInvoice) {
+            const extraDateOrd = `${src.extraContractDate}${getAZOrdinal(src.extraContractDate)}`;
+            const cDateOrd = `${cDate}${getAZOrdinal(cDate)}`;
+            const actInvNumber = src.invoiceNumber || src._invoiceNumber || "";
+            const prefix = `${extraDateOrd} il tarixli ${src.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı faktura:`;
+            return `${prefix} ${joinedNames}`.trim();
+        }
+
         const combined = `${cDate} ${joinedNames}`.trim();
         return combined || joinedNames || cDate || "";
     };
