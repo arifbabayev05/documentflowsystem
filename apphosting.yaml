@@ -1,0 +1,49 @@
+runConfig:
+  maxInstances: 10
+  memoryMiB: 1024
+
+env:
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: "AIzaSyACk7G1pClIIVXgMwzGI8othZVexL58hHU"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: "legal12-kontakt.firebaseapp.com"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: "legal12-kontakt"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: "legal12-kontakt.firebasestorage.app"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "895536839180"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:895536839180:web:d5636f343eb79f5d81cc29"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: "G-731BZ2G3SLq"
+    availability:
+      - BUILD
+      - RUNTIME
+
+scripts:
+  buildCommand: node scripts/apphosting-build.js
+  runCommand: npm run start
+
+outputFiles:
+  serverApp:
+    include:
+      - .

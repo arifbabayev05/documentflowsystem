@@ -56,6 +56,7 @@ interface CompanyInfo {
     address: string;
     phone: string;
     fax: string;
+    dbMode?: "firebase" | "mysql";
 }
 
 export default function ParametersPage() {
@@ -78,7 +79,8 @@ export default function ParametersPage() {
         representativeFin: "",
         address: "",
         phone: "",
-        fax: ""
+        fax: "",
+        dbMode: "firebase"
     });
     const [isSavingSettings, setIsSavingSettings] = useState(false);
 
@@ -420,6 +422,65 @@ export default function ParametersPage() {
                                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Telefon</label>
                                         <input value={companyInfo.phone || ""} onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })} className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm" />
                                     </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Faks</label>
+                                        <input value={companyInfo.fax || ""} onChange={(e) => setCompanyInfo({ ...companyInfo, fax: e.target.value })} className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Database Switch Section (Super Admin Only) */}
+                    {user?.role === 'SUPERADMIN' && (
+                        <div className="lg:col-span-12">
+                            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2.5rem] border border-slate-700 p-8 lg:p-12 soft-shadow relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-12 opacity-10 pointer-events-none text-white"><LayoutDashboard size={240} /></div>
+                                <div className="flex items-center justify-between mb-8 relative z-10">
+                                    <div className="flex items-center gap-4">
+                                        <div className="h-12 w-12 bg-white/10 text-white rounded-2xl flex items-center justify-center shadow-sm border border-white/10"><Save size={24} /></div>
+                                        <div>
+                                            <h3 className="text-2xl font-black text-white uppercase tracking-tight">Məlumat Bazası (Database)</h3>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Sistemin işlədiyi əsas məlumat bazası</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={handleSaveSettings} disabled={isSavingSettings} className="flex items-center gap-2 px-8 py-4 bg-white hover:bg-slate-100 text-slate-900 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50">
+                                        {isSavingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                                        Təsdiqlə
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
+                                    <button
+                                        onClick={() => setCompanyInfo({ ...companyInfo, dbMode: 'firebase' })}
+                                        className={cn(
+                                            "p-6 rounded-[1.5rem] border-2 text-left transition-all",
+                                            companyInfo.dbMode === 'firebase' || !companyInfo.dbMode
+                                                ? "bg-amber-500/20 border-amber-500 text-amber-100"
+                                                : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="font-bold text-lg">Firebase (Firestore)</h4>
+                                            {(!companyInfo.dbMode || companyInfo.dbMode === 'firebase') && <div className="h-3 w-3 bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)]" />}
+                                        </div>
+                                        <p className="text-xs opacity-70">Mövcud NoSQL bulud bazası. Bütün sistem bu baza üzərindən işləyir.</p>
+                                    </button>
+                                    
+                                    <button
+                                        onClick={() => setCompanyInfo({ ...companyInfo, dbMode: 'mysql' })}
+                                        className={cn(
+                                            "p-6 rounded-[1.5rem] border-2 text-left transition-all",
+                                            companyInfo.dbMode === 'mysql'
+                                                ? "bg-blue-500/20 border-blue-500 text-blue-100"
+                                                : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="font-bold text-lg">MySQL (Relational)</h4>
+                                            {companyInfo.dbMode === 'mysql' && <div className="h-3 w-3 bg-blue-500 rounded-full shadow-[0_0_10px_rgba(59,130,246,0.5)]" />}
+                                        </div>
+                                        <p className="text-xs opacity-70">Yeni relasional baza strukturu. Keçid etdikdə məlumatlar MySQL serverindən oxunacaq.</p>
+                                    </button>
                                 </div>
                             </div>
                         </div>

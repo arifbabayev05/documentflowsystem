@@ -1,14 +1,18 @@
 {
-  "hosting": {
-    "public": "out",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [],
-    "cleanUrls": true
-  },
+  "apphosting": [
+    {
+      "backendId": "legal12-next",
+      "rootDir": ".",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        ".next",
+        "out"
+      ]
+    }
+  ],
   "functions": [
     {
       "source": "functions",

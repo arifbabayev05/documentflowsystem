@@ -56,7 +56,7 @@ export function useBotStatus() {
     useEffect(() => {
         if (!initialCheckDone.current) {
             initialCheckDone.current = true;
-            checkBotStatus();
+            //checkBotStatus();
         }
         const interval = setInterval(checkBotStatus, 5000);
         return () => clearInterval(interval);
