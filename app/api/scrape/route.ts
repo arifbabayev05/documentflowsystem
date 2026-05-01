@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { exec } from 'child_process';
-import axios from 'axios';
+import { API_ENDPOINTS } from '@/config/api';
 
 export async function POST(req: Request) {
     try {
@@ -10,63 +9,29 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "FİN və Seriya nömrəsi daxil edilməlidir" }, { status: 400 });
         }
 
-        // 1. EXE-ni başlat
-        // Qeyd: Bu yalnız yerəl (local) mühitdə və Windows-da işləyəcək
-        try {
-            exec('C:\\social-bot\\e-social-bot.exe', (error) => {
-                if (error) {
-                    console.error("EXE başlatma xətası:", error);
-                }
-            });
-        } catch (execErr: any) {
-            console.warn("EXE başlatıla bilmədi (ola bilsin artıq açıqdır):", execErr.message);
+        const response = await fetch(API_ENDPOINTS.scrape, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fin, sv }),
+            signal: AbortSignal.timeout(100000), // 100s — function itself has 90s timeout
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            return NextResponse.json(
+                { error: data.error || data.message || "Xidmət cavab vermir." },
+                { status: response.status }
+            );
         }
 
-        // 2. Bir neçə saniyə gözləyin ki, server ayağa qalxsın
-        await new Promise(r => setTimeout(r, 2000));
-
-        // 3. API sorğusunu göndər və datanı al
-        // Bot yerli 3000 portunda işləyir (Və ya botun konfiqurasiyasına uyğun port)
-        try {
-            const response = await axios.post('http://127.0.0.1:3000/api/scrape', {
-                fin: fin,
-                sv: sv
-            }, {
-                timeout: 60000 // 60 saniyə gözləmə
-            });
-
-            if (response.data.success) {
-                console.log("Bot-dan gələn data:", response.data.data);
-
-                const botData = response.data.data;
-
-                // Məlumatları təmizləyib və formatlayıb geri qaytarırıq
-                const mapped = {
-                    fullName: botData.fullName?.toUpperCase() || "",
-                    gender: botData.gender || "",
-                    birthDate: botData.birthDate || "",
-                    address: botData.address || "",
-                    actualAddress: botData.actualAddress || "",
-                    passportSeries: botData.passportSeries || sv.toUpperCase(),
-                    passportNumber: botData.passportNumber || "",
-                    issueDate: botData.issueDate || "",
-                    authority: botData.authority || ""
-                };
-
-                return NextResponse.json({ data: mapped });
-            } else {
-                return NextResponse.json({ error: response.data.message || "Məlumat tapılmadı." }, { status: 404 });
-            }
-        } catch (apiErr: any) {
-            console.error("Sessiya Xətası:", apiErr.message);
-            return NextResponse.json({
-                error: "ƏMAS-a daxil olub, yenidən məlumatları gətirməyə cəhd edin",
-                details: apiErr.message
-            }, { status: 401 });
-        }
+        return NextResponse.json(data);
 
     } catch (error: any) {
-        console.error("Scraping route error:", error);
+        if (error.name === 'TimeoutError' || error.message?.includes('timeout')) {
+            return NextResponse.json({ error: "Sorğu vaxtı bitdi. Zəhmət olmasa yenidən cəhd edin." }, { status: 504 });
+        }
+        console.error("Scrape route error:", error);
         return NextResponse.json({ error: "Sistem xətası: " + error.message }, { status: 500 });
     }
 }

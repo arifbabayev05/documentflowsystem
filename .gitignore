@@ -11,3 +11,9 @@ out/
 /user_data_bot
 /bot_profile
 
+
+firebase_export.sql
+
+*.sql
+
+scripts/serviceAccountKey.json

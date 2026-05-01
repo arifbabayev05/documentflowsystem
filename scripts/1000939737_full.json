@@ -1,0 +1,186 @@
+{
+  "isArchived": true,
+  "fullData": true,
+  "process_status": "UNFINISHED_ARCHIVE",
+  "fullName": "Abbasova Ülvi̇yyə Novruz",
+  "_forceReplaceInvoices": true,
+  "debtAmount": "3061.51",
+  "assignedTo": "sabina.ismayilova@abc-telecom.az",
+  "store": "Kontakt Online",
+  "updatedAt": {
+    "_methodName": "serverTimestamp"
+  },
+  "customerCode": "1000939737",
+  "archivedAt": "2026-04-02T11:56:00.702Z",
+  "createdBy": "aziza.nasirova@abc-telecom.az",
+  "id": "1000939737",
+  "assignedAt": "2026-04-02T11:44:11.212Z",
+  "details": {
+    "phoneCount": "1",
+    "isWarningSent": false,
+    "penalty": "278.32",
+    "address": "Ağdam R, Qiyaslı K",
+    "paymentPeriod": "12",
+    "invoices": [
+      {
+        "exceptionProductQty": "1",
+        "store": "Kontakt Online",
+        "isException": true,
+        "orders": [
+          {
+            "paymentPeriod": "12",
+            "phoneCount": 4,
+            "monthlyPayment": "96.42",
+            "totalPrice": "1157.04",
+            "initialPayment": "0",
+            "contractDate": "15.04.2025",
+            "id": "vtvbke",
+            "productDescription": "QIZIL ZƏMANƏT ULTRA 2 IL, MOUSE LOGİTECH, WINDOWS 11, ACER kompüter",
+            "paidAmount": "152.37"
+          }
+        ],
+        "invoiceNumber": "19606351",
+        "exceptionDate": "21.04.2025",
+        "exceptionProduct": "QIZIL ZƏMANƏT ULTRA 2 IL",
+        "exceptionProducts": [
+          {
+            "qty": 1,
+            "name": "QIZIL ZƏMANƏT ULTRA 2 IL"
+          }
+        ],
+        "exceptionReturnedPrice": "120",
+        "archiveRequested": false,
+        "id": "2fphf"
+      },
+      {
+        "exceptionReturnedPrice": "40",
+        "id": "08r2uh",
+        "archiveRequested": false,
+        "exceptionProducts": [
+          {
+            "qty": 1,
+            "name": "QIZIL ZƏMANƏT ULTRA 3 IL"
+          }
+        ],
+        "exceptionProduct": "QIZIL ZƏMANƏT ULTRA 3 IL",
+        "exceptionDate": "21.04.2025",
+        "invoiceNumber": "19606347",
+        "orders": [
+          {
+            "contractDate": "02.05.2025",
+            "id": "8l7ay",
+            "productDescription": "QIZIL ZƏMANƏT ULTRA 3 IL, FRİTOZ BRAUN",
+            "paidAmount": "17.4",
+            "paymentPeriod": "12",
+            "phoneCount": 2,
+            "monthlyPayment": "22.66",
+            "totalPrice": "271.92",
+            "initialPayment": "0"
+          }
+        ],
+        "exceptionProductQty": "1",
+        "store": "Kontakt Online",
+        "isException": true
+      },
+      {
+        "store": "Kontakt Online",
+        "archiveBase64": "",
+        "archiveUrl": "",
+        "orders": [
+          {
+            "contractDate": "02.05.2025",
+            "id": "o_def",
+            "paidAmount": "36.98",
+            "productDescription": "PAKET XL xidməti, SAMSUNG 25W COMPACT CHARGER, İmei kod 350673972317879 SAMSUNG GALAXY S24 FE, VİNİL MAT, VİNİL ŞƏFFAF",
+            "phoneCount": 5,
+            "monthlyPayment": "95.61",
+            "paymentPeriod": "18",
+            "totalPrice": "1720.98",
+            "initialPayment": "0"
+          }
+        ],
+        "archiveName": "",
+        "invoiceNumber": "049825996",
+        "archiveRequested": false,
+        "id": "def"
+      }
+    ],
+    "discountAmount": "3061.51",
+    "initialPayment": "0",
+    "qosmaItems": [
+      "Müqavilə – əsli",
+      "Çıxarışın surəti",
+      "Dövlət rüsumu barədə qəbz",
+      "Cavabdehin ş/v-nin surəti",
+      "Xəbərdarlıq (bildiriş)",
+      "Əmək müqaviləsi bildirişi",
+      "Etibarnamə"
+    ],
+    "contractNumber": "19606351",
+    "birthDate": "14.01.1982",
+    "fee": "0.00",
+    "fin": "10BBXMQ",
+    "totalPrice": "3149.94",
+    "contractDate": "15.04.2025",
+    "totalUnpaid": "3061.51",
+    "gender": "Qadın",
+    "productDescription": "QIZIL ZƏMANƏT ULTRA 2 IL, MOUSE LOGİTECH, WINDOWS 11, ACER kompüter",
+    "monthlyPayment": "96.42",
+    "actualAddress": "Bakı Ş, Xəzər R, Buzovna Qəs, 8 Saylı İnternat Məktəbi",
+    "unpaidAmount": "2783.19",
+    "passportSeries": "AZE16609010",
+    "generatedDocs": [
+      {
+        "name": "Abbasova_Ülvi̇yyə_Novruz_Istisna_Məhkəmə Sənədi-.docx.docx",
+        "createdAt": "2026-04-15T11:33:33.468Z",
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F1000939737%2FGeneratedDocs%2FAbbasova_%C3%9Clvi%CC%87yy%C9%99_Novruz_Istisna_M%C9%99hk%C9%99m%C9%99%20S%C9%99n%C9%99di-.docx.docx?alt=media&token=d6087238-2f27-4a05-bfa9-d0d87641e076"
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F1000939737%2FGeneratedDocs%2FAbbasova_%C3%9Clvi%CC%87yy%C9%99_Novruz_Istisna_%C3%96d%C9%99ni%C5%9F%20C%C9%99dv%C9%99li-no-imei.docx.docx?alt=media&token=57e7eb4d-bfd4-4b10-b0f7-ea10d27eb499",
+        "createdAt": "2026-04-15T11:33:33.920Z",
+        "name": "Abbasova_Ülvi̇yyə_Novruz_Istisna_Ödəniş Cədvəli-no-imei.docx.docx"
+      },
+      {
+        "createdAt": "2026-04-15T11:33:33.352Z",
+        "name": "Abbasova_Ülvi̇yyə_Novruz_Xəbərdarlıq Sənədi.docx.docx",
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F1000939737%2FGeneratedDocs%2FAbbasova_%C3%9Clvi%CC%87yy%C9%99_Novruz_X%C9%99b%C9%99rdarl%C4%B1q%20S%C9%99n%C9%99di.docx.docx?alt=media&token=6c25315d-8499-40b3-8d8f-f2b77fdc79ec"
+      }
+    ],
+    "executorName": "Əzizə F. Nəsirova",
+    "phone": "(070)729-88-37",
+    "paidAmount": "206.75"
+  },
+  "statusHistory": [
+    {
+      "timestamp": "2026-02-25T10:36:50.804Z",
+      "label": "Müştəri qeydə alındı",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "action": "CREATE"
+    },
+    {
+      "user": "aziza.nasirova@abc-telecom.az",
+      "action": "STATUS_CHANGE",
+      "label": "Müfəttiş təyin edildi",
+      "timestamp": "2026-04-02T11:44:11.447Z"
+    },
+    {
+      "label": "Məlumatlar dolduruldu",
+      "timestamp": "2026-04-02T11:55:58.799Z",
+      "action": "STATUS_CHANGE",
+      "user": "sabina.ismayilova@abc-telecom.az"
+    },
+    {
+      "user": "sabina.ismayilova@abc-telecom.az",
+      "action": "ARCHIVE",
+      "label": "Müştəri arxivə göndərildi",
+      "timestamp": "2026-04-02T11:56:00.702Z"
+    },
+    {
+      "timestamp": "2026-04-15T11:33:35.039Z",
+      "label": "Müştəri arxivdən bərpa edildi",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "action": "RESTORE"
+    }
+  ],
+  "courtName": "AĞDAM RAYON MƏHKƏMƏSİNƏ"
+}

@@ -52,13 +52,13 @@ export default function InspectorsPage() {
 
     const handleStartEdit = (inspector: any) => {
         setEditingId(inspector.id);
-        setEditValue(inspector.phone1 || "");
+        setEditValue(inspector.phoneNumber || inspector.phone1 || "");
     };
 
     const handleSaveInline = async (id: string) => {
         try {
-            await updateUserData(id, { phone1: editValue }, user?.email || "system");
-            setInspectors(prev => prev.map(i => i.id === id ? { ...i, phone1: editValue } : i));
+            await updateUserData(id, { phoneNumber: editValue }, user?.email || "system");
+            setInspectors(prev => prev.map(i => i.id === id ? { ...i, phoneNumber: editValue } : i));
             toast.success("Nömrə yeniləndi");
             setEditingId(null);
         } catch (error) {
@@ -202,7 +202,7 @@ export default function InspectorsPage() {
                                                                 <Phone size={12} />
                                                             </div>
                                                             <p className="text-sm font-black text-slate-700 tracking-tight">
-                                                                {inspector.phone1 || "—"}
+                                                                {inspector.phoneNumber || inspector.phone1 || "—"}
                                                             </p>
                                                         </div>
                                                         <button

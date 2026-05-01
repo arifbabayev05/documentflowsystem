@@ -1,0 +1,170 @@
+{
+  "isArchived": false,
+  "store": "Kontakt Online",
+  "debtAmount": "5775.20",
+  "fullName": "Orucov Elşad Sabi̇r",
+  "courtName": "QARADAĞ RAYON MƏHKƏMƏSİNƏ",
+  "updatedAt": {
+    "_methodName": "serverTimestamp"
+  },
+  "_forceReplaceInvoices": true,
+  "printedAt": "2026-04-15T11:08:38.680Z",
+  "archivedAt": "2026-04-15T11:08:39.089Z",
+  "fullData": true,
+  "createdBy": "aziza.nasirova@abc-telecom.az",
+  "statusHistory": [
+    {
+      "timestamp": "2026-02-25T10:40:52.262Z",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "label": "Müştəri qeydə alındı",
+      "action": "CREATE"
+    },
+    {
+      "timestamp": "2026-04-15T11:08:35.912Z",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "action": "WARNING_SENT",
+      "label": "Xəbərdarlıq məktubu göndərildi"
+    },
+    {
+      "action": "ARCHIVE",
+      "label": "Müştəri arxivə göndərildi",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "timestamp": "2026-04-15T11:08:39.089Z"
+    },
+    {
+      "timestamp": "2026-04-15T11:09:17.597Z",
+      "user": "aziza.nasirova@abc-telecom.az",
+      "action": "RESTORE",
+      "label": "Müştəri arxivdən bərpa edildi"
+    }
+  ],
+  "id": "698860",
+  "details": {
+    "passportSeries": "AA4433375",
+    "initialPayment": "0",
+    "totalUnpaid": "5775.20",
+    "qosmaItems": [
+      "Müqavilə – əsli",
+      "Çıxarışın surəti",
+      "Dövlət rüsumu barədə qəbz",
+      "Cavabdehin ş/v-nin surəti",
+      "Xəbərdarlıq (bildiriş)",
+      "Əmək müqaviləsi bildirişi",
+      "Etibarnamə"
+    ],
+    "actualAddress": "",
+    "generatedDocs": [
+      {
+        "createdAt": "2026-04-15T11:08:35.332Z",
+        "name": "Orucov_Elşad_Sabi̇r_Istisna_Məhkəmə Sənədi+.docx.docx",
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F698860%2FGeneratedDocs%2FOrucov_El%C5%9Fad_Sabi%CC%87r_Istisna_M%C9%99hk%C9%99m%C9%99%20S%C9%99n%C9%99di%2B.docx.docx?alt=media&token=d8a39c9b-abb9-42e2-b34d-92050b3c5cb5"
+      },
+      {
+        "name": "Orucov_Elşad_Sabi̇r_Istisna_Ödəniş Cədvəli+no-imei.docx.docx",
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F698860%2FGeneratedDocs%2FOrucov_El%C5%9Fad_Sabi%CC%87r_Istisna_%C3%96d%C9%99ni%C5%9F%20C%C9%99dv%C9%99li%2Bno-imei.docx.docx?alt=media&token=21594723-abcc-425f-9cbc-49ce8204102a",
+        "createdAt": "2026-04-15T11:08:35.610Z"
+      },
+      {
+        "createdAt": "2026-04-15T11:08:35.450Z",
+        "name": "Orucov_Elşad_Sabi̇r_Xəbərdarlıq Sənədi.docx.docx",
+        "url": "https://firebasestorage.googleapis.com/v0/b/legal12-kontakt.firebasestorage.app/o/Customers%2F698860%2FGeneratedDocs%2FOrucov_El%C5%9Fad_Sabi%CC%87r_X%C9%99b%C9%99rdarl%C4%B1q%20S%C9%99n%C9%99di.docx.docx?alt=media&token=c3ce12a3-8213-41be-946d-df78ffdc9b28"
+      }
+    ],
+    "productDescription": "QIZIL ZƏMANƏT ULTRA 2 IL, İmei kod 351232742311834 IPHONE 15",
+    "penalty": "525.02",
+    "invoices": [
+      {
+        "exceptionDate": "20.08.2025",
+        "orders": [
+          {
+            "paidAmount": "0",
+            "monthlyPayment": "137.27",
+            "contractDate": "19.08.2025",
+            "initialPayment": "0",
+            "phoneCount": 2,
+            "productDescription": "QIZIL ZƏMANƏT ULTRA 2 IL, İmei kod 351232742311834 IPHONE 15",
+            "totalPrice": "2470.86",
+            "paymentPeriod": "18",
+            "id": "p7x3r"
+          }
+        ],
+        "store": "Kontakt Online",
+        "exceptionProductQty": "1",
+        "exceptionReturnedPrice": "348",
+        "archiveRequested": false,
+        "exceptionProduct": "QIZIL ZƏMANƏT ULTRA 2 IL",
+        "isException": true,
+        "id": "mg1jol",
+        "exceptionProducts": [
+          {
+            "qty": 1,
+            "name": "QIZIL ZƏMANƏT ULTRA 2 IL"
+          }
+        ],
+        "invoiceNumber": "020112444"
+      },
+      {
+        "orders": [
+          {
+            "phoneCount": 1,
+            "id": "vcwis7",
+            "paymentPeriod": "18",
+            "productDescription": "PLAYSTATION 5 SLIM",
+            "totalPrice": "1364.40",
+            "contractDate": "20.09.2025",
+            "monthlyPayment": "55.8",
+            "paidAmount": "360",
+            "initialPayment": "360"
+          }
+        ],
+        "archiveRequested": false,
+        "id": "7czvc",
+        "store": "Kontakt Online",
+        "invoiceNumber": "032023579"
+      },
+      {
+        "archiveUrl": "",
+        "id": "def",
+        "archiveName": "",
+        "orders": [
+          {
+            "phoneCount": 1,
+            "id": "o_def",
+            "paymentPeriod": "18",
+            "totalPrice": "2122.92",
+            "productDescription": "İmei kod 351232749244228 IPHONE 15",
+            "contractDate": "24.08.2025",
+            "paidAmount": "0",
+            "monthlyPayment": "117.94",
+            "initialPayment": "0"
+          }
+        ],
+        "archiveRequested": false,
+        "store": "Kontakt Online",
+        "archiveBase64": "",
+        "invoiceNumber": "032023229"
+      }
+    ],
+    "fee": "0.00",
+    "phone": "(055)637-81-27",
+    "address": "Bakı Ş, Qaradağ R, Sanqaçal R, Sanqaçal Qəs, N Saylı Hərbi Hissə",
+    "birthDate": "05.04.1989",
+    "courtFee": "77.76",
+    "unpaidAmount": "5250.18",
+    "discountAmount": "5775.20",
+    "totalPrice": "5958.18",
+    "paymentPeriod": "18",
+    "isWarningSent": true,
+    "fin": "4VH3Y99",
+    "contractNumber": "020112444",
+    "monthlyPayment": "137.27",
+    "paidAmount": "360.00",
+    "warningDate": "16.02.2026",
+    "executorName": "Əzizə F. Nəsirova",
+    "contractDate": "19.08.2025",
+    "phoneCount": "2",
+    "gender": "Kişi"
+  },
+  "customerCode": "698860",
+  "process_status": "COMPLETED"
+}

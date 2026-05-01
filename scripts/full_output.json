@@ -1,0 +1,74 @@
+﻿[
+  {
+    "isException": true,
+    "invoiceNumber": "020112444",
+    "exceptionProduct": "QIZIL Z╞ÅMAN╞ÅT ULTRA 2 IL",
+    "exceptionDate": "20.08.2025",
+    "id": "mg1jol",
+    "archiveRequested": false,
+    "exceptionReturnedPrice": "348",
+    "exceptionProducts": [
+      {
+        "qty": 1,
+        "name": "QIZIL Z╞ÅMAN╞ÅT ULTRA 2 IL"
+      }
+    ],
+    "orders": [
+      {
+        "monthlyPayment": "137.27",
+        "initialPayment": "0",
+        "totalPrice": "2470.86",
+        "paidAmount": "0",
+        "paymentPeriod": "18",
+        "contractDate": "19.08.2025",
+        "id": "p7x3r",
+        "productDescription": "QIZIL Z╞ÅMAN╞ÅT ULTRA 2 IL, ─░mei kod 351232742311834 IPHONE 15",
+        "phoneCount": 2
+      }
+    ],
+    "store": "Kontakt Online",
+    "exceptionProductQty": "1"
+  },
+  {
+    "orders": [
+      {
+        "id": "vcwis7",
+        "productDescription": "PLAYSTATION 5 SLIM",
+        "phoneCount": 1,
+        "initialPayment": "360",
+        "monthlyPayment": "55.8",
+        "totalPrice": "1364.40",
+        "paidAmount": "360",
+        "paymentPeriod": "18",
+        "contractDate": "20.09.2025"
+      }
+    ],
+    "store": "Kontakt Online",
+    "archiveRequested": false,
+    "invoiceNumber": "032023579",
+    "id": "7czvc"
+  },
+  {
+    "id": "def",
+    "archiveName": "",
+    "archiveBase64": "",
+    "invoiceNumber": "032023229",
+    "archiveUrl": "",
+    "store": "Kontakt Online",
+    "orders": [
+      {
+        "phoneCount": 1,
+        "productDescription": "─░mei kod 351232749244228 IPHONE 15",
+        "id": "o_def",
+        "contractDate": "24.08.2025",
+        "paymentPeriod": "18",
+        "paidAmount": "0",
+        "totalPrice": "2122.92",
+        "monthlyPayment": "117.94",
+        "initialPayment": "0"
+      }
+    ],
+    "archiveRequested": false
+  }
+]
+No such document TEST!

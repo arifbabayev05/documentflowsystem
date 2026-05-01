@@ -35,11 +35,13 @@ import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime }
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
+import * as XLSX from 'xlsx';
 
 /** Internal helper for conditional classes */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
 import { ProcessStatus, STATUS_LABELS } from "../../dashboard/page";
+import { MultiSelect } from "@/components/shared/MultiSelect";
 
 interface CustomerRow {
     id?: string;
@@ -167,6 +169,10 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     const [localData, setLocalData] = useState<CustomerRow>(JSON.parse(JSON.stringify(row)));
     const [uploading, setUploading] = useState<string | null>(null);
     const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+
+    const displayArchivedAt = useMemo(() => {
+        return row.archivedAt || row.statusHistory?.find((h: any) => h.action === 'ARCHIVE' || h.action === 'ARCHIVE_REQUEST')?.timestamp;
+    }, [row.archivedAt, row.statusHistory]);
 
     useEffect(() => {
         if (!isEditing) setLocalData(JSON.parse(JSON.stringify(row)));
@@ -326,15 +332,16 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
     return (
         <div className="flex items-stretch gap-4 group/row">
             <div className="hidden lg:flex flex-col gap-2 shrink-0 w-[120px] transition-all opacity-90 group-hover/row:opacity-100 cursor-default">
-                {row.createdAt && (
+
+                {displayArchivedAt && (
                     <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-sm text-center">
-                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Daxil Edilib</span>
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Arxivləndi</span>
                         <div className="flex flex-col items-center leading-none">
                             <span className="text-[10px] font-black text-slate-700 tracking-tight">
-                                {new Date(row.createdAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
+                                {new Date(displayArchivedAt).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, '.')}
                             </span>
                             <span className="text-[9px] font-bold text-slate-400 mt-1 tracking-tighter">
-                                {new Date(row.createdAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
+                                {new Date(displayArchivedAt).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}
                             </span>
                         </div>
                     </div>
@@ -369,6 +376,9 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                             <div className="flex items-center gap-2">
                                 <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
                                     <RefreshCw size={14} /> Bərpa Et
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); router.push(`/reports/generate?id=${row.id}`); }} className="h-9 px-4 flex items-center gap-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-blue-100">
+                                    <FileText size={14} /> Sənədə Bax
                                 </button>
                                 {canDelete && (
                                     <button onClick={(e) => { e.stopPropagation(); onDelete(index); }} className="h-9 w-9 flex items-center justify-center bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100">
@@ -638,6 +648,18 @@ export default function ArchivedCustomersPage() {
     const [appUsers, setAppUsers] = useState<any[]>([]);
     const [executorFilter, setExecutorFilter] = useState<string>("all");
     const [statusFilter, setStatusFilter] = useState<string>("all");
+
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [exportStartDate, setExportStartDate] = useState("");
+    const [exportEndDate, setExportEndDate] = useState("");
+    const [exportSearch, setExportSearch] = useState("");
+    const [exportInspector, setExportInspector] = useState<string[]>([]);
+    const [exportExecutor, setExportExecutor] = useState<string[]>([]);
+    const [exportStatus, setExportStatus] = useState<string[]>([]);
+    const [exportOption, setExportOption] = useState<"invoice" | "customer">("invoice");
+    const [exportMinDebt, setExportMinDebt] = useState("");
+    const [exportMaxDebt, setExportMaxDebt] = useState("");
+
     const [page, setPage] = useState(1);
     const itemsPerPage = 50;
 
@@ -687,6 +709,166 @@ export default function ArchivedCustomersPage() {
         setDeleteModal({ isOpen: false, index: null });
     };
 
+    const handleExcelExport = () => {
+        let dataToExport = filteredRows.filter(c => {
+            if (exportStartDate || exportEndDate) {
+                const archTimeVal = c.archivedAt || c.statusHistory?.find((h: any) => h.action === "ARCHIVE" || h.action === "ARCHIVE_REQUEST")?.timestamp || c.createdAt;
+                if (!archTimeVal) return false;
+                const archivedAt = new Date(archTimeVal);
+                if (isNaN(archivedAt.getTime())) return false;
+
+                archivedAt.setHours(0, 0, 0, 0);
+                if (exportStartDate) {
+                    const s = new Date(exportStartDate);
+                    s.setHours(0, 0, 0, 0);
+                    if (archivedAt < s) return false;
+                }
+                if (exportEndDate) {
+                    const e = new Date(exportEndDate);
+                    e.setHours(0, 0, 0, 0);
+                    if (archivedAt > e) return false;
+                }
+            }
+            if (exportInspector.length > 0) {
+                if (!exportInspector.includes(c.createdBy as string)) return false;
+            }
+            if (exportExecutor.length > 0) {
+                if (!exportExecutor.includes(c.assignedTo as string)) return false;
+            }
+            if (exportStatus.length > 0) {
+                const historyCount = (c.statusHistory || []).length;
+                const hasCreateInHistory = (c.statusHistory || []).some((h: any) => h.action === 'CREATE');
+                const effectiveCount = historyCount + (c.createdAt && !hasCreateInHistory ? 1 : 0);
+                const effectiveStatus = effectiveCount < 2 ? 'UNFINISHED_ARCHIVE' : (c.process_status || 'INSPECTOR_ENTERED');
+                if (!exportStatus.includes(effectiveStatus)) return false;
+            }
+            if (exportMinDebt) {
+                const debt = parseFloat(c.debtAmount || "0");
+                const min = parseFloat(exportMinDebt);
+                if (!isNaN(min) && debt < min) return false;
+            }
+            if (exportMaxDebt) {
+                const debt = parseFloat(c.debtAmount || "0");
+                const max = parseFloat(exportMaxDebt);
+                if (!isNaN(max) && debt > max) return false;
+            }
+            return true;
+        });
+
+        let snCounter = 1;
+        const excelData = dataToExport.flatMap((item) => {
+            const dateObj = item.createdAt ? new Date(item.createdAt) : null;
+            const validDateStr = (dateObj && !isNaN(dateObj.getTime())) ? dateObj.toLocaleDateString('az-AZ') : "";
+
+            const passportData = item.details?.passportSeries || "";
+            let cleanedSeriya = passportData;
+            // Remove FIN from passport series if it's appended (e.g. "AZE1234567 1A2B3C4")
+            const finValue = item.details?.fin || item.customerCode;
+            if (finValue && cleanedSeriya.includes(finValue)) {
+                cleanedSeriya = cleanedSeriya.replace(finValue, "").trim();
+            }
+
+            const baseRowData: any = {
+                "Müştəri Nömrəsi": item.customerCode || "",
+                "FİN": finValue || "",
+                "A.S.A": item.fullName || "",
+                "Ünvan": item.details?.address || "",
+                "Faktiki Ünvan": item.details?.actualAddress || "",
+                "Əlaqə nömrəsi": item.details?.phone || "",
+                "Doğum tarixi": item.details?.birthDate || "",
+                "Seriya Nömrəsi": cleanedSeriya || "",
+                "Borc məbləği": item.debtAmount || "0.00",
+                "Məhsul (Ümumi)": item.details?.productDescription || "",
+                "Daxil edilib": validDateStr,
+                "Daxil edən": item.createdBy || "",
+                "İcraçı": item.assignedTo || "",
+                "Status": STATUS_LABELS[item.process_status as ProcessStatus]?.label || item.process_status || ""
+            };
+
+            if (exportOption === "invoice") {
+                const invoices = item.details?.invoices as any[] || [];
+                if (invoices.length > 0) {
+                    return invoices.flatMap((inv) => {
+                        const orders = inv.orders as any[] || [];
+                        if (orders.length > 0) {
+                            return orders.map((o: any) => ({
+                                "S/N": snCounter++,
+                                ...baseRowData,
+                                "Mağaza": inv.store || item.store || "",
+                                "Faktura Nömrəsi": inv.invoiceNumber || "",
+                                "Məhsul (Faktura)": o.productDescription || "",
+                                "Müqavilə Tarixi": o.contractDate || "",
+                                "Müddət (ay)": o.paymentPeriod || "",
+                                "İlkin Ödəniş": o.initialPayment || "",
+                                "Aylıq Ödəniş": o.monthlyPayment || "",
+                                "Ödənilmiş": o.paidAmount || "",
+                                "Alqı-Satqı Qiyməti (Faktura)": o.totalPrice || "",
+                                "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Var" : "Yoxdur"
+                            }));
+                        } else {
+                            return [{
+                                "S/N": snCounter++,
+                                ...baseRowData,
+                                "Mağaza": inv.store || item.store || "",
+                                "Faktura Nömrəsi": inv.invoiceNumber || "",
+                                "Məhsul (Faktura)": "",
+                                "Müqavilə Tarixi": "",
+                                "Müddət (ay)": "",
+                                "İlkin Ödəniş": "",
+                                "Aylıq Ödəniş": "",
+                                "Ödənilmiş": "",
+                                "Alqı-Satqı Qiyməti (Faktura)": "",
+                                "Qoşma Sənəd (Arxiv)": inv.archiveUrl ? "Var" : "Yoxdur"
+                            }];
+                        }
+                    });
+                } else {
+                    return [{
+                        "S/N": snCounter++,
+                        ...baseRowData,
+                        "Mağaza": item.store || "",
+                        "Faktura Nömrəsi": item.details?.contractNumber || "",
+                        "Məhsul (Faktura)": item.details?.productDescription || "",
+                        "Müqavilə Tarixi": item.details?.contractDate || "",
+                        "Müddət (ay)": item.details?.paymentPeriod || "",
+                        "İlkin Ödəniş": item.details?.initialPayment || "",
+                        "Aylıq Ödəniş": item.details?.monthlyPayment || "",
+                        "Ödənilmiş": item.details?.paidAmount || "",
+                        "Alqı-Satqı Qiyməti (Faktura)": item.details?.totalPrice || "",
+                        "Qoşma Sənəd (Arxiv)": ""
+                    }];
+                }
+            }
+
+            return [{ "S/N": snCounter++, ...baseRowData }];
+        });
+
+        if (excelData.length === 0) {
+            toast.error("Göstərilən filtrlərə uyğun məlumat tapılmadı");
+            return;
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const objectMaxLength: number[] = [];
+        excelData.forEach(obj => {
+            Object.entries(obj).forEach(([key, val], idx) => {
+                const v = val ? val.toString() : "";
+                const max = Math.max(key.length, v.length) + 2;
+                objectMaxLength[idx] = Math.max(objectMaxLength[idx] || 0, max);
+            });
+        });
+        worksheet["!cols"] = Object.keys(excelData[0]).map((_, idx) => ({
+            width: Math.min(objectMaxLength[idx], 50)
+        }));
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
+        XLSX.writeFile(workbook, `Archived_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        setIsExportModalOpen(false);
+        toast.success("Excel faylı hazırlandı və yükləndi!");
+    };
+
     const filteredRows = useMemo(() => {
         const lowSearch = searchTerm.toLowerCase();
 
@@ -713,14 +895,15 @@ export default function ArchivedCustomersPage() {
             if (!matchesSearch) return false;
 
             // Date filter
-            const archTime = c.archivedAt ? new Date(c.archivedAt).getTime() : 0;
+            const archTimeVal = c.archivedAt || c.statusHistory?.find(h => h.action === "ARCHIVE" || h.action === "ARCHIVE_REQUEST")?.timestamp || c.createdAt;
+            const archTime = archTimeVal ? new Date(archTimeVal).getTime() : 0;
             if (startDate) {
                 const s = new Date(startDate).getTime();
-                if (archTime < s) return false;
+                if (!archTime || isNaN(archTime) || archTime < s) return false;
             }
             if (endDate) {
                 const e = new Date(endDate).setHours(23, 59, 59, 999);
-                if (archTime > e) return false;
+                if (!archTime || isNaN(archTime) || archTime > e) return false;
             }
 
             // Executor filter
@@ -765,6 +948,23 @@ export default function ArchivedCustomersPage() {
                             <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Arxivlənmiş Müştərilər</h1>
                             <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">Tamamlanmış işlərin idarə edilməsi</p>
                         </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={fetchData}
+                            className="bg-white p-3 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-400 hover:shadow-md transition-all group"
+                        >
+                            <RefreshCw size={20} className={cn("transition-transform duration-500", loading ? "animate-spin" : "group-active:rotate-180")} />
+                        </button>
+                        {(isManager || user.role === "SUPERADMIN" || user.role === "ARCHIVER") && (
+                            <button
+                                onClick={() => setIsExportModalOpen(true)}
+                                className="bg-green-500 text-white px-5 h-[46px] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-green-600 hover:shadow-lg hover:shadow-green-500/30 transition-all flex items-center gap-2"
+                            >
+                                <Download size={18} />
+                                Export
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -821,6 +1021,7 @@ export default function ArchivedCustomersPage() {
                                 <input
                                     type="date"
                                     value={startDate}
+                                    onClick={(e) => ('showPicker' in e.target) && (e.target as HTMLInputElement).showPicker()}
                                     onChange={(e) => setStartDate(e.target.value)}
                                     className="bg-transparent text-[13px] font-bold outline-none text-slate-700 cursor-pointer w-[120px]"
                                 />
@@ -830,6 +1031,7 @@ export default function ArchivedCustomersPage() {
                                 <input
                                     type="date"
                                     value={endDate}
+                                    onClick={(e) => ('showPicker' in e.target) && (e.target as HTMLInputElement).showPicker()}
                                     onChange={(e) => setEndDate(e.target.value)}
                                     className="bg-transparent text-[13px] font-bold outline-none text-slate-700 cursor-pointer w-[120px]"
                                 />
@@ -945,6 +1147,141 @@ export default function ArchivedCustomersPage() {
                     </div>
                 )}
             </div>
+
+            {/* EXPORT MODAL */}
+            {isExportModalOpen && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300 cursor-pointer"
+                    onClick={() => setIsExportModalOpen(false)}
+                >
+                    <div
+                        className="bg-white rounded-xl p-8 max-w-3xl w-full shadow-2xl border border-slate-200 animate-in zoom-in duration-200 cursor-default flex flex-col gap-6"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex flex-col text-center gap-2">
+                            <div className="h-16 w-16 bg-green-50 text-green-600 rounded-xl flex items-center justify-center border border-green-100 mx-auto mb-2">
+                                <Download size={32} />
+                            </div>
+                            <h3 className="text-xl font-black text-slate-800 uppercase">Excel Export</h3>
+                            <p className="text-sm text-slate-600 font-medium">Məlumatları filtrləyin və yükləyin</p>
+                        </div>
+
+                        <div className="flex flex-col gap-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Başlanğıc Tarix</label>
+                                    <input
+                                        type="date"
+                                        value={exportStartDate}
+                                        onClick={(e) => ('showPicker' in e.target) && (e.target as HTMLInputElement).showPicker()}
+                                        onChange={(e) => setExportStartDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Bitiş Tarix</label>
+                                    <input
+                                        type="date"
+                                        value={exportEndDate}
+                                        onClick={(e) => ('showPicker' in e.target) && (e.target as HTMLInputElement).showPicker()}
+                                        onChange={(e) => setExportEndDate(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors cursor-pointer"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">İnzibatçı</label>
+                                    <MultiSelect
+                                        options={appUsers.length > 0 ? appUsers.map(u => ({ label: u.displayName || u.email, value: u.email })) : Array.from(new Set(rows.map(c => c.assignedTo).filter(Boolean))).map(email => ({ label: email as string, value: email as string }))}
+                                        selected={exportExecutor}
+                                        onChange={setExportExecutor}
+                                        placeholder="İnzibatçı seçin..."
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Status</label>
+                                    <MultiSelect
+                                        options={[
+                                            { label: "Tamamlanan sənədlər", value: "COMPLETED" },
+                                            { label: "Tamamlanmayan sənədlər", value: "UNFINISHED_ARCHIVE" }
+                                        ]}
+                                        selected={exportStatus}
+                                        onChange={setExportStatus}
+                                        placeholder="Status seçin..."
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Min. Borc</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Min.."
+                                        value={exportMinDebt}
+                                        onChange={(e) => setExportMinDebt(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Max. Borc</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Max.."
+                                        value={exportMaxDebt}
+                                        onChange={(e) => setExportMaxDebt(e.target.value)}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs focus:border-primary transition-colors"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Daxil edən müfəttiş</label>
+                                <MultiSelect
+                                    options={Array.from(new Set(rows.map(c => c.createdBy).filter(Boolean))).map(email => ({ label: email as string, value: email as string }))}
+                                    selected={exportInspector}
+                                    onChange={setExportInspector}
+                                    placeholder="Bütün müfəttişlər..."
+                                />
+                            </div>
+                            <div className="flex flex-col gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Məlumat Formati</label>
+                                <div className="flex items-center gap-6">
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={cn("w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center transition-colors", exportOption === "invoice" ? "border-primary" : "group-hover:border-slate-400")}>
+                                            <div className={cn("w-2 h-2 rounded-full transition-all", exportOption === "invoice" ? "bg-primary scale-100" : "bg-transparent scale-0")} />
+                                        </div>
+                                        <input type="radio" className="hidden" checked={exportOption === "invoice"} onChange={() => setExportOption("invoice")} />
+                                        <span className="text-[11px] font-bold text-slate-700">Faktura üzrə</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={cn("w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center transition-colors", exportOption === "customer" ? "border-primary" : "group-hover:border-slate-400")}>
+                                            <div className={cn("w-2 h-2 rounded-full transition-all", exportOption === "customer" ? "bg-primary scale-100" : "bg-transparent scale-0")} />
+                                        </div>
+                                        <input type="radio" className="hidden" checked={exportOption === "customer"} onChange={() => setExportOption("customer")} />
+                                        <span className="text-[11px] font-bold text-slate-700">Müştəri üzrə</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col w-full gap-3 mt-2">
+                            <button
+                                onClick={handleExcelExport}
+                                className="w-full bg-green-600 text-white py-3.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                <Download size={14} />
+                                Export Seçimi Yüklə
+                            </button>
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="w-full bg-slate-50 text-slate-600 py-3.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-all"
+                            >
+                                Ləğv Et
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </AuthGuard>
     );
 }

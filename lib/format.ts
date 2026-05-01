@@ -201,3 +201,32 @@ export const formatWorkTime = (hours: number) => {
     if (m > 0) parts.push(`${m} dəq`);
     return parts.length > 0 ? parts.join(' ') : "0 saat";
 };
+
+/**
+ * Formats a string to Title Case, correctly handling Azerbaijani locale (Ə, İ, I, etc).
+ * Example: "BABAYEV ARİF RƏŞAD" -> "Babayev Arif Rəşad"
+ */
+export function toTitleCase(str: string): string {
+    if (!str) return "";
+    return str.trim()
+        .toLocaleLowerCase('az-AZ')
+        .split(/\s+/)
+        .map(word => {
+            if (!word) return "";
+            return word.charAt(0).toLocaleUpperCase('az-AZ') + word.slice(1);
+        })
+        .join(" ");
+}
+
+/**
+ * Formats a date into DD.MM.YYYY
+ */
+export function formatAZDate(val: any): string {
+    if (!val) return "";
+    const d = parseDate(val);
+    if (!d || isNaN(d.getTime())) return "";
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}.${month}.${year}`;
+}

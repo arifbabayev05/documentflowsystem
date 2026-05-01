@@ -7,6 +7,8 @@ import {
     getDocs,
     setDoc,
     updateDoc,
+    runTransaction,
+    Transaction,
     query,
     where,
     limit,
@@ -64,13 +66,13 @@ export async function getRolePermissions(role: string) {
     }
 
     if (role === "SUPERADMIN") return AVAILABLE_PERMISSIONS.map((p: any) => p.id);
-    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list"];
+    if (role === "MANAGER") return ["page_customers", "page_archive_customers", "page_parameters", "page_users", "action_assignment", "page_letter_list", "page_analytics"];
     if (role === "INSPECTOR_LEAD") return ["page_inspector", "page_inspectors", "page_users"];
-    if (role === "ADMIN") return ["page_customers", "page_archive_customers"];
+    if (role === "ADMIN") return ["page_customers", "page_archive_customers", "page_letter_list"];
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
     if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers", "page_users"];
-    if (role === "DEP_HEAD") return ["page_customers", "page_analytics", "page_parameters"];
+    if (role === "DEP_HEAD") return ["page_customers", "page_analytics", "page_parameters", "page_letter_list"];
     if (role === "AUDIT_LEAD") return ["page_analytics", "page_audit_logs", "page_parameters", "page_users"];
     return []; // PENDING or others have no default permissions
 }
@@ -183,10 +185,12 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
         const results = [];
         const timestamp = new Date().toISOString();
         for (const customer of customers) {
-            const customerId = customer.customerCode || Math.random().toString(36).substring(7);
+            const cleanCode = customer.customerCode?.toString().trim();
+            const customerId = cleanCode || Math.random().toString(36).substring(7);
             const customerRef = doc(db, CUSTOMERS_COLLECTION, customerId);
             const data = {
                 ...customer,
+                customerCode: cleanCode,
                 id: customerId,
                 createdBy: userEmail,
                 updatedAt: serverTimestamp(),
@@ -214,7 +218,7 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
 export async function getCustomers() {
     try {
         const querySnap = await getDocs(collection(db, CUSTOMERS_COLLECTION));
-        return querySnap.docs.map(doc => ({ ...doc.data() }));
+        return querySnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     } catch (e) {
         return [];
     }
@@ -224,7 +228,7 @@ export async function getInspectorCustomers(email: string) {
     try {
         const q = query(collection(db, CUSTOMERS_COLLECTION), where("createdBy", "==", email));
         const querySnap = await getDocs(q);
-        return querySnap.docs.map(doc => ({ ...doc.data() }));
+        return querySnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     } catch (e) {
         return [];
     }
@@ -242,9 +246,36 @@ export async function deleteCustomer(id: string, userEmail: string = "system") {
 
 export async function getCustomer(id: string) {
     try {
-        const docRef = doc(db, CUSTOMERS_COLLECTION, id);
+        if (!id) return null;
+        const cleanId = id.toString().trim();
+        const docRef = doc(db, CUSTOMERS_COLLECTION, cleanId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) return { id: docSnap.id, ...docSnap.data() };
+
+        // If not found by ID, try querying by customerCode field as fallback
+        return await findCustomerByCode(cleanId);
+    } catch (e) {
+        return null;
+    }
+}
+
+/** 
+ * Find a customer by the customerCode field (case insensitive/trimmed)
+ */
+export async function findCustomerByCode(code: string) {
+    try {
+        if (!code) return null;
+        const cleanCode = code.trim();
+        const q = query(
+            collection(db, CUSTOMERS_COLLECTION),
+            where("customerCode", "==", cleanCode),
+            limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            const d = snap.docs[0];
+            return { id: d.id, ...d.data() };
+        }
         return null;
     } catch (e) {
         return null;
@@ -254,176 +285,211 @@ export async function getCustomer(id: string) {
 export async function updateCustomer(id: string, data: any, userEmail: string = "system") {
     try {
         const customerRef = doc(db, CUSTOMERS_COLLECTION, id);
-        const oldDoc = await getDoc(customerRef);
-        const oldData = oldDoc.exists() ? oldDoc.data() : null;
+        let resultData: any = null;
 
-        // Mantain status history
-        let statusHistory = [...(oldData?.statusHistory || [])];
-        const timestamp = new Date().toISOString();
+        await runTransaction(db, async (transaction: Transaction) => {
+            const oldSnap = await transaction.get(customerRef);
+            const oldData = oldSnap.exists() ? oldSnap.data() : null;
 
-        if (!oldDoc.exists() && statusHistory.length === 0) {
-            statusHistory.push({
-                label: "Müştəri qeydə alındı",
-                action: "CREATE",
-                timestamp,
-                user: userEmail
-            });
-        }
+            // Maintain status history
+            let statusHistory = [...(oldData?.statusHistory || [])];
+            const timestamp = new Date().toISOString();
 
-        const cleanedData = { ...data, statusHistory };
-
-        let action = "UPDATE";
-        let detail = `Müştəri məlumatı yeniləndi`;
-        let category: "CUSTOMER" | "ARCHIVE" | "DOCUMENT" | "SYSTEM" | "USER" = "CUSTOMER";
-
-        const oldFiles = oldData?.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
-        const newFiles = data.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
-        const oldReq = oldData?.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
-        const newReq = data.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
-
-        // --- ENHANCED AUDIT LOGGING ---
-        const changes: string[] = [];
-        const auditMeta: any = { targetId: id, targetName: data.fullName };
-
-        // 1. Core Fields
-        const coreFields = ['fullName', 'customerCode', 'debtAmount', 'assignedTo', 'archiveAssignedTo', 'process_status', 'isArchived', 'store', 'courtName'];
-        coreFields.forEach(f => {
-            if (data[f] !== oldData?.[f]) {
-                changes.push(`${f}: ${oldData?.[f] || 'N/A'} -> ${data[f] || 'N/A'}`);
-                auditMeta[`old_${f}`] = oldData?.[f] || null;
-                auditMeta[`new_${f}`] = data[f] || null;
+            if (!oldSnap.exists() && statusHistory.length === 0) {
+                statusHistory.push({
+                    label: "Müştəri qeydə alındı",
+                    action: "CREATE",
+                    timestamp,
+                    user: userEmail
+                });
             }
-        });
 
-        // 2. Details Fields
-        const detailsToTrack = ['fin', 'phone', 'address', 'actualAddress', 'totalPrice', 'paidAmount', 'totalUnpaid', 'fee', 'penalty', 'warningDate'];
-        detailsToTrack.forEach(f => {
-            if (data.details?.[f] !== oldData?.details?.[f]) {
-                changes.push(`details.${f}: ${oldData?.details?.[f] || 'N/A'} -> ${data.details?.[f] || 'N/A'}`);
-                auditMeta[`old_details_${f}`] = oldData?.details?.[f] || null;
-                auditMeta[`new_details_${f}`] = data.details?.[f] || null;
+            // --- SMART MERGE FOR INVOICES ---
+            // Crucial for preventing data loss when multiple users edit the same customer
+            let mergedInvoices = [...(oldData?.details?.invoices || [])];
+            const incomingInvoices = data.details?.invoices;
+
+            if (incomingInvoices && Array.isArray(incomingInvoices)) {
+                if (data._forceReplaceInvoices) {
+                    // Dashboard is saving, we replace the list (allowing deletions)
+                    mergedInvoices = incomingInvoices;
+                } else {
+                    // Partial or Archive update, we MERGE to prevent stale state from deleting data
+                    incomingInvoices.forEach((newInv: any) => {
+                        const idx = mergedInvoices.findIndex(i => i.id === newInv.id);
+                        if (idx !== -1) {
+                            mergedInvoices[idx] = { ...mergedInvoices[idx], ...newInv };
+                        } else {
+                            mergedInvoices.push(newInv);
+                        }
+                    });
+                }
             }
-        });
 
-        // 3. ULTRA-DETAILED INVOICE COMPARISON
-        const oldInvoices = oldData?.details?.invoices || [];
-        const newInvoices = data.details?.invoices || [];
-
-        const invoiceChanges: string[] = [];
-
-        // Find Removed
-        oldInvoices.forEach((oi: any) => {
-            if (!newInvoices.some((ni: any) => ni.id === oi.id)) {
-                invoiceChanges.push(`SİLİNDİ: Faktura №${oi.invoiceNumber || 'N/A'} (ID: ${oi.id})`);
-            }
-        });
-
-        // Find Added
-        newInvoices.forEach((ni: any) => {
-            if (!oldInvoices.some((oi: any) => oi.id === ni.id)) {
-                invoiceChanges.push(`ƏLAVƏ: Faktura №${ni.invoiceNumber || 'N/A'} (ID: ${ni.id})`);
-            }
-        });
-
-        // Find Modified
-        newInvoices.forEach((ni: any) => {
-            const oi = oldInvoices.find((o: any) => o.id === ni.id);
-            if (oi && JSON.stringify(oi) !== JSON.stringify(ni)) {
-                const subChanges: string[] = [];
-                if (oi.invoiceNumber !== ni.invoiceNumber) subChanges.push(`Nömrə: ${oi.invoiceNumber || 'N/A'} -> ${ni.invoiceNumber || 'N/A'}`);
-                if (JSON.stringify(oi.orders) !== JSON.stringify(ni.orders)) subChanges.push(`Sifarişlər/Məbləğ dəyişdirildi`);
-                if (oi.archiveUrl !== ni.archiveUrl) subChanges.push(`Sənəd faylı yeniləndi`);
-
-                invoiceChanges.push(`REDAKTƏ: Faktura №${ni.invoiceNumber || 'N/A'} (${subChanges.join(', ')})`);
-            }
-        });
-
-        if (invoiceChanges.length > 0) {
-            changes.push(...invoiceChanges);
-            auditMeta.oldInvoices = oldInvoices;
-            auditMeta.newInvoices = newInvoices;
-        }
-
-        // --- ALWAYS PREPARE SNAPSHOT FOR AUDIT ---
-        auditMeta.snapshot = data;
-        auditMeta.changesCount = changes.length;
-        auditMeta.changesList = changes;
-
-        // Generic update log if fields changed
-        if (changes.length > 0) {
-            await addAuditLog("UPDATE", "Məlumatlar güncəlləndi: " + changes.join(' | '), userEmail, "CUSTOMER", auditMeta);
-        }
-        // --- END ENHANCED LOGGING ---
-
-        if (data.isArchived && !oldData?.isArchived) {
-            action = "ARCHIVE";
-            category = "ARCHIVE";
-            detail = "Müştəri arxivə göndərildi";
-        } else if (oldData?.isArchived && !data.isArchived) {
-            action = "RESTORE";
-            category = "ARCHIVE";
-            detail = "Müştəri arxivdən bərpa edildi";
-        } else if (newFiles > oldFiles) {
-            action = "FILE_UPLOAD";
-            category = "ARCHIVE";
-            detail = `Arxiv sənədi yükləndi (Cəmi: ${newFiles})`;
-        } else if (oldFiles > newFiles) {
-            action = "FILE_DELETE";
-            category = "ARCHIVE";
-            detail = "Arxiv sənədi silindi";
-        } else if (newReq > oldReq) {
-            action = "ARCHIVE_REQUEST";
-            category = "ARCHIVE";
-            detail = "Arxiv sənəd sorğusu göndərildi";
-        } else if (data.details?.isWarningSent && !oldData?.details?.isWarningSent) {
-            action = "WARNING_SENT";
-            detail = "Xəbərdarlıq məktubu göndərildi";
-            category = "DOCUMENT";
-        } else if (data.process_status && oldData?.process_status !== data.process_status) {
-            action = "STATUS_CHANGE";
-            const oldStatus = oldData?.process_status || 'N/A';
-
-            // Map status to nice label
-            const statusLabels: any = {
-                'INSPECTOR_ENTERED': 'Müştəri qeydə alındı',
-                'ASSIGNED_BY_MANAGER': 'Müfəttiş təyin edildi',
-                'FILLED_BY_ADMIN': 'Məlumatlar dolduruldu',
-                'WAITING_FOR_ARCHIVE': 'Arxiv sorğusu göndərildi',
-                'ARCHIVE_UPLOADED': 'Arxiv sənədi yükləndi',
-                'COMPLETED': 'Arxiv Müştəri'
+            // Construct final data object for this update
+            // We merge top-level data to support partial updates
+            const cleanedData = {
+                ...oldData,
+                ...data,
+                details: {
+                    ...oldData?.details,
+                    ...data.details,
+                    invoices: mergedInvoices
+                },
+                statusHistory
             };
-            detail = statusLabels[data.process_status] || `Status dəyişdi: ${data.process_status}`;
-        } else if (data.assignedTo && oldData?.assignedTo !== data.assignedTo) {
-            action = "ASSIGN";
-            detail = `Müfəttiş təyin edildi: ${data.assignedTo}`;
-        } else if (data.archiveAssignedTo && oldData?.archiveAssignedTo !== data.archiveAssignedTo) {
-            action = "ARCHIVE_ASSIGN";
-            detail = `Arxivçi təyin edildi: ${data.archiveAssignedTo}`;
-            category = "ARCHIVE";
-        }
 
-        if (action !== "UPDATE") {
-            statusHistory.push({
-                label: detail,
-                action,
-                timestamp,
-                user: userEmail
+            let action = "UPDATE";
+            let detail = `Müştəri məlumatı yeniləndi`;
+            let category: "CUSTOMER" | "ARCHIVE" | "DOCUMENT" | "SYSTEM" | "USER" = "CUSTOMER";
+
+            const oldFiles = oldData?.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
+            const newFiles = cleanedData.details?.invoices?.filter((i: any) => !!i.archiveUrl)?.length || 0;
+            const oldReq = oldData?.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
+            const newReq = cleanedData.details?.invoices?.filter((i: any) => (i as any).archiveRequested)?.length || 0;
+
+            // --- ENHANCED AUDIT LOGGING ---
+            const changes: string[] = [];
+            const auditMeta: any = { targetId: id, targetName: data.fullName || oldData?.fullName };
+
+            // 1. Core Fields
+            const coreFields = ['fullName', 'customerCode', 'debtAmount', 'assignedTo', 'archiveAssignedTo', 'process_status', 'isArchived', 'store', 'courtName'];
+            coreFields.forEach(f => {
+                if (data[f] !== undefined && data[f] !== oldData?.[f]) {
+                    changes.push(`${f}: ${oldData?.[f] || 'N/A'} -> ${data[f] || 'N/A'}`);
+                    auditMeta[`old_${f}`] = oldData?.[f] || null;
+                    auditMeta[`new_${f}`] = data[f] || null;
+                }
             });
-            cleanedData.statusHistory = statusHistory;
-        }
 
-        await setDoc(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }), { merge: true });
-
-        // Trigger specific action log with FULL metadata (snapshot, etc)
-        if (action !== "UPDATE") {
-            await addAuditLog(action, detail, userEmail, category, {
-                ...auditMeta,
-                oldStatus: oldData?.process_status,
-                newStatus: data.process_status
+            // 2. Details Fields
+            const detailsToTrack = ['fin', 'phone', 'address', 'actualAddress', 'totalPrice', 'paidAmount', 'totalUnpaid', 'fee', 'penalty', 'warningDate'];
+            detailsToTrack.forEach(f => {
+                if (data.details?.[f] !== undefined && data.details?.[f] !== oldData?.details?.[f]) {
+                    changes.push(`details.${f}: ${oldData?.details?.[f] || 'N/A'} -> ${data.details?.[f] || 'N/A'}`);
+                    auditMeta[`old_details_${f}`] = oldData?.details?.[f] || null;
+                    auditMeta[`new_details_${f}`] = data.details?.[f] || null;
+                }
             });
-        }
 
-        return cleanedData;
+            // 3. ULTRA-DETAILED INVOICE COMPARISON
+            const oldInvoices = oldData?.details?.invoices || [];
+            const invoiceChanges: string[] = [];
+
+            // Find Removed
+            oldInvoices.forEach((oi: any) => {
+                if (incomingInvoices && !mergedInvoices.some((ni: any) => ni.id === oi.id)) {
+                    invoiceChanges.push(`SİLİNDİ: Faktura №${oi.invoiceNumber || 'N/A'} (ID: ${oi.id})`);
+                }
+            });
+
+            // Find Added
+            if (incomingInvoices) {
+                incomingInvoices.forEach((ni: any) => {
+                    if (!oldInvoices.some((oi: any) => oi.id === ni.id)) {
+                        invoiceChanges.push(`ƏLAVƏ: Faktura №${ni.invoiceNumber || 'N/A'} (ID: ${ni.id})`);
+                    }
+                });
+
+                // Find Modified
+                incomingInvoices.forEach((ni: any) => {
+                    const oi = oldInvoices.find((o: any) => o.id === ni.id);
+                    if (oi && JSON.stringify(oi) !== JSON.stringify(ni)) {
+                        const subChanges: string[] = [];
+                        if (oi.invoiceNumber !== ni.invoiceNumber) subChanges.push(`Nömrə: ${oi.invoiceNumber || 'N/A'} -> ${ni.invoiceNumber || 'N/A'}`);
+                        if (JSON.stringify(oi.orders) !== JSON.stringify(ni.orders)) subChanges.push(`Sifarişlər/Məbləğ dəyişdirildi`);
+                        if (oi.archiveUrl !== ni.archiveUrl) subChanges.push(`Sənəd faylı yeniləndi`);
+
+                        invoiceChanges.push(`REDAKTƏ: Faktura №${ni.invoiceNumber || 'N/A'} (${subChanges.join(', ')})`);
+                    }
+                });
+            }
+
+            if (invoiceChanges.length > 0) {
+                changes.push(...invoiceChanges);
+                auditMeta.oldInvoices = oldInvoices;
+                auditMeta.newInvoices = mergedInvoices;
+            }
+
+            // --- ALWAYS PREPARE SNAPSHOT FOR AUDIT ---
+            auditMeta.snapshot = cleanedData;
+            auditMeta.changesCount = changes.length;
+            auditMeta.changesList = changes;
+
+            // Generic update log if fields changed
+            if (changes.length > 0) {
+                await addAuditLog("UPDATE", "Məlumatlar güncəlləndi: " + changes.join(' | '), userEmail, "CUSTOMER", auditMeta);
+            }
+
+            if (data.isArchived && !oldData?.isArchived) {
+                action = "ARCHIVE";
+                category = "ARCHIVE";
+                detail = "Müştəri arxivə göndərildi";
+                cleanedData.archivedAt = timestamp;
+            } else if (oldData?.isArchived && !data.isArchived) {
+                action = "RESTORE";
+                category = "ARCHIVE";
+                detail = "Müştəri arxivdən bərpa edildi";
+            } else if (newFiles > oldFiles) {
+                action = "FILE_UPLOAD";
+                category = "ARCHIVE";
+                detail = `Arxiv sənədi yükləndi (Cəmi: ${newFiles})`;
+            } else if (oldFiles > newFiles) {
+                action = "FILE_DELETE";
+                category = "ARCHIVE";
+                detail = "Arxiv sənədi silindi";
+            } else if (newReq > oldReq) {
+                action = "ARCHIVE_REQUEST";
+                category = "ARCHIVE";
+                detail = "Arxiv sənəd sorğusu göndərildi";
+            } else if (data.details?.isWarningSent && !oldData?.details?.isWarningSent) {
+                action = "WARNING_SENT";
+                detail = "Xəbərdarlıq məktubu göndərildi";
+                category = "DOCUMENT";
+            } else if (data.process_status && oldData?.process_status !== data.process_status) {
+                action = "STATUS_CHANGE";
+                const statusLabels: any = {
+                    'INSPECTOR_ENTERED': 'Müştəri qeydə alındı',
+                    'ASSIGNED_BY_MANAGER': 'Müfəttiş təyin edildi',
+                    'FILLED_BY_ADMIN': 'Məlumatlar dolduruldu',
+                    'WAITING_FOR_ARCHIVE': 'Arxiv sorğusu göndərildi',
+                    'ARCHIVE_UPLOADED': 'Arxiv sənədi yükləndi',
+                    'COMPLETED': 'Arxiv Müştəri'
+                };
+                detail = statusLabels[data.process_status] || `Status dəyişdi: ${data.process_status}`;
+            } else if (data.assignedTo && oldData?.assignedTo !== data.assignedTo) {
+                action = "ASSIGN";
+                detail = `Müfəttiş təyin edildi: ${data.assignedTo}`;
+            } else if (data.archiveAssignedTo && oldData?.archiveAssignedTo !== data.archiveAssignedTo) {
+                action = "ARCHIVE_ASSIGN";
+                detail = `Arxivçi təyin edildi: ${data.archiveAssignedTo}`;
+                category = "ARCHIVE";
+            }
+
+            if (action !== "UPDATE") {
+                statusHistory.push({
+                    label: detail,
+                    action,
+                    timestamp,
+                    user: userEmail
+                });
+                cleanedData.statusHistory = statusHistory;
+            }
+
+            transaction.set(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }), { merge: true });
+
+            if (action !== "UPDATE") {
+                await addAuditLog(action, detail, userEmail, category, {
+                    ...auditMeta,
+                    oldStatus: oldData?.process_status,
+                    newStatus: cleanedData.process_status
+                });
+            }
+
+            resultData = cleanedData;
+        });
+
+        return resultData;
     } catch (e) {
         console.error("updateCustomer xətası:", e);
         throw e;
@@ -603,4 +669,39 @@ export async function deleteTemplate(id: string, userEmail: string = "system") {
 export async function updateTemplate(id: string, data: any, userEmail: string = "system") {
     await updateDoc(doc(db, TEMPLATES_COLLECTION, id), sanitizeFirebaseData({ ...data, updatedAt: serverTimestamp() }));
     await addAuditLog("TEMPLATE_UPDATE", `Şablon yeniləndi: ${data.name}`, userEmail, "SYSTEM", { targetId: id });
+}
+
+/**
+ * "Moves" a customer record to a new ID.
+ * Creates a new document with the new ID/code and deletes the old one.
+ */
+export async function moveCustomer(oldId: string, newCode: string, userEmail: string) {
+    try {
+        const oldDocRef = doc(db, CUSTOMERS_COLLECTION, oldId);
+        const docSnap = await getDoc(oldDocRef);
+        if (!docSnap.exists()) throw new Error("Müştəri tapılmadı");
+
+        const data = docSnap.data();
+        const cleanNewCode = newCode.trim();
+        const newDocRef = doc(db, CUSTOMERS_COLLECTION, cleanNewCode);
+
+        // Check if new code already exists
+        const checkNew = await getDoc(newDocRef);
+        if (checkNew.exists()) throw new Error("Bu kodlu müştəri artıq mövcuddur");
+
+        // Start a batch or just consecutive calls
+        await setDoc(newDocRef, {
+            ...data,
+            id: cleanNewCode,
+            customerCode: cleanNewCode,
+            updatedAt: serverTimestamp(),
+            updatedBy: userEmail
+        });
+
+        await deleteDoc(oldDocRef);
+        return true;
+    } catch (e: any) {
+        console.error("Move error:", e);
+        throw e;
+    }
 }

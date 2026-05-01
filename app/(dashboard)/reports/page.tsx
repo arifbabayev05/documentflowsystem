@@ -39,6 +39,7 @@ export default function ReportsPage() {
     const [templates, setTemplates] = useState<Template[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+    const [templateTab, setTemplateTab] = useState<"standart" | "istisna">("standart");
 
     if (!user || !isSuperAdmin) {
         return (
@@ -83,45 +84,60 @@ export default function ReportsPage() {
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
 
-        if (!file.name.endsWith(".docx")) {
-            toast.error("Yalnız .docx formatında fayllar qəbul edilir");
-            return;
+        const validFiles = Array.from(files).filter(file => file.name.endsWith(".docx"));
+        
+        if (validFiles.length !== files.length) {
+            toast.error("Yalnız .docx formatında fayllar qəbul edilir. Bəzi fayllar rədd edildi.");
         }
 
-        const reader = new FileReader();
-        reader.onload = async (event) => {
+        if (validFiles.length === 0) return;
+
+        toast.loading(`${validFiles.length} şablon yüklənir...`, { id: "upload-template" });
+
+        let successCount = 0;
+
+        for (const file of validFiles) {
             try {
-                const arrayBuffer = event.target?.result as ArrayBuffer;
-
-                // Convert ArrayBuffer to Base64 safely
+                const arrayBuffer = await file.arrayBuffer();
                 const blob = new Blob([arrayBuffer]);
-                const base64Reader = new FileReader();
-                base64Reader.onloadend = async () => {
-                    const fullBase64 = base64Reader.result as string;
-                    const base64Content = fullBase64.split(',')[1];
+                const base64Content = await new Promise<string>((resolve, reject) => {
+                    const base64Reader = new FileReader();
+                    base64Reader.onloadend = () => {
+                        const fullBase64 = base64Reader.result as string;
+                        resolve(fullBase64.split(',')[1]);
+                    };
+                    base64Reader.onerror = reject;
+                    base64Reader.readAsDataURL(blob);
+                });
 
-                    const newTempId = await addTemplate({
-                        name: file.name,
-                        content: base64Content
-                    });
+                const newTempId = await addTemplate({
+                    name: file.name,
+                    content: base64Content
+                });
 
-                    setTemplates(prev => [...prev, {
-                        id: newTempId as string,
-                        name: file.name,
-                        content: base64Content
-                    }]);
-                    toast.success(`${file.name} şablonu yaddaşa əlavə edildi`);
-                };
-                base64Reader.readAsDataURL(blob);
+                setTemplates(prev => [...prev, {
+                    id: newTempId as string,
+                    name: file.name,
+                    content: base64Content
+                }]);
+                successCount++;
             } catch (err) {
-                console.error("Upload error:", err);
-                toast.error("Fayl yüklənərkən xəta baş verdi");
+                console.error(`Upload error for ${file.name}:`, err);
+                toast.error(`"${file.name}" yüklənərkən xəta baş verdi`);
             }
-        };
-        reader.readAsArrayBuffer(file);
+        }
+
+        if (successCount > 0) {
+            toast.success(`${successCount} şablon uğurla yükləndi`, { id: "upload-template" });
+        } else {
+            toast.dismiss("upload-template");
+        }
+        
+        // Reset the input value so the same files can be selected again if needed
+        e.target.value = '';
     };
 
     const handleDeleteTemplate = async (id: string) => {
@@ -150,7 +166,7 @@ export default function ReportsPage() {
                     {isSuperAdmin && (
                         <div className="lg:col-span-1 space-y-6">
                             <label className="block w-full cursor-pointer group">
-                                <input type="file" accept=".docx" className="hidden" onChange={handleFileUpload} />
+                                <input type="file" accept=".docx" multiple className="hidden" onChange={handleFileUpload} />
                                 <div className="w-full py-12 bg-white border-2 border-dashed border-blue-100 rounded-[2.5rem] soft-shadow group-hover:border-primary/30 group-hover:bg-blue-50/30 transition-all flex flex-col items-center justify-center gap-4 text-center px-6">
                                     <div className="h-20 w-20 bg-blue-50 rounded-3xl flex items-center justify-center text-primary transform group-hover:scale-110 group-hover:rotate-12 transition-all duration-300">
                                         <FileType size={36} />
@@ -166,22 +182,35 @@ export default function ReportsPage() {
                     )}
 
                     <div className="lg:col-span-3 space-y-8">
-                        <div className="flex items-center justify-between px-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-2">
                             <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                                 <FileText className="text-primary" size={28} />
-                                Mövcud Şablonlar
+                                Şablonlar
                             </h3>
-                            <span className="text-[12px] bg-blue-50 text-primary px-5 py-2 rounded-full border border-blue-100 font-black uppercase tracking-widest">{templates.length} Sənəd</span>
+                            <div className="flex bg-slate-100 p-1.5 rounded-2xl">
+                                <button
+                                    onClick={() => setTemplateTab("standart")}
+                                    className={`px-5 py-2.5 rounded-xl text-[12px] font-black uppercase tracking-widest transition-all ${templateTab === "standart" ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                                >
+                                    Standart
+                                </button>
+                                <button
+                                    onClick={() => setTemplateTab("istisna")}
+                                    className={`px-5 py-2.5 rounded-xl text-[12px] font-black uppercase tracking-widest transition-all ${templateTab === "istisna" ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                                >
+                                    İstisna
+                                </button>
+                            </div>
                         </div>
 
-                        {templates.length === 0 ? (
+                        {templates.filter(t => templateTab === 'istisna' ? t.name.startsWith('Istisna_') : !t.name.startsWith('Istisna_')).length === 0 ? (
                             <div className="bg-white p-32 rounded-[3rem] border border-blue-50 border-dashed text-center flex flex-col items-center gap-6 soft-shadow opacity-40">
                                 <FileText size={100} />
                                 <p className="text-slate-600 font-black text-lg uppercase tracking-widest font-sans">Şablon tapılmadı</p>
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {templates.map((template) => (
+                                {templates.filter(t => templateTab === 'istisna' ? t.name.startsWith('Istisna_') : !t.name.startsWith('Istisna_')).map((template) => (
                                     <div key={template.id} className="bg-white p-8 rounded-[2.5rem] border border-blue-100 soft-shadow flex items-center justify-between group hover:border-primary/60 transition-all hover:translate-y-[-2px]">
                                         <div className="flex items-center gap-6">
                                             <div className="h-16 w-16 bg-blue-50/50 text-primary rounded-2xl flex items-center justify-center shadow-sm border border-blue-50 transform group-hover:scale-105 transition-all">

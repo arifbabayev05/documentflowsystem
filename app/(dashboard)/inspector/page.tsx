@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle, Users, DollarSign, UserCheck, Search, Filter, FileDown, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { bulkAddCustomers, getInspectorCustomers, getCustomer } from "@/lib/db";
+import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
+import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers } from "@/lib/db";
+import * as XLSX from "xlsx";
 
 interface EntryRow {
     customer_code: string;
@@ -165,7 +167,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
         const day = String(date.getDate()).padStart(2, "0");
         const month = String(date.getMonth() + 1).padStart(2, "0");
         const year = date.getFullYear();
-        return `${day}.${month}.${year}`;
+        return `${day}.${month}.${year} `;
     };
 
     const days = generateCalendarDays();
@@ -222,7 +224,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
                                 key={idx}
                                 onClick={() => handleSelectDate(dayInfo.date)}
                                 className={`
-                                    w-9 h-9 rounded-xl text-[13px] font-semibold transition-all
+w - 9 h - 9 rounded - xl text - [13px] font - semibold transition - all
                                     ${!dayInfo.isCurrentMonth ? "text-slate-300" : "text-slate-700"}
                                     ${isSelected(dayInfo.date)
                                         ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
@@ -230,7 +232,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
                                             ? "bg-blue-50 text-blue-600 ring-2 ring-blue-200"
                                             : "hover:bg-slate-100"
                                     }
-                                `}
+`}
                             >
                                 {dayInfo.day}
                             </button>
@@ -274,20 +276,21 @@ export default function InspectorPage() {
         onCancel: () => void;
     } | null>(null);
 
+    // Search & Pagination & Filter
+    const [searchTerm, setSearchTerm] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(20);
+    const [selectedInspector, setSelectedInspector] = useState("ALL");
+
+    // Export Modal State
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [exportStartDate, setExportStartDate] = useState("");
+    const [exportEndDate, setExportEndDate] = useState("");
+    const [exportInspectors, setExportInspectors] = useState<string[]>([]);
+    const [exportSearchTerm, setExportSearchTerm] = useState("");
+    const [isExportComboboxOpen, setIsExportComboboxOpen] = useState(false);
+
     const tableRef = useRef<HTMLDivElement>(null);
-
-    const formatAZDate = (val: any) => {
-        if (!val) return "naməlum";
-        let d: Date;
-        if (val && typeof val.toDate === 'function') d = val.toDate();
-        else d = new Date(val);
-
-        if (isNaN(d.getTime())) return "naməlum";
-        const day = String(d.getDate()).padStart(2, '0');
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const year = d.getFullYear();
-        return `${day}.${month}.${year}`;
-    };
 
     const askConfirmation = (message: string) => {
         return new Promise<boolean>((resolve) => {
@@ -306,12 +309,19 @@ export default function InspectorPage() {
         });
     };
 
+    const isLeadOrAdmin = user?.role === "INSPECTOR_LEAD" || user?.role === "SUPERADMIN" || user?.role === "DEP_HEAD" || user?.role === "MANAGER";
+
     /* ── fetch history ── */
     const fetchHistory = useCallback(async () => {
         if (!user?.email) return;
         try {
             setLoading(true);
-            const data = await getInspectorCustomers(user.email);
+            let data;
+            if (isLeadOrAdmin) {
+                data = await getCustomers();
+            } else {
+                data = await getInspectorCustomers(user.email);
+            }
             data.sort((a: any, b: any) =>
                 new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
             );
@@ -321,35 +331,96 @@ export default function InspectorPage() {
         } finally {
             setLoading(false);
         }
-    }, [user?.email]);
+    }, [user?.email, isLeadOrAdmin]);
 
     useEffect(() => {
         if (user) fetchHistory();
     }, [user, fetchHistory]);
 
+    const stats = useMemo(() => {
+        let sourceData = history;
+        if (isLeadOrAdmin && selectedInspector !== "ALL") {
+            sourceData = history.filter(h => h.createdBy === selectedInspector);
+        }
+
+        const total = sourceData.length;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const todayCount = sourceData.filter(h => {
+            if (!h.createdAt) return false;
+            const d = new Date(h.createdAt);
+            d.setHours(0, 0, 0, 0);
+            return d.getTime() === today.getTime();
+        }).length;
+
+        const completedCount = sourceData.filter(h => h.process_status === "COMPLETED").length;
+        const waitingCount = sourceData.filter(h => h.process_status === "WAITING_FOR_ARCHIVE").length;
+        const distinctInspectors = new Set(sourceData.map(h => h.createdBy)).size;
+
+        return { total, todayCount, completedCount, waitingCount, distinctInspectors };
+    }, [history, selectedInspector, isLeadOrAdmin]);
+
     const filteredHistory = useMemo(() => {
-        if (!dateRange.start && !dateRange.end) return history;
-
         return history.filter(row => {
-            if (!row.createdAt) return false;
-            const rowDate = new Date(row.createdAt);
-            rowDate.setHours(0, 0, 0, 0);
+            // 1. Date Range Filter
+            if (dateRange.start || dateRange.end) {
+                if (!row.createdAt) return false;
+                const rowDate = new Date(row.createdAt);
+                rowDate.setHours(0, 0, 0, 0);
 
-            if (dateRange.start) {
-                const startDate = new Date(dateRange.start);
-                startDate.setHours(0, 0, 0, 0);
-                if (rowDate < startDate) return false;
+                if (dateRange.start) {
+                    const startDate = new Date(dateRange.start);
+                    startDate.setHours(0, 0, 0, 0);
+                    if (rowDate < startDate) return false;
+                }
+
+                if (dateRange.end) {
+                    const endDate = new Date(dateRange.end);
+                    endDate.setHours(0, 0, 0, 0);
+                    if (rowDate > endDate) return false;
+                }
             }
 
-            if (dateRange.end) {
-                const endDate = new Date(dateRange.end);
-                endDate.setHours(0, 0, 0, 0);
-                if (rowDate > endDate) return false;
+            // 2. Inspector Filter (for Lead/Admin)
+            if (isLeadOrAdmin && selectedInspector !== "ALL") {
+                if (row.createdBy !== selectedInspector) return false;
+            }
+
+            // 3. Search Term Filter
+            if (searchTerm.trim()) {
+                const term = searchTerm.toLowerCase().trim();
+                const matches = [
+                    row.customerCode,
+                    row.fullName,
+                    row.details?.fin,
+                    row.details?.passportSeries
+                ].some(val => val?.toString()?.toLowerCase()?.includes(term));
+
+                if (!matches) return false;
             }
 
             return true;
         });
-    }, [history, dateRange]);
+    }, [history, dateRange, selectedInspector, searchTerm, isLeadOrAdmin]);
+
+    const inspectors = useMemo(() => {
+        if (!isLeadOrAdmin) return [];
+        const unique = Array.from(new Set(history.map(h => h.createdBy).filter(Boolean)));
+        return unique.sort();
+    }, [history, isLeadOrAdmin]);
+
+    const paginatedHistory = useMemo(() => {
+        const start = (currentPage - 1) * itemsPerPage;
+        return filteredHistory.slice(start, start + itemsPerPage);
+    }, [filteredHistory, currentPage, itemsPerPage]);
+
+    const totalPages = Math.ceil(filteredHistory.length / itemsPerPage);
+
+    // Reset page when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, selectedInspector, dateRange]);
 
     if (!user || !can("page_inspector")) {
         return (
@@ -366,6 +437,65 @@ export default function InspectorPage() {
     }
 
 
+
+    /* ── excel export handler ── */
+    const handleExcelExport = () => {
+        let dataToExport = history;
+
+        if (exportStartDate || exportEndDate) {
+            dataToExport = dataToExport.filter(row => {
+                if (!row.createdAt) return false;
+                const rowDate = new Date(row.createdAt);
+                rowDate.setHours(0, 0, 0, 0);
+
+                if (exportStartDate) {
+                    const start = new Date(exportStartDate);
+                    start.setHours(0, 0, 0, 0);
+                    if (rowDate < start) return false;
+                }
+                if (exportEndDate) {
+                    const end = new Date(exportEndDate);
+                    end.setHours(0, 0, 0, 0);
+                    if (rowDate > end) return false;
+                }
+                return true;
+            });
+        }
+
+        if (exportInspectors.length > 0) {
+            dataToExport = dataToExport.filter(row => exportInspectors.includes(row.createdBy));
+        }
+
+        const statsMap = new Map<string, { SAA: string, count: number }>();
+
+        dataToExport.forEach(row => {
+            const email = row.createdBy || "Bilinmir";
+            const saa = row.details?.executorName || email.split('@')[0];
+            
+            if (statsMap.has(email)) {
+                statsMap.get(email)!.count += 1;
+            } else {
+                statsMap.set(email, { SAA: saa, count: 1 });
+            }
+        });
+
+        const excelData = Array.from(statsMap.values()).map(stat => ({
+            "Daxil Edən": stat.SAA,
+            "Sayı": stat.count
+        }));
+
+        if (excelData.length === 0) {
+            toast.error("Seçilmiş kriteriyalara uyğun məlumat tapılmadı.");
+            return;
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Müfəttiş_Statistika");
+
+        XLSX.writeFile(workbook, `Mufettis_Statistika_${new Date().toISOString().split('T')[0]}.xlsx`);
+        setIsExportModalOpen(false);
+    };
 
     /* ── paste handler ── */
     const handlePaste = (e: React.ClipboardEvent) => {
@@ -389,7 +519,7 @@ export default function InspectorPage() {
                 // Layout: Code | Soyad | Ad | Ata Adı | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: [p[1], p[2], p[3]].filter(Boolean).join(" "),
+                    full_name: toTitleCase([p[1], p[2], p[3]].filter(Boolean).join(" ")),
                     fin: p[4] || "",
                     serial_number: p[5] || "",
                     total_debt: p[6] || "",
@@ -398,7 +528,7 @@ export default function InspectorPage() {
                 // Layout from screenshot: Code | Name | (Blank) | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: p[1] || "",
+                    full_name: toTitleCase(p[1] || ""),
                     fin: p[3] || "",
                     serial_number: p[4] || "",
                     total_debt: p[5] || "",
@@ -407,7 +537,7 @@ export default function InspectorPage() {
                 // Standard Layout: Code | Name | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
-                    full_name: p[1] || "",
+                    full_name: toTitleCase(p[1] || ""),
                     fin: p[2] || "",
                     serial_number: p[3] || "",
                     total_debt: p[4] || "",
@@ -453,19 +583,20 @@ export default function InspectorPage() {
             const finalPayload = [];
 
             for (const r of validRows) {
+                const cleanCode = r.customer_code.trim();
                 // Check for duplicates in DB
-                const existing = await getCustomer(r.customer_code) as any;
+                const existing = await getCustomer(cleanCode) as any;
                 if (existing) {
                     const dateStr = formatAZDate(existing.createdAt);
                     const confirmed = await askConfirmation(
-                        `Müştəri ${r.customer_code} (${r.full_name}) artıq ${dateStr} tarixində sistemə qeyd edilib.\nYenidən daxil etmək istəyirsiniz?`
+                        `Müştəri ${cleanCode} (${r.full_name}) artıq ${dateStr} tarixində sistemə qeyd edilib.\nYenidən daxil etmək istəyirsiniz ? `
                     );
                     if (!confirmed) continue;
                 }
 
                 finalPayload.push({
-                    customerCode: r.customer_code,
-                    fullName: r.full_name,
+                    customerCode: cleanCode,
+                    fullName: toTitleCase(r.full_name),
                     debtAmount: r.total_debt,
                     process_status: "INSPECTOR_ENTERED" as ProcessStatus,
                     createdBy: user?.email,
@@ -509,8 +640,8 @@ export default function InspectorPage() {
         const minutes = String(date.getMinutes()).padStart(2, "0");
 
         return {
-            date: `${day}/${month}/${year}`,
-            time: `${hours}:${minutes}`,
+            date: `${day} /${month}/${year} `,
+            time: `${hours}:${minutes} `,
         };
     };
 
@@ -522,7 +653,7 @@ export default function InspectorPage() {
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data-r="${rowIdx + 1}"][data-c="${colIdx}"]`
+                    `[data - r= "${rowIdx + 1}"][data - c="${colIdx}"]`
                 );
                 next?.focus();
             }, 0);
@@ -532,7 +663,7 @@ export default function InspectorPage() {
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data-r="${rowIdx + 1}"][data-c="0"]`
+                    `[data - r= "${rowIdx + 1}"][data - c="0"]`
                 );
                 next?.focus();
             }, 0);
@@ -542,6 +673,64 @@ export default function InspectorPage() {
     return (
         <AuthGuard>
             <div className="max-w-[1500px] mx-auto pb-20 px-4" onPaste={handlePaste}>
+
+                {/* ═══ STATS CARDS ═══ */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                {selectedInspector !== "ALL" ? "Daxil etdiyi Müştəri" : "Cəmi Müştəri"}
+                            </span>
+                            <div className="h-8 w-8 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center">
+                                <Users size={18} />
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <span className="text-2xl font-black text-slate-900 leading-none">{stats.total}</span>
+                            <span className="text-[10px] font-bold text-slate-400 mb-0.5 uppercase tracking-tighter">Qeydiyyat</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bugünkü Daxilolma</span>
+                            <div className="h-8 w-8 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center">
+                                <Zap size={18} />
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <span className="text-2xl font-black text-slate-900 leading-none">{stats.todayCount}</span>
+                            <span className="text-[10px] font-bold text-slate-400 mb-0.5 uppercase tracking-tighter">İş</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tamamlanmış İşlər</span>
+                            <div className="h-8 w-8 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center">
+                                <Shield size={18} />
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <span className="text-2xl font-black text-slate-900 leading-none">{stats.completedCount}</span>
+                            <span className="text-[10px] font-bold text-slate-400 mb-0.5 uppercase tracking-tighter">Arxivdə</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sorğu Gözləyən</span>
+                            <div className="h-8 w-8 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
+                                <History size={18} />
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <span className="text-2xl font-black text-slate-900 leading-none">{stats.waitingCount}</span>
+                            <span className="text-[10px] font-bold text-slate-400 mb-0.5 uppercase tracking-tighter">Aktiv</span>
+                        </div>
+                    </div>
+                </div>
+
 
                 {/* ═══ ENTRY TABLE ═══ */}
                 <div ref={tableRef} className="mt-6">
@@ -601,6 +790,11 @@ export default function InspectorPage() {
 
                                                 updateCell(ri, col.key, v);
                                             }}
+                                            onBlur={e => {
+                                                if (col.key === "full_name") {
+                                                    updateCell(ri, col.key, toTitleCase(e.target.value));
+                                                }
+                                            }}
                                             onKeyDown={e => handleKeyDown(e, ri, ci)}
                                             className="w-full h-12 px-4 rounded-xl border border-border-soft focus:border-blue-500 focus:bg-white focus:shadow-sm outline-none text-[17px] font-black text-slate-900 bg-transparent transition-all"
                                             style={col.uppercase ? { textTransform: "uppercase" } : undefined}
@@ -651,34 +845,93 @@ export default function InspectorPage() {
 
                 {/* ═══ HISTORY ═══ */}
                 <div className="mt-14">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 px-1">
-                        <div className="flex items-center gap-2">
-                            <History size={16} className="text-slate-400" />
-                            <span className="text-sm font-bold text-slate-600">Daxil etdiklərim</span>
-                            <span className="text-[12px] text-slate-600 font-bolder ml-1">({filteredHistory.length})</span>
-                        </div>
+                    <div className="flex flex-col gap-6 mb-6">
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 px-1">
+                            <div className="flex items-center gap-2 min-w-max">
+                                <History size={20} className="text-slate-400" />
+                                <span className="text-lg font-black text-slate-700">
+                                    {isLeadOrAdmin ? "Bütün Məlumatlar" : "Daxil etdiklərim"}
+                                </span>
+                                <span className="bg-slate-100 text-slate-500 text-[11px] font-bold px-2 py-0.5 rounded-full ml-2">
+                                    {filteredHistory.length} qeyd
+                                </span>
+                            </div>
 
-                        <div className="flex items-center gap-3">
-                            <CustomDatePicker
-                                value={dateRange.start}
-                                onChange={(val) => setDateRange(prev => ({ ...prev, start: val }))}
-                                placeholder="Başlanğıc"
-                            />
-                            <span className="text-slate-300 font-bold">—</span>
-                            <CustomDatePicker
-                                value={dateRange.end}
-                                onChange={(val) => setDateRange(prev => ({ ...prev, end: val }))}
-                                placeholder="Son"
-                            />
-                            {(dateRange.start || dateRange.end) && (
-                                <button
-                                    onClick={() => setDateRange({ start: "", end: "" })}
-                                    className="p-2 text-slate-400 hover:text-red-500 transition-colors bg-white border border-slate-200 rounded-xl shadow-sm"
-                                    title="Filteri təmizlə"
-                                >
-                                    <X size={14} />
-                                </button>
-                            )}
+                            <div className="flex flex-wrap items-center gap-2 flex-1 justify-end">
+                                {/* Search Bar - Integrated into the row */}
+                                <div className="relative flex-1 min-w-[200px] max-w-[400px]">
+                                    <input
+                                        type="text"
+                                        placeholder="Axtar..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-[13px] font-bold text-slate-800 placeholder:text-slate-400 shadow-sm hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all outline-none"
+                                    />
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                </div>
+
+                                {/* Inspector Filter */}
+                                {isLeadOrAdmin && (
+                                    <div className="relative">
+                                        <select
+                                            value={selectedInspector}
+                                            onChange={(e) => setSelectedInspector(e.target.value)}
+                                            className="appearance-none pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-[12px] font-bold text-slate-800 cursor-pointer hover:border-slate-300 transition-all shadow-sm focus:ring-2 focus:ring-blue-500/10 outline-none min-w-[160px]"
+                                        >
+                                            <option value="ALL">Müfəttişlər</option>
+                                            {inspectors.map(email => (
+                                                <option key={email} value={email}>{email.split('@')[0]}</option>
+                                            ))}
+                                        </select>
+                                        <Users size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <ChevronRight size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 rotate-90" />
+                                    </div>
+                                )}
+
+                                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-1 py-1 shadow-sm">
+                                    <CustomDatePicker
+                                        value={dateRange.start}
+                                        onChange={(val) => setDateRange(prev => ({ ...prev, start: val }))}
+                                        placeholder="Başlanğıc"
+                                    />
+                                    <span className="text-slate-200 font-bold">—</span>
+                                    <CustomDatePicker
+                                        value={dateRange.end}
+                                        onChange={(val) => setDateRange(prev => ({ ...prev, end: val }))}
+                                        placeholder="Son"
+                                    />
+                                </div>
+
+                                {(dateRange.start || dateRange.end || selectedInspector !== "ALL" || searchTerm) && (
+                                    <button
+                                        onClick={() => {
+                                            setDateRange({ start: "", end: "" });
+                                            setSelectedInspector("ALL");
+                                            setSearchTerm("");
+                                        }}
+                                        className="p-2 text-slate-400 hover:text-red-500 transition-colors bg-white border border-slate-200 rounded-xl shadow-sm"
+                                        title="Filteri təmizlə"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                )}
+                                {isLeadOrAdmin && (
+                                    <button
+                                        onClick={() => {
+                                            setExportStartDate("");
+                                            setExportEndDate("");
+                                            setExportInspectors([]);
+                                            setExportSearchTerm("");
+                                            setIsExportModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 px-3 py-2 rounded-xl text-[13px] font-bold transition-colors shadow-sm ml-2"
+                                        title="Excel Export"
+                                    >
+                                        <FileDown size={14} />
+                                        <span className="hidden sm:inline">Export</span>
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -689,9 +942,9 @@ export default function InspectorPage() {
                         {/* header - Borc moved after Seriya */}
                         <div
                             className="grid bg-[#fcfdfe] border-b border-slate-200"
-                            style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px" }}
+                            style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 200px" }}
                         >
-                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Status"].map(h => (
+                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Daxil edən"].map(h => (
                                 <div key={h} className="px-4 py-4.5 text-[13px] font-black text-slate-600 uppercase tracking-widest">
                                     {h}
                                 </div>
@@ -700,17 +953,19 @@ export default function InspectorPage() {
 
                         {/* body */}
                         {loading ? (
-                            <div className="py-10 text-center text-xs text-slate-300">Yüklənir...</div>
-                        ) : filteredHistory.length === 0 ? (
-                            <div className="py-10 text-center text-xs text-slate-300">Seçilmiş tarixlərdə məlumat yoxdur</div>
+                            <div className="py-10 text-center text-xs text-slate-300 font-bold">Yüklənir...</div>
+                        ) : paginatedHistory.length === 0 ? (
+                            <div className="py-10 text-center text-xs text-slate-300 font-bold">Məlumat yoxdur</div>
                         ) : (
-                            filteredHistory.map((row: any, idx: number) => (
+                            paginatedHistory.map((row: any, idx: number) => (
                                 <div
                                     key={row.id || idx}
                                     className="grid border-b border-slate-50 last:border-b-0 hover:bg-slate-50 transition-colors items-center"
-                                    style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px" }}
+                                    style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 200px" }}
                                 >
-                                    <div className="px-5 py-4 text-[13px] font-black text-slate-400 flex items-center">{filteredHistory.length - idx}</div>
+                                    <div className="px-5 py-4 text-[13px] font-black text-slate-400 flex items-center">
+                                        {filteredHistory.length - ((currentPage - 1) * itemsPerPage + idx)}
+                                    </div>
                                     {(() => {
                                         const formatted = formatDateTime(row.createdAt);
 
@@ -731,19 +986,73 @@ export default function InspectorPage() {
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
                                     <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
                                     <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
-                                    <div className="px-4 py-4 w-100">
-                                        <span
-                                            className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider ${STATUS_LABELS[row.process_status as ProcessStatus]?.bg || "bg-slate-100"
-                                                } ${STATUS_LABELS[row.process_status as ProcessStatus]?.color || "text-slate-500"
-                                                }`}
-                                        >
-                                            {STATUS_LABELS[row.process_status as ProcessStatus]?.label || "Daxil edildi"}
-                                        </span>
+                                    <div className="px-4 py-4 truncate">
+                                        <div className="flex flex-col leading-tight">
+                                            <span className="text-[11px] font-black text-slate-900 truncate">{row.details?.executorName || row.createdBy?.split('@')[0]}</span>
+                                            <span className="text-[9px] font-bold text-slate-400 truncate mt-0.5">{row.createdBy}</span>
+                                        </div>
                                     </div>
                                 </div>
                             ))
                         )}
                     </div>
+
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between mt-6 px-1">
+                            <div className="text-[12px] font-bold text-slate-500">
+                                Göstərilir {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredHistory.length)} / {filteredHistory.length} qeyd
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-sm"
+                                >
+                                    <ChevronLeft size={18} />
+                                </button>
+
+                                <div className="flex items-center gap-1">
+                                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                        let pageNum;
+                                        if (totalPages <= 5) {
+                                            pageNum = i + 1;
+                                        } else if (currentPage <= 3) {
+                                            pageNum = i + 1;
+                                        } else if (currentPage >= totalPages - 2) {
+                                            pageNum = totalPages - 4 + i;
+                                        } else {
+                                            pageNum = currentPage - 2 + i;
+                                        }
+
+                                        return (
+                                            <button
+                                                key={pageNum}
+                                                onClick={() => setCurrentPage(pageNum)}
+                                                className={`
+                                                    w-10 h-10 rounded-xl text-[13px] font-black transition-all shadow-sm
+                                                    ${currentPage === pageNum
+                                                        ? "bg-blue-600 text-white shadow-blue-200"
+                                                        : "bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                                                    }
+                                                `}
+                                            >
+                                                {pageNum}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage === totalPages}
+                                    className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-sm"
+                                >
+                                    <ChevronRight size={18} />
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -754,6 +1063,141 @@ export default function InspectorPage() {
                 onConfirm={confirmModal?.onConfirm || (() => { })}
                 onCancel={confirmModal?.onCancel || (() => { })}
             />
+
+            {/* Export Modal */}
+            {isExportModalOpen && (
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsExportModalOpen(false)} />
+                    <div className="relative bg-white rounded-3xl p-8 max-w-xl w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between mb-8">
+                            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3">
+                                <FileDown className="text-emerald-500" />
+                                Məlumatları Export Et
+                            </h3>
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-xl transition-colors"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-6">
+                            {/* Date Range */}
+                            <div className="space-y-3">
+                                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Tarix Aralığı</label>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={exportStartDate}
+                                            onChange={(e) => setExportStartDate(e.target.value)}
+                                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                                        />
+                                        <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    </div>
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={exportEndDate}
+                                            onChange={(e) => setExportEndDate(e.target.value)}
+                                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                                        />
+                                        <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Inspector Combobox */}
+                            <div className="space-y-3">
+                                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Müfəttişlər</label>
+                                <div className="relative">
+                                    <div 
+                                        className="w-full flex flex-wrap items-center gap-2 pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 transition-all cursor-pointer min-h-[48px]"
+                                        onClick={() => setIsExportComboboxOpen(!isExportComboboxOpen)}
+                                    >
+                                        {exportInspectors.length === 0 ? (
+                                            <span className="text-slate-400">Bütün müfəttişlər</span>
+                                        ) : (
+                                            exportInspectors.map(email => (
+                                                <span key={email} className="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg flex items-center gap-1 text-[11px]">
+                                                    {email.split('@')[0]}
+                                                    <X 
+                                                        size={12} 
+                                                        className="cursor-pointer hover:text-red-500" 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExportInspectors(prev => prev.filter(i => i !== email));
+                                                        }} 
+                                                    />
+                                                </span>
+                                            ))
+                                        )}
+                                        <ChevronRight size={16} className={`absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${isExportComboboxOpen ? 'rotate-[-90deg]' : 'rotate-90'}`} />
+                                    </div>
+
+                                    {isExportComboboxOpen && (
+                                        <div className="absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 shadow-xl rounded-xl z-50 overflow-hidden">
+                                            <div className="p-2 border-b border-slate-100">
+                                                <div className="relative">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Müfəttiş axtar..."
+                                                        value={exportSearchTerm}
+                                                        onChange={(e) => setExportSearchTerm(e.target.value)}
+                                                        className="w-full pl-8 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-bold text-slate-700 outline-none focus:border-blue-500"
+                                                    />
+                                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                </div>
+                                            </div>
+                                            <div className="max-h-[200px] overflow-y-auto">
+                                                {inspectors.filter(email => email.toLowerCase().includes(exportSearchTerm.toLowerCase())).map(email => {
+                                                    const isSelected = exportInspectors.includes(email);
+                                                    return (
+                                                        <div
+                                                            key={email}
+                                                            onClick={() => {
+                                                                if (isSelected) {
+                                                                    setExportInspectors(prev => prev.filter(i => i !== email));
+                                                                } else {
+                                                                    setExportInspectors(prev => [...prev, email]);
+                                                                }
+                                                            }}
+                                                            className={`px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}
+                                                        >
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
+                                                                {isSelected && <Check size={12} className="text-white" />}
+                                                            </div>
+                                                            <span className="text-[13px] font-bold text-slate-700">{email}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-4 mt-8 pt-6 border-t border-slate-100">
+                            <button
+                                onClick={() => setIsExportModalOpen(false)}
+                                className="flex-1 px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-[12px] hover:bg-slate-50 transition-colors shadow-sm tracking-widest"
+                            >
+                                Ləğv Et
+                            </button>
+                            <button
+                                onClick={handleExcelExport}
+                                className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-black uppercase text-[12px] hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/20 transition-all tracking-widest flex items-center justify-center gap-2"
+                            >
+                                <FileDown size={16} />
+                                Export Yarat
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </AuthGuard>
     );
 }

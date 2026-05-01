@@ -163,6 +163,7 @@ interface Customer {
         totalUnpaid?: string;
         fin?: string;
         birthDate?: string;
+        qosmaItems?: string[];
         representativeFin?: string;
         installmentMonths?: string;
         courtFee?: string;
@@ -180,6 +181,16 @@ interface Customer {
             archiveBase64?: string;
             archiveName?: string;
             archiveRequested?: boolean;
+            isException?: boolean;
+            exceptionDate?: string;
+            exceptionInvoice?: string;
+            exceptionInvoiceDate?: string;
+            exceptionProduct?: string;
+            exceptionProductQty?: string;
+            exceptionProducts?: Array<{ name: string; qty: number }>;
+            exceptionDeductedAmount?: string;
+            exceptionReturnedPrice?: string;
+            exceptionXahisText?: string;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -222,7 +233,90 @@ interface CompanyInfo {
 
 // --- Multi-Invoice Helpers ---
 
-function getAllContractDates(invoices: any[]): string {
+function formatToDDMMYYYY(dateStr: string) {
+    if (!dateStr) return "";
+    if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts.length === 3 && parts[0].length === 4) {
+            return `${parts[2]}.${parts[1]}.${parts[0]}`;
+        }
+    }
+    return dateStr;
+}
+
+function getAZOrdinal(dateStr: string): string {
+    if (!dateStr) return "";
+    let yearStr = "";
+    if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts.length >= 1) {
+            yearStr = parts[0].length === 4 ? parts[0] : parts[parts.length - 1];
+        }
+    } else {
+        const parts = dateStr.split('.');
+        if (parts.length >= 1) {
+            yearStr = parts[parts.length - 1];
+        }
+    }
+    const year = parseInt(yearStr);
+    if (isNaN(year)) return "";
+
+    const lastDigit = year % 10;
+    const lastTwo = year % 100;
+
+    // Suffix rules for Azerbaijani numbers:
+    // 1, 2, 5, 7, 8, 20, 50, 70, 80, 1000 -> -ci
+    // 3, 4, 100 -> -cü
+    // 6, 40, 60, 90 -> -cı
+    // 9, 10, 30 -> -cu
+
+    if (year % 10 === 0 && year !== 0) {
+        if (lastTwo === 10 || lastTwo === 30) return "-cu";
+        if (lastTwo === 20 || lastTwo === 50 || lastTwo === 70 || lastTwo === 80) return "-ci";
+        if (lastTwo === 40 || lastTwo === 60 || lastTwo === 90) return "-cı";
+        if (lastTwo === 0) {
+            if (year % 1000 === 0) return "-ci";
+            if (year % 100 === 0) return "-cü";
+        }
+    }
+
+    if ([1, 2, 5, 7, 8].includes(lastDigit)) return "-ci";
+    if ([3, 4].includes(lastDigit)) return "-cü";
+    if ([6].includes(lastDigit)) return "-cı";
+    if ([9].includes(lastDigit)) return "-cu";
+    return "-ci";
+}
+
+function getAllContractDates(invoices: any[], isSuffix: boolean = false): string {
+    const dates: string[] = [];
+    for (const inv of invoices) {
+        if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+            for (const ord of (inv.orders || [])) {
+                if (ord.contractDate) {
+                    const extraDateOrdinal = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+                    const ordDateOrdinal = `${ord.contractDate}${getAZOrdinal(ord.contractDate)}`;
+                    const endWord = isSuffix ? "fakturanın" : "fakturaya";
+                    const formatted = `${extraDateOrdinal} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${ordDateOrdinal} il tarixli ${inv.invoiceNumber} saylı ${endWord}`;
+                    if (!dates.includes(formatted)) {
+                        dates.push(formatted);
+                    }
+                }
+            }
+        } else {
+            for (const ord of (inv.orders || [])) {
+                if (ord.contractDate) {
+                    const formatted = `${ord.contractDate}${getAZOrdinal(ord.contractDate)} il`;
+                    if (!dates.includes(formatted)) {
+                        dates.push(formatted);
+                    }
+                }
+            }
+        }
+    }
+    return dates.join(", ");
+}
+
+function getMuqavileTarixiXeberdarliq(invoices: any[]): string {
     const dates: string[] = [];
     for (const inv of invoices) {
         for (const ord of (inv.orders || [])) {
@@ -231,7 +325,16 @@ function getAllContractDates(invoices: any[]): string {
             }
         }
     }
-    return dates.map(d => `${d}-cü il`).join(", ");
+
+    if (dates.length === 0) return "";
+
+    const formatted = dates.map(d => `${d}${getAZOrdinal(d)}`);
+
+    if (dates.length >= 2) {
+        return `${formatted.join(", ")} il tarixli müqavilələrə`;
+    } else {
+        return `${formatted[0]} il tarixli müqaviləyə`;
+    }
 }
 
 function getAllProducts(invoices: any[]): string {
@@ -331,7 +434,8 @@ function buildInvoiceData(
     globalPaidAmount: number,
     globalTotalPrice: number,
     customerName: string,
-    globalFee?: number
+    globalFee?: number,
+    isIstisnaTemplate?: boolean
 ) {
     const orders = inv.orders || [];
 
@@ -345,7 +449,9 @@ function buildInvoiceData(
         const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
         const i = parseFloat((ord.initialPayment || "0").toString().replace(',', '.')) || 0;
         const pd = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
-        const ordTotalPrice = (p * m) + i;
+
+        const calcTotal = (p * m) + i;
+        const ordTotalPrice = ord.totalPrice !== undefined ? parseFloat(ord.totalPrice.toString().replace(',', '.')) : calcTotal;
 
         invTotalPrice += ordTotalPrice;
         invPaidSum += pd;
@@ -363,7 +469,17 @@ function buildInvoiceData(
     const contractDate = firstOrder.contractDate || "";
 
     const actualInvoicePaid = invPaidSum;
-    const invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
+    let invUnpaid = Math.max(0, invTotalPrice - actualInvoicePaid);
+
+    // Check for exception/return logic
+    const isExceptionMode = inv.isException === true || String(inv.isException) === 'true';
+    const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+    const umumiMeblegTarix = actualInvoicePaid + exceptionReturnedPrice;
+
+    if (isExceptionMode && exceptionReturnedPrice > 0 && isIstisnaTemplate) {
+        invUnpaid = Math.max(0, invUnpaid - exceptionReturnedPrice);
+    }
+
     const invPenalty = invUnpaid * 0.10;
     // İLM rüsumu
     let invIlmFee = 0;
@@ -399,17 +515,17 @@ function buildInvoiceData(
         }
     }
 
-    // Güzəşt Məbləği: Əsas borca ödənilməmiş - Cərimə (as per user request)
-    const invDiscount = Math.max(0, invUnpaid - invPenalty);
+    // Güzəşt Məbləği: Principal + Penalty (as per recalculateFinancials)
+    const invDiscount = invUnpaid - invPenalty;
 
     // Əsas bölmə separator (Məhkəmə Ərizəsi body loop)
     let separator = "";
     if (totalInvoices === 1) {
-        separator = "pulu borcu yaranmışdır.";
+        separator = "pulu";
     } else if (invIndex < totalInvoices - 1) {
         separator = ";";
     } else {
-        separator = "pulu borcu yaranmışdır.";
+        separator = "pulu";
     }
 
     // XAHİŞ bölməsi separator
@@ -424,9 +540,58 @@ function buildInvoiceData(
         guzestSeparator = ", ";  // vergül + boşluq
     }
 
+    const muqavileTarixiFixed = formatToDDMMYYYY(contractDate || "");
+    let muqavileCumlesi = "";
+    if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+        const extraDateOrd = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+        const cDateOrd = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)}`;
+        const actInvNumber = inv.invoiceNumber || "";
+        muqavileCumlesi = `${extraDateOrd} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən,`;
+    } else {
+        muqavileCumlesi = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)} il tarixli müqaviləyə əsasən,`;
+    }
+
     return {
+        // Exception Data
+        isException: isExceptionMode,
+        imtina_tarixi: inv.exceptionDate || "",
+        imtina_fakturasi: inv.exceptionInvoice || inv.invoiceNumber || "",
+        qaytarilmis_mebleg: exceptionReturnedPrice.toFixed(2),
+        umumi_mebleg_tarix: umumiMeblegTarix.toFixed(2),
+        qaytarilmis_mebleg_sozle: numberToAzerbaijaniFinancialWords(exceptionReturnedPrice),
+        umumi_mebleg_tarix_sozle: numberToAzerbaijaniFinancialWords(umumiMeblegTarix),
+
+        // 10-Year Contract Data
+        is10Years: !!inv.is10Years,
+        extraContractDate: inv.extraContractDate || "",
+        extraInvoice: inv.extraInvoice || "",
+        imtina_muqavile_tarix: inv.exceptionInvoiceDate || contractDate || "",
+        imtina_mehsul: inv.exceptionProduct || "",
+        imtina_mebleg: inv.exceptionReturnedPrice || "",
+        imtina_mehsul_qty: parseInt(inv.exceptionProductQty || "1") || 1,
+        umumi_imtina: inv.exceptionReturnedPrice || "",
+
+        // Aliases for better template compatibility
+        imtina_faktura_tarixi: inv.exceptionInvoiceDate || "",
+        imtina_edilen_mehsul: inv.exceptionProduct || "",
+        imtina_edilen_mehsul_raw: inv.exceptionProduct || "",
+        exceptionProducts: Array.isArray((inv as any).exceptionProducts) ? (inv as any).exceptionProducts : [],
+        exception_xahis_text: inv.exceptionXahisText || "",
+        silinen_borc: exceptionReturnedPrice > 0 ? exceptionReturnedPrice.toFixed(2) : "0.00",
+        qaytarildiqdan_sonra_qiymet: (isExceptionMode && exceptionReturnedPrice > 0) ? exceptionReturnedPrice.toFixed(2) : "-",
+        _rawReturnedPrice: (isExceptionMode && exceptionReturnedPrice > 0) ? exceptionReturnedPrice : 0,
+        odenen_mebleg: actualInvoicePaid.toFixed(2),
+        umumi_mebleg: umumiMeblegTarix > 0 ? umumiMeblegTarix.toFixed(2) : "0.00",
+
+        // Raw data for downstream manipulation
+        orders: orders,
+        _productNames: productNames,
+        _invUnpaid: invUnpaid,
+        _invoiceNumber: inv.invoiceNumber || "",
+
         // Ümumi (Ərizə + Cədvəl)
         muqavile_tarixi: contractDate,
+        muqavile_cumlesi: muqavileCumlesi,
         mehsul_siyahi: productNames.join(", "),
         alqi_satqi_qiymeti: invTotalPrice.toFixed(2),
         alqi_satqi_qiymeti_sozle: numberToAzerbaijaniFinancialWords(invTotalPrice),
@@ -444,7 +609,15 @@ function buildInvoiceData(
 
         // Ödəniş Cədvəli üçün
         inv_index: String(invIndex + 1),
-        inv_model_date: `${contractDate} ${productNames.join(", ")}`,
+        inv_model_date: (() => {
+            const cd = (contractDate || "").toString().trim();
+            const names = productNames
+                .map(n => (n || "").toString().trim())
+                .filter(Boolean)
+                .join(", ");
+            const combined = `${cd} ${names}`.trim();
+            return combined || names || cd || "";
+        })(),
         cavabdeh_ad: customerName,
         inv_odenen: actualInvoicePaid.toFixed(2),
         inv_ilm_fee: invIlmFee > 0 ? invIlmFee.toFixed(2) : "",
@@ -487,7 +660,7 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             adSoyadWithSuffix1 = originalFullName + ataSuffix1;
             adSoyadWithSuffix2 = originalFullName + ataSuffix2;
             adSoyadWithSuffix3 = originalFullName + ataSuffix3;
-        } else if (lastPartLower.endsWith("yevna")) {
+        } else if (lastPartLower.endsWith("vna")) {
             ataSuffix1 = "ya";
             ataSuffix2 = "nın";
             ataSuffix3 = "dan";
@@ -503,32 +676,409 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     const paidAmount = parseFloat((customer.details?.paidAmount || "0").toString().replace(',', '.')) || 0;
     const feeVal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
 
-    const invoicesData = invoices.map((inv: any, idx: number) =>
-        buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, originalFullName, feeVal)
-    );
+    const templateNameNormalized = (template?.name || "").toLowerCase();
+    const isIstisnaMode = templateNameNormalized.includes("istisna");
+    // "Sənədi-" → cərimə pulu (borc < 5000), "Sənədi+" → dəbbə pulu (borc ≥ 5000)
+    const penaltyWord = templateNameNormalized.includes("sənədi-") ? "cərimə" : "dəbbə";
 
-    const totalBorcFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
-    const totalUnpaidFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
-    const totalPenaltyFromInvoices = invoicesData.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
+    const allPreparedInvoices = invoices.map((inv: any, idx: number) => ({
+        ...buildInvoiceData(inv, idx, invoices.length, paidAmount, totalPrice, originalFullName, feeVal, isIstisnaMode),
+        _originalIndex: idx,
+        _invoiceNumber: inv.invoiceNumber || "",
+        // Preserve legacy/raw fallbacks for robust downstream key resolution (e.g., inv_model_date)
+        _rawInvoiceProductDescription: inv?.productDescription || "",
+        _rawInvoiceContractDate: inv?.contractDate || "",
+    }));
+
+    let tableInvoicesData = [...allPreparedInvoices];
+
+    // Re-index for the table
+    tableInvoicesData = tableInvoicesData.map((inv: any, idx: number) => ({
+        ...inv,
+        inv_index: String(idx + 1)
+    }));
+
+    // Include all invoices so both exception and non-exception ones appear in paragraphs
+    const filteredLegalInvoices = [...allPreparedInvoices];
+
+    // Re-calculate the separators based on the FILTERED length
+    const legalPursuitInvoices = filteredLegalInvoices.map((inv: any, idx: number, arr: any[]) => {
+        const total = arr.length;
+        const isLast = idx === total - 1;
+
+        let newSeparator = "";
+        let newXahisSeparator = "";
+        let newGuzestSeparator = "";
+
+        if (total === 1) {
+            newSeparator = " pulu borcu yaranmışdır.";
+            newXahisSeparator = "";
+            newGuzestSeparator = "";
+        } else if (!isLast) {
+            newSeparator = ";";
+            newXahisSeparator = ";";
+            newGuzestSeparator = ", ";
+        } else {
+            newSeparator = " pulu borcu yaranmışdır.";
+            newXahisSeparator = "";
+            newGuzestSeparator = "";
+        }
+
+        const baseSeparator = (total === 1 || isLast) ? " pulu" : ";";
+
+        return {
+            ...inv,
+            inv_separator: newSeparator,
+            base_separator: baseSeparator,
+            xahis_separator: newXahisSeparator,
+            guzest_separator: newGuzestSeparator
+        };
+    });
+
+    const totalBorcFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.inv_umumi_borc) || 0), 0);
+    const totalUnpaidFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.odenilmemis_hisse) || 0), 0);
+    const totalPenaltyFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.debbe_pulu) || 0), 0);
+    const totalAlqiSatqiFromInvoices = legalPursuitInvoices.reduce((acc: number, inv: any) => acc + (parseFloat(inv.alqi_satqi_qiymeti) || 0), 0);
+
+    const totalOdenenFromInvoices = tableInvoicesData.reduce((acc: number, inv: any) => {
+        const odenen = parseFloat(inv.inv_odenen) || 0;
+        const qaytarilan = isIstisnaMode ? (inv._rawReturnedPrice || 0) : 0;
+        return acc + odenen + qaytarilan;
+    }, 0);
 
     const extraCosts = totalPenaltyFromInvoices + feeVal;
 
-    // Sections for loops
-    const xahisItems = invoicesData.map((invData: any) => ({
-        ...invData,
-        inv_separator: invData.xahis_separator,
-    }));
+    // We no longer need to find duplicate exception rows, since exception is just a flag on the invoice itself
+    const xahisItems = legalPursuitInvoices
+        .map((invData: any, idx: number, arr: any[]) => {
+            // The current invoice ITSELF is the exception if it has the flag
+            const matchingException = invData.isException ? invData : null;
 
-    const guzestItems = invoicesData.map((invData: any) => ({
+            let adjustedMehsulSiyahi = invData.mehsul_siyahi;
+            let adjustedUnpaid = parseFloat(invData.odenilmemis_hisse) || 0;
+            let adjustedUnpaidSozle = invData.odenilmemis_hisse_sozle;
+
+            if (matchingException) {
+                // Support multi-product selection (exceptionProducts array) with legacy fallback
+                const multi: Array<{ name: string; qty: number }> = Array.isArray(matchingException.exceptionProducts) && matchingException.exceptionProducts.length > 0
+                    ? matchingException.exceptionProducts
+                    : (() => {
+                        const singleName = (matchingException.imtina_edilen_mehsul_raw || matchingException.imtina_edilen_mehsul || matchingException.imtina_mehsul || "").trim();
+                        const singleQty = matchingException.imtina_mehsul_qty || 1;
+                        return singleName ? [{ name: singleName, qty: singleQty }] : [];
+                    })();
+
+                if (multi.length > 0) {
+                    const products: { raw: string; name: string; qty: number }[] = [];
+                    (invData.orders || []).forEach((ord: any) => {
+                        const desc = (ord.productDescription || "").trim();
+                        if (!desc) return;
+                        desc.split(",").forEach((part: string) => {
+                            const trimmed = part.trim();
+                            if (!trimmed) return;
+                            const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                            if (qtyMatch) {
+                                products.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                            } else {
+                                products.push({ raw: trimmed, name: trimmed, qty: 1 });
+                            }
+                        });
+                    });
+
+                    const rebuiltProducts: string[] = [];
+                    products.forEach(p => {
+                        const sel = multi.find(s => (s.name || "").toLowerCase().trim() === p.name.toLowerCase() || (s.name || "").toLowerCase().trim() === p.raw.toLowerCase());
+                        if (sel) {
+                            const remaining = p.qty - (sel.qty || 1);
+                            if (remaining > 1) rebuiltProducts.push(`${remaining} ədəd ${p.name}`);
+                            else if (remaining === 1) rebuiltProducts.push(p.name);
+                        } else {
+                            rebuiltProducts.push(p.raw);
+                        }
+                    });
+
+                    adjustedMehsulSiyahi = rebuiltProducts.join(", ");
+                }
+            }
+
+            // Recalculate penalty based on adjusted unpaid
+            const adjustedPenalty = adjustedUnpaid * 0.10;
+            const hasImei = invData.hasImei;
+            const muqavileTarixiFixed = formatToDDMMYYYY(invData.muqavile_tarixi || "");
+
+            // Generate standard phrase if no exception text is available
+            let defaultText = "";
+            let skipItem = false;
+
+            let muqavileCumlesi = "";
+            if (invData.is10Years && invData.extraContractDate && invData.extraInvoice) {
+                const extraDateOrd = `${invData.extraContractDate}${getAZOrdinal(invData.extraContractDate)}`;
+                const cDateOrd = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)}`;
+                const actInvNumber = invData.invoiceNumber || invData._invoiceNumber || "";
+                muqavileCumlesi = `${extraDateOrd} il tarixli ${invData.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən`;
+            } else {
+                muqavileCumlesi = `${muqavileTarixiFixed}${getAZOrdinal(muqavileTarixiFixed)} il tarixli müqaviləyə əsasən,`;
+            }
+
+            if (adjustedMehsulSiyahi.trim().length > 0) {
+                const currentIlmFee = parseFloat(invData.inv_ilm_fee) || 0;
+                const imeiReplacementText = (hasImei && currentIlmFee > 0)
+                    ? `İnnovativ Layihələr Mərkəzinə ödənilən ${currentIlmFee.toFixed(2)} (${numberToAzerbaijaniFinancialWords(currentIlmFee)}) manat rüsum, `
+                    : "";
+                defaultText = `${muqavileCumlesi} ${adjustedMehsulSiyahi} üçün ${adjustedUnpaid.toFixed(2)} (${adjustedUnpaidSozle}) manat ödənilməmiş hissə, ${imeiReplacementText}${adjustedPenalty.toFixed(2)} (${numberToAzerbaijaniFinancialWords(adjustedPenalty)}) manat ${penaltyWord}${invData.base_separator || ""}`;
+            } else {
+                defaultText = "";
+                skipItem = true;
+            }
+
+            const exceptionTextTrimmed = matchingException?.exception_xahis_text?.trim();
+            const isUserExcluded = exceptionTextTrimmed && exceptionTextTrimmed.includes("BU FAKTURA SƏNƏDİN");
+            if (isUserExcluded) {
+                skipItem = true;
+            }
+
+            const tamCumleRaw = exceptionTextTrimmed ? matchingException.exception_xahis_text : defaultText;
+
+            return {
+                ...invData,
+                inv_separator: invData.base_separator,
+                muqavile_tarixi: invData.is10Years ? muqavileCumlesi : muqavileTarixiFixed,
+                muqavile_cumlesi: muqavileCumlesi,
+                mehsul_siyahi: adjustedMehsulSiyahi,
+                odenilmemis_hisse: adjustedUnpaid.toFixed(2),
+                odenilmemis_hisse_sozle: adjustedUnpaidSozle,
+                debbe_pulu: adjustedPenalty.toFixed(2),
+                debbe_pulu_sozle: numberToAzerbaijaniFinancialWords(adjustedPenalty),
+                CUSTOM_XAHIS_TEXT: matchingException?.exception_xahis_text || "",
+                tam_xahis_cumlesi_raw: tamCumleRaw,
+                // Store ref to exception data for preview
+                _hasException: !!matchingException,
+                _exceptionProduct: matchingException?.imtina_edilen_mehsul_raw || "",
+                _skipItem: skipItem,
+            };
+        })
+        .filter((item: any) => !item._skipItem);
+
+    // Use total amounts from all invoices to ensure table columns sum up correctly
+    const finalTotalUnpaid = totalUnpaidFromInvoices;
+    const finalTotalPenalty = totalPenaltyFromInvoices;
+    const finalExtraCosts = finalTotalPenalty + feeVal;
+
+    const formatManat = (val: string | number) => {
+        const num = parseFloat((val || "0").toString());
+        return Number.isInteger(num) ? `${num} manat` : `${num.toFixed(2)} manat`;
+    };
+
+    // Rebuild inv_model_date unconditionally from raw orders — istisna flag MUST NOT affect it.
+    const custLegacyProduct = (customer?.details?.productDescription || "").toString().trim();
+    const custLegacyContractDate = (customer?.details?.contractDate || "").toString().trim();
+
+    const buildInvModelDate = (src: any) => {
+        const ords = Array.isArray(src?.orders) ? src.orders : [];
+        const cDate = (
+            src?._rawInvoiceContractDate
+            || ords[0]?.contractDate
+            || src?.muqavile_tarixi
+            || src?.contractDate
+            || custLegacyContractDate
+            || ""
+        ).toString().replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '').trim();
+
+        const namesFromOrders: string[] = ords
+            .map((o: any) => (o?.productDescription || o?.productName || o?.model || "").toString().trim())
+            .filter(Boolean);
+
+        let names: string[] = namesFromOrders.length > 0
+            ? namesFromOrders
+            : (Array.isArray(src?._productNames) ? src._productNames.filter(Boolean) : []);
+
+        if (names.length === 0) {
+            const rawProd = (src?._rawInvoiceProductDescription || "").toString().trim();
+            if (rawProd) names = [rawProd.replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '')];
+        }
+
+        if (names.length === 0) {
+            const mehSiy = (src?.mehsul_siyahi || "").toString().trim();
+            if (mehSiy) names = [mehSiy.replace(/[\uE000-\uE001]|B:|B\/|I:|I\/|/g, '')];
+        }
+
+        if (names.length === 0 && custLegacyProduct) {
+            names = [custLegacyProduct];
+        }
+
+        const joinedNames = names.join(", ");
+
+        if (src.is10Years && src.extraContractDate && src.extraInvoice) {
+            const extraDateOrd = `${src.extraContractDate}${getAZOrdinal(src.extraContractDate)}`;
+            const cDateOrd = `${cDate}${getAZOrdinal(cDate)}`;
+            const actInvNumber = src.invoiceNumber || src._invoiceNumber || "";
+            const prefix = `${extraDateOrd} il tarixli ${src.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı faktura:`;
+            return `${prefix} ${joinedNames}`.trim();
+        }
+
+        const combined = `${cDate} ${joinedNames}`.trim();
+        return combined || joinedNames || cDate || "";
+    };
+
+    const istisnaItems = tableInvoicesData
+        .filter((invData: any) => invData.isException)
+        .map((invData: any, idx: number, arr: any[]) => {
+            const rawMuqDate = invData.muqavile_tarixi || "";
+            const rawImtinaDate = invData.imtina_tarixi || "";
+            const rawImtinaMuqavileTarixi = invData.imtina_muqavile_tarix || rawMuqDate;
+            const rawImtinaFakturaTarixi = invData.imtina_faktura_tarixi || "";
+
+            const muqDateStr = formatToDDMMYYYY(rawMuqDate);
+            const imtinaDateStr = formatToDDMMYYYY(rawImtinaDate);
+            const imtinaMuqavileTarixiStr = formatToDDMMYYYY(rawImtinaMuqavileTarixi);
+            const imtinaFakturaTarixiStr = formatToDDMMYYYY(rawImtinaFakturaTarixi);
+
+            const multiSel: Array<{ name: string; qty: number }> = Array.isArray(invData.exceptionProducts) && invData.exceptionProducts.length > 0
+                ? invData.exceptionProducts
+                : [];
+
+            let mehsul_tam_raw: string;
+            let mehsul_tam: string;
+            let prodNameLower: string;
+
+            if (multiSel.length > 0) {
+                mehsul_tam_raw = multiSel.map(s => s.name).join(", ");
+                mehsul_tam = multiSel.map(s => (s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name)).join(", ");
+                prodNameLower = mehsul_tam_raw.toLowerCase();
+            } else {
+                mehsul_tam_raw = (invData.imtina_edilen_mehsul || "").trim();
+                const returnQty = invData.imtina_mehsul_qty || 1;
+                mehsul_tam = returnQty > 1 ? `${returnQty} ədəd ${mehsul_tam_raw}` : mehsul_tam_raw;
+                prodNameLower = (invData.imtina_edilen_mehsul || "").toLowerCase();
+            }
+
+            const hasZemanet = prodNameLower.includes("zəmanət") || prodNameLower.includes("zemanet");
+            const suffixDen = hasZemanet ? "xidmətindən" : "məhsulundan";
+            const suffixI = hasZemanet ? "xidməti" : "məhsulu";
+            const exceptionProductText = mehsul_tam ? `${mehsul_tam} ${suffixDen}` : "";
+            const exceptionProductXidmeti = mehsul_tam ? `${mehsul_tam} ${suffixI}` : "";
+
+            const allProducts = (invData.orders || []).map((ord: any) => ord.productDescription || ord.productName).filter(Boolean);
+            const otherProducts = allProducts.filter((p: string) => p !== invData.imtina_edilen_mehsul).join(", ");
+
+            // Use the unified builder for istisna items too
+            const inv_model_date = buildInvModelDate(invData);
+            const B = (v: any, key: string) => `\uE000B:${key}\uE001${v}\uE000/B\uE001`;
+
+            let istisnaMuqavileCumlesi = "";
+            if (invData.is10Years && invData.extraContractDate && invData.extraInvoice) {
+                const extraDateOrd = `${invData.extraContractDate}${getAZOrdinal(invData.extraContractDate)}`;
+                const cDateOrd = `${imtinaMuqavileTarixiStr}${getAZOrdinal(imtinaMuqavileTarixiStr)}`;
+                const actInvNumber = invData.invoiceNumber || invData._invoiceNumber || "";
+                istisnaMuqavileCumlesi = `${extraDateOrd} il tarixli ${invData.extraInvoice} saylı müqavilənin əlavəsi - ${cDateOrd} il tarixli ${actInvNumber} saylı fakturaya əsasən,`;
+            } else {
+                istisnaMuqavileCumlesi = `${B(imtinaMuqavileTarixiStr, "imtina_muqavile_tarix")} il tarixli müqaviləsinə əsasən,`;
+            }
+
+            return {
+                ...invData,
+
+                // Clean dates as DD.MM.YYYY
+                muqavile_tarixi: B(muqDateStr, "muqavile_tarixi"),
+                imtina_tarixi: B(imtinaDateStr, "imtina_tarixi"),
+                imtina_fakturasi: B(invData.imtina_fakturasi, "imtina_fakturasi"),
+                imtina_muqavile_tarix: B(imtinaMuqavileTarixiStr, "imtina_muqavile_tarix"),
+                istisna_muqavile_cumlesi: istisnaMuqavileCumlesi,
+                imtina_faktura_tarixi: B(imtinaFakturaTarixiStr, "imtina_faktura_tarixi"),
+                imtina_mehsul: B(exceptionProductText, "imtina_mehsul"),
+                imtina_mebleg: B(invData.silinen_borc, "imtina_mebleg"),
+                imtina_meblegi: B(invData.silinen_borc, "imtina_meblegi"),
+                silinen_borc: B(invData.silinen_borc, "silinen_borc"),
+                
+                inv_model_date: inv_model_date,
+
+
+                muqavile_tarixi_tam: muqDateStr ? `${muqDateStr}${getAZOrdinal(muqDateStr)}` : "",
+                imtina_tarixi_tam: imtinaDateStr ? `${imtinaDateStr}${getAZOrdinal(imtinaDateStr)}` : "",
+                imtina_edilen_mehsul_tam: B(exceptionProductText, "imtina_edilen_mehsul_tam"),
+                silinen_borc_manat: formatManat(invData.silinen_borc),
+                odenen_mebleg_manat: formatManat(invData.odenen_mebleg),
+                qaytarildiqdan_sonra_qiymet_manat: formatManat(invData.qaytarildiqdan_sonra_qiymet),
+                umumi_mebleg_manat: formatManat(invData.umumi_mebleg),
+                imtina_muqavile_tarix_ord: imtinaMuqavileTarixiStr ? `${imtinaMuqavileTarixiStr}${getAZOrdinal(imtinaMuqavileTarixiStr)}` : "",
+                imtina_tarixi_ord: imtinaDateStr ? `${imtinaDateStr}${getAZOrdinal(imtinaDateStr)}` : "",
+                istisna_separator: idx < arr.length - 1 ? ";" : "",
+
+                is_multi_invoice: tableInvoicesData.length > 1,
+                diger_muqavile_odenen: (() => {
+                    return tableInvoicesData.reduce((acc: number, curr: any) => {
+                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
+                    }, 0).toFixed(2);
+                })(),
+                istisna_ikinci_abzas: (() => {
+                    const is_multi = tableInvoicesData.length > 1;
+                    const sumOtherOdenen = tableInvoicesData.reduce((acc: number, curr: any) => {
+                        return acc + ((curr._invoiceNumber !== invData._invoiceNumber) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
+                    }, 0).toFixed(2);
+                    const muqDateOrd = muqDateStr ? `${muqDateStr}${getAZOrdinal(muqDateStr)}` : "";
+
+                    if (is_multi) {
+                        return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(invData.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(invData.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat, digər müqavilələr üzrə cəmi ödədiyi məbləğ ${B(sumOtherOdenen, "diger_muqavile_odenen")} manat təşkil edir.`;
+                    } else {
+                        return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(invData.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(invData.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat, ümumilikdə, ${B(invData.umumi_mebleg, "umumi_mebleg")} manat təşkil edir.`;
+                    }
+                })()
+            };
+        });
+
+    const guzestItems = tableInvoicesData.map((invData: any) => ({
         guzest_index: invData.guzest_index,
         guzest_meblegi: invData.guzest_meblegi,
         guzest_separator: invData.guzest_separator,
     }));
 
+    const B = (v: any, key: string) => `\uE000B:${key}\uE001${v}\uE000/B\uE001`;
+    const stripB = (s: string) => (s || "").replace(/\uE000B:[^\uE001]*\uE001/g, "").replace(/\uE000\/B\uE001/g, "");
+    let istisna_birlesmis_odeme_metni = "";
+    if (istisnaItems.length > 0) {
+        // Part 1: per-invoice exception sentence (for each exception invoice)
+        const part1Lines = istisnaItems.map((inv: any) => {
+            const rawMuq = stripB(inv.muqavile_tarixi);
+            const imtinaTarixiOrd = inv.imtina_tarixi_ord || stripB(inv.imtina_tarixi);
+            const rawMehsul = stripB(inv.imtina_edilen_mehsul_tam);
+            const rawSilinen = stripB(inv.silinen_borc);
+            return `Cavabdeh ${B(rawMuq, "muqavile_tarixi")} il tarixli müqaviləsinə əsasən, ${B(imtinaTarixiOrd, "imtina_tarixi")} il tarixində ${B(rawMehsul, "imtina_edilen_mehsul_tam")} imtina etmişdir, ${B(rawSilinen, "silinen_borc")} borcundan silinmişdir.`;
+        });
+
+        if (tableInvoicesData.length > 1) {
+            // Part 2: combined payment sentence across all exception invoices
+            const part2Segments = istisnaItems.map((inv: any) => {
+                const rawMuq = stripB(inv.muqavile_tarixi);
+                const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
+                return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat`;
+            });
+
+            const sumOtherOdenen = tableInvoicesData.reduce((acc: number, curr: any) => {
+                return acc + ((!curr.isException) ? (parseFloat(curr.odenen_mebleg) || 0) : 0);
+            }, 0).toFixed(2);
+
+            let digerText = "";
+            if (tableInvoicesData.length > istisnaItems.length) {
+                digerText = `, digər müqavilələr üzrə cəmi ödədiyi məbləğ ${B(sumOtherOdenen, "diger_muqavile_odenen")} manat təşkil edir.`;
+            } else {
+                digerText = ` təşkil edir.`;
+            }
+            const part2 = part2Segments.join(", ") + digerText;
+            istisna_birlesmis_odeme_metni = part1Lines.join("\n") + "\n" + part2;
+        } else {
+            // single total invoice (only exception invoice, no other invoices)
+            const inv = istisnaItems[0];
+            const rawMuq = stripB(inv.muqavile_tarixi);
+            const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
+            const part2 = `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat təşkil edir.`;
+            istisna_birlesmis_odeme_metni = part1Lines[0] + "\n" + part2;
+        }
+    }
+
     // Inspector logic
     const inspectorName = customer.details?.executorName || "";
     const inspector = (allUsers || []).find((u: any) => normalizeAZ(u.displayName) === normalizeAZ(inspectorName));
-    const inspectorPhone1 = formatPhoneInput(inspector?.phone1 || "0502801190");
+    const inspectorPhone1 = formatPhoneInput(inspector?.phoneNumber || inspector?.phone1 || "0502801190");
     const inspectorPhone2 = "012 310 07 75";
 
     // MUHASIB_IMZA logic: Initial. Surname (e.g., S.İsmayılova)
@@ -556,14 +1106,117 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     });
     const isMultipleImei = uniqueImeis.size > 1;
 
-    const templateNameNormalized = (template?.name || "").toLowerCase();
     const isWarning = templateNameNormalized.includes("xəbərdarlıq");
+
+    const finalInvoicesData = tableInvoicesData.map((inv: any) => {
+        const forcedInvModelDate = buildInvModelDate(inv);
+        const modelDateAliases = {
+            inv_model_date: forcedInvModelDate,
+            INV_MODEL_DATE: forcedInvModelDate,
+            invModelDate: forcedInvModelDate,
+            inv_model: forcedInvModelDate,
+            model_date: forcedInvModelDate,
+            MODEL_TARIX: forcedInvModelDate,
+            model_tarix: forcedInvModelDate,
+        };
+        if (inv.isException) {
+            const foundIstisna = istisnaItems.find((istisna: any) => istisna._invoiceNumber === inv._invoiceNumber);
+            if (foundIstisna) {
+                return {
+                    ...inv,
+                    ...foundIstisna,
+                    ...modelDateAliases
+                };
+            }
+        }
+        return {
+            ...inv,
+            imtina_meblegi: "-",
+            imtina_mebleg: "-",
+            silinen_borc: "-",
+            silinen_borc_manat: "-",
+            qaytarildiqdan_sonra_qiymet: "-",
+            qaytarildiqdan_sonra_qiymet_manat: "-",
+            ...modelDateAliases
+        };
+    });
+
+    // Also force inv_model_date on istisna_items + xahis items (templates may loop any of these)
+    istisnaItems.forEach((it: any) => { it.inv_model_date = buildInvModelDate(it); });
+    xahisItems.forEach((it: any) => { it.inv_model_date = buildInvModelDate(it); });
+
+    const fixedXahisItems = xahisItems.map((item: any, idx: number, arr: any[]) => {
+        const isLast = idx === arr.length - 1;
+        const total = arr.length;
+        const raw = item.tam_xahis_cumlesi_raw || item.tam_xahis_cumlesi;
+        const tamCumleFinal = !isLast ? (raw.endsWith('.') ? raw.slice(0, -1) + ';' : raw + ';') : raw;
+
+        let newSeparator = "";
+        let newXahisSeparator = "";
+
+        if (total === 1 || isLast) {
+            newSeparator = " pulu";
+            newXahisSeparator = "";
+        } else {
+            newSeparator = ";";
+            newXahisSeparator = ";";
+        }
+
+        return {
+            ...item,
+            tam_xahis_cumlesi: tamCumleFinal,
+            inv_separator: newSeparator,
+            xahis_separator: newXahisSeparator
+        };
+    });
+
+    const invoicesWithSeparators = finalInvoicesData.map((inv: any, idx: number, arr: any[]) => {
+        const isLast = idx === arr.length - 1;
+        const total = arr.length;
+        let finalSeparator = "";
+
+        if (total === 1 || isLast) {
+            finalSeparator = " pulu borcu yaranmışdır.";
+        } else {
+            finalSeparator = ";";
+        }
+
+        return {
+            ...inv,
+            inv_separator: finalSeparator
+        };
+    });
 
     return {
         // Loops
-        invoices: invoicesData,
-        xahis_items: xahisItems,
+        invoices: invoicesWithSeparators,
+        xahis_items: fixedXahisItems,
+        istisna_items: istisnaItems,
         guzest_items: guzestItems,
+
+        // Global Exception Aliases (For single-exception templates without loops)
+        imtina_muqavile_tarix: istisnaItems[0]?.imtina_muqavile_tarix || "",
+        "imtina _tarixi": istisnaItems[0]?.imtina_tarixi_ord || "",
+        imtina_tarixi: istisnaItems[0]?.imtina_tarixi_ord || "",
+        imtina_tarixi_tam: istisnaItems[0]?.imtina_tarixi_tam || "",
+        imtina_fakturasi: istisnaItems[0]?.imtina_fakturasi || "",
+        imtina_faktura_tarixi: istisnaItems[0]?.imtina_faktura_tarixi || "",
+        imtina_edilen_mehsul: istisnaItems[0]?.imtina_edilen_mehsul || "",
+        imtina_mehsul: istisnaItems[0]?.imtina_edilen_mehsul_tam || "",
+        silinen_borc: istisnaItems[0]?.silinen_borc || "0.00",
+        imtina_mebleg: istisnaItems[0]?.silinen_borc_manat || "",
+        imtina_meblegi: istisnaItems[0]?.silinen_borc || "0.00",
+        silinen_borc_manat: istisnaItems[0]?.silinen_borc_manat || "0 manat",
+        qaytarildiqdan_sonra_qiymet: istisnaItems[0]?.qaytarildiqdan_sonra_qiymet || "0.00",
+        qaytarildiqdan_sonra_qiymet_manat: istisnaItems[0]?.qaytarildiqdan_sonra_qiymet_manat || "0 manat",
+        odenen_mebleg: istisnaItems[0]?.odenen_mebleg || "0.00",
+        odenen_mebleg_manat: istisnaItems[0]?.odenen_mebleg_manat || "0 manat",
+        umumi_mebleg: istisnaItems[0]?.umumi_mebleg || "0.00",
+        umumi_mebleg_manat: istisnaItems[0]?.umumi_mebleg_manat || "0 manat",
+        istisna_muqavile_tarixi_tam: istisnaItems[0]?.muqavile_tarixi_tam || "",
+        istisna_birlesmis_odeme_metni: istisna_birlesmis_odeme_metni,
+        // Top-level fallback so templates that reference {{inv_model_date}} outside a loop still resolve.
+        inv_model_date: finalInvoicesData[0]?.inv_model_date || istisnaItems[0]?.inv_model_date || "",
 
         // Court/Company
         MEHKEME_ADI: selectedCourt?.name || "",
@@ -599,28 +1252,39 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         CAVABDEH_AD_SOYAD_S_1: adSoyadWithSuffix1,
         CAVABDEH_AD_SOYAD_S_2: adSoyadWithSuffix2,
         CAVABDEH_AD_SOYAD_S_3: adSoyadWithSuffix3,
+        CAVABDEH_TAM_BASLIQ: (() => {
+            const regAddr = (customer.details?.address || "").trim();
+            const actAddr = (customer.details?.actualAddress || "").trim();
+            const suffix1 = adSoyadWithSuffix1;
+
+            if (actAddr && actAddr !== regAddr) {
+                return `${regAddr} ünvanında qeydiyyatda olan və ${actAddr} ünvanında faktiki olaraq yaşayan ${suffix1}`;
+            }
+            return `${regAddr} ünvanında qeydiyyatda olan ${suffix1}`;
+        })(),
 
         // Financials (Global)
         UMUMI_BORC: totalBorcFromInvoices.toFixed(2),
         UMUMI_BORC_SOZLE: numberToAzerbaijaniFinancialWords(totalBorcFromInvoices),
-        CEMI_ODENEN: paidAmount.toFixed(2),
+        CEMI_ODENEN: totalOdenenFromInvoices.toFixed(2),
         DOVLET_RUSUMU: customer.details?.courtFee || "",
         PENYA_FAIZ: "1",
-        ALQI_SATQI_QIYMETI: totalPrice.toFixed(2),
-        ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalPrice),
-        ODENILMEMIS_HISSE: totalUnpaidFromInvoices.toFixed(2),
-        ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(totalUnpaidFromInvoices),
-        DEBBE_PULU: totalPenaltyFromInvoices.toFixed(2),
-        DEBBE_PULU_CEM: totalPenaltyFromInvoices.toFixed(2),
-        DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(totalPenaltyFromInvoices),
+        ALQI_SATQI_QIYMETI: totalAlqiSatqiFromInvoices.toFixed(2),
+        ALQI_SATQI_QIYMETI_SOZLE: numberToAzerbaijaniFinancialWords(totalAlqiSatqiFromInvoices),
+        ODENILMEMIS_HISSE: finalTotalUnpaid.toFixed(2),
+        ODENILMEMIS_HISSE_SOZLE: numberToAzerbaijaniFinancialWords(finalTotalUnpaid),
+        DEBBE_PULU: finalTotalPenalty.toFixed(2),
+        DEBBE_PULU_CEM: finalTotalPenalty.toFixed(2),
+        DEBBE_PULU_SOZLE: numberToAzerbaijaniFinancialWords(finalTotalPenalty),
         ILM_RUSUM: feeVal.toFixed(2),
         ILM_RUSUM_SOZLE: numberToAzerbaijaniFinancialWords(feeVal),
-        CERIME_ODENEN: extraCosts.toFixed(2),
-        CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(extraCosts),
+        CERIME_ODENEN: finalExtraCosts.toFixed(2),
+        CERIME_ODENEN_SOZLE: numberToAzerbaijaniFinancialWords(finalExtraCosts),
         GUZEST_MEBLEGI: customer.details?.discountAmount || "0.00",
 
         // Products / IMEI
-        BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices),
+        BUTUN_MUQAVILE_TARIXLERI: getAllContractDates(invoices, false),
+        BUTUN_MUQAVILE_TARIXLERI_SUFFIX: getAllContractDates(invoices, true),
         BUTUN_MEHSULLAR: getAllProducts(invoices),
         BUTUN_IMEI_MEHSULLAR: getAllImeiProducts(invoices),
         BUTUN_IMEI_MEHSULLAR_QISA: getAllImeiProductsShort(invoices),
@@ -635,22 +1299,25 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
 
         // Single invoice legacy support
         MUQAVILE_TARIXI: customer.details?.contractDate || "",
+        MUQAVILE_TARIXI_XEBERDARLIQ: getMuqavileTarixiXeberdarliq(invoices),
         TAKSIT_AY: customer.details?.paymentPeriod || "",
         AYLIQ_ODENIS: customer.details?.monthlyPayment || "",
         ILKIN_ODENIS: customer.details?.initialPayment || "",
         XEBERDARLIQ_TARIXI: customer.details?.warningDate || "",
 
         // Extras
-        QOSMA: feeVal > 0
-            ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
-            : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`,
+        QOSMA: (customer.details?.qosmaItems && Array.isArray(customer.details.qosmaItems) && customer.details.qosmaItems.length > 0)
+            ? customer.details.qosmaItems.map((item: string, i: number) => `${i + 1}. ${item}`).join('\n')
+            : (feeVal > 0
+                ? `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v surəti\n5. Xəbərdarlıq (bildiriş)\n6. İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış\n7. Əmək müqaviləsi bildirişinin surəti\n8. Etibarnamə`
+                : `1. Müqavilə – əsli\n2. Çıxarışın surəti\n3. Dövlət rüsumu barədə qəbz\n4. Cavabdehin ş/v-nin surəti\n5. Xəbərdarlıq (bildiriş)\n6. Əmək müqaviləsi bildirişi\n7. Etibarnamə`),
 
         // Dates & Signing
         currentDate: new Date().toLocaleDateString("az-AZ"),
-        ERIZE_GUN: `${new Date().getDate()}`,
+        ERIZE_GUN: String(new Date().getDate()).padStart(2, '0'),
         ERIZE_AY: AZ_MONTHS_CAP[new Date().getMonth()],
         ERIZE_IL: new Date().getFullYear().toString(),
-        TARIX: `${new Date().getDate()}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
+        TARIX: `${String(new Date().getDate()).padStart(2, '0')}.${new Date().getMonth() + 1}.${new Date().getFullYear()}`,
         ELAQE_TEL1: inspectorPhone1,
         ELAQE_TEL2: inspectorPhone2,
         NUMAYENDE_IMZA: "Süleymanlı.R.X",
@@ -658,7 +1325,6 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
         ICRACI_AD_SOYAD: formatExecutorName(customer.details?.executorName || ""),
     };
 };
-
 // --- Components ---
 const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placeholder, isPrice, isFin, isSelect, options, onFocus, onBlur, className, readOnly }: any) => {
     return (
@@ -806,6 +1472,50 @@ const CustomerField = memo(({ label, info, icon: Icon, value, onChange, placehol
 });
 CustomerField.displayName = "CustomerField";
 
+// Converts \uE000BOLD\uE001 ... \uE000/BOLD\uE001 markers embedded in rendered
+// template text into proper Word bold runs, preserving surrounding run properties.
+const applyBoldMarkersToDocx = (zip: any) => {
+    const OPEN_RE = /\uE000B(?::[^\uE001]*)?\uE001/;
+    const OPEN_RE_G = /\uE000B(?::[^\uE001]*)?\uE001/g;
+    const CLOSE = "\uE000/B\uE001";
+    ["word/document.xml", "word/header1.xml", "word/header2.xml", "word/header3.xml", "word/footer1.xml", "word/footer2.xml", "word/footer3.xml"].forEach((path) => {
+        const file = zip.file(path);
+        if (!file) return;
+        let xml: string = file.asText();
+        if (!OPEN_RE.test(xml)) return;
+        xml = xml.replace(/<w:r\b([^>]*)>([\s\S]*?)<\/w:r>/g, (match, runAttrs, inner) => {
+            if (!OPEN_RE.test(inner)) return match;
+            const rPrMatch = inner.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/);
+            const rPrInner = rPrMatch ? rPrMatch[1] : "";
+            const tMatch = inner.match(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/);
+            if (!tMatch) return match;
+            const tText = tMatch[1];
+            const parts: { bold: boolean; text: string }[] = [];
+            let remaining = tText;
+            while (remaining.length > 0) {
+                const openMatch = remaining.match(OPEN_RE);
+                if (!openMatch) { parts.push({ bold: false, text: remaining }); break; }
+                const oi = openMatch.index!;
+                if (oi > 0) parts.push({ bold: false, text: remaining.slice(0, oi) });
+                const afterOpen = remaining.slice(oi + openMatch[0].length);
+                const ci = afterOpen.indexOf(CLOSE);
+                if (ci === -1) { parts.push({ bold: true, text: afterOpen }); break; }
+                parts.push({ bold: true, text: afterOpen.slice(0, ci) });
+                remaining = afterOpen.slice(ci + CLOSE.length);
+            }
+            const rPrPlain = rPrInner ? `<w:rPr>${rPrInner}</w:rPr>` : "";
+            const rPrBold = `<w:rPr>${rPrInner}<w:b/><w:bCs/></w:rPr>`;
+            return parts
+                .filter(p => p.text.length > 0)
+                .map(p => `<w:r${runAttrs}>${p.bold ? rPrBold : rPrPlain}<w:t xml:space="preserve">${p.text}</w:t></w:r>`)
+                .join("");
+        });
+        // Remove any orphan markers left outside runs (shouldn't happen, safety net)
+        xml = xml.replace(OPEN_RE_G, "").split(CLOSE).join("");
+        zip.file(path, xml);
+    });
+};
+
 const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDownload, isGenerating, user, focusedField, allUsers }: any) => {
     const [isRendering, setIsRendering] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -835,6 +1545,14 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 };
 
                 const bytes = secureAtob(template.content);
+                // Prepare data first so we can expose forced inv_model_date to nullGetter
+                const preData = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+                const MODEL_DATE_KEYS = new Set(["inv_model_date", "INV_MODEL_DATE", "invModelDate", "inv_model", "model_date", "MODEL_TARIX", "model_tarix"]);
+                const firstInvModelDate = (preData as any)?.invoices?.[0]?.inv_model_date
+                    || (preData as any)?.istisna_items?.[0]?.inv_model_date
+                    || (preData as any)?.inv_model_date
+                    || "";
+
                 let doc;
                 try {
                     const zip = new PizZip(bytes);
@@ -842,7 +1560,37 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         paragraphLoop: true,
                         linebreaks: true,
                         delimiters: { start: "{{", end: "}}" },
-                        nullGetter: () => ""
+                        nullGetter: (part: any, scopeManager: any) => {
+                            const tag = part?.value;
+                            if (tag && MODEL_DATE_KEYS.has(tag)) {
+                                try {
+                                    const scopes = scopeManager?.scopeList || scopeManager?.scopes || [];
+                                    for (let i = scopes.length - 1; i >= 0; i--) {
+                                        const s = scopes[i];
+                                        if (s && typeof s === 'object') {
+                                            for (const k of MODEL_DATE_KEYS) {
+                                                const v = (s as any)[k];
+                                                // Priority: return non-empty string. If multiple available, inner scope wins.
+                                                if (typeof v === 'string' && v.trim()) return v;
+                                            }
+                                        }
+                                    }
+                                    // Deep search if not found in linear scope
+                                    const allInvoices = (preData as any)?.invoices || [];
+                                    for (const inv of allInvoices) {
+                                        if (inv?.inv_model_date) return inv.inv_model_date;
+                                    }
+                                    const allIstisna = (preData as any)?.istisna_items || [];
+                                    for (const ist of allIstisna) {
+                                        if (ist?.inv_model_date) return ist.inv_model_date;
+                                    }
+                                } catch (err) {
+                                    console.error("NullGetter inv_model_date fallback error:", err);
+                                }
+                                return firstInvModelDate || "";
+                            }
+                            return "";
+                        }
                     });
                 } catch (err: any) {
                     console.error("Docxtemplater Init Error:", err);
@@ -851,7 +1599,8 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     return;
                 }
 
-                const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+                // Deep clone so highlight markers never leak back into the live customer state
+                const data = JSON.parse(JSON.stringify(preData));
 
                 // Apply highlighter marker to the focused value
                 const FIELD_TO_TAG: any = {
@@ -899,8 +1648,8 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         "ALQI_SATQI_QIYMETI", "ALQI_SATQI_QIYMETI_SOZLE", "price", "total_price",
                         "alqi_satqi_qiymeti", "alqi_satqi_qiymeti_sozle", "totalPrice"
                     ],
-                    "Əsas borca ödənilmiş məbləğ": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
-                    "Ödənilən": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid"],
+                    "Əsas borca ödənilmiş məbləğ": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid", "odenen_mebleg", "odenen_mebleg_manat"],
+                    "Ödənilən": ["CEMI_ODENEN", "paid_amount", "inv_odenen", "paidAmount", "CEMI_ODENILEN", "total_paid", "odenen_mebleg", "odenen_mebleg_manat"],
                     "Əsas borca ödənilməmiş məbləğ": [
                         "ODENILMEMIS_HISSE", "ODENILMEMIS_HISSE_SOZLE", "unpaid_amount",
                         "odenilmemis_hisse", "odenilmemis_hisse_sozle", "unpaidAmount", "remaining"
@@ -921,7 +1670,16 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                     ],
                     "Müfəttiş": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
                     "İcraçı": ["ICRACI_AD_SOYAD", "icraci_ad_soyad", "executorName"],
-                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI", "xeberdarliq_tarixi", "warningDate"]
+                    "Xəbərdarlıq Tarixi": ["XEBERDARLIQ_TARIXI", "xeberdarliq_tarixi", "warningDate"],
+                    // Istisna / Exception detail fields
+                    "İmtina Tarixi": ["imtina_tarixi", "imtina_tarixi_ord", "imtina_tarixi_tam", "exceptionDate"],
+                    "İmt. Faktura №": ["imtina_fakturasi", "exceptionInvoice"],
+                    "İmt. Fakt. Tarixi": ["imtina_faktura_tarixi", "exceptionInvoiceDate"],
+                    "Məhsul & Say": ["imtina_edilen_mehsul", "imtina_mehsul", "imtina_edilen_mehsul_tam", "exceptionProduct"],
+                    "Silinən Borc AZN": ["silinen_borc", "silinen_borc_manat", "imtina_mebleg", "imtina_meblegi", "exceptionReturnedPrice"],
+                    "Qaytarıldıqdan Sonra Qiymət": ["qaytarildiqdan_sonra_qiymet", "qaytarildiqdan_sonra_qiymet_manat"],
+                    "Ümumi Məbləğ": ["umumi_mebleg", "umumi_mebleg_manat"],
+                    "Digər Müqavilə Ödənən": ["diger_muqavile_odenen"]
                 };
 
                 if (focusedField) {
@@ -945,7 +1703,10 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                                 if (tagsToHighlight.includes(key)) {
                                     const val = obj[key];
                                     if (val !== undefined && val !== null && val !== "" && typeof val !== 'object') {
-                                        obj[key] = `[[FOC_S]]${val}[[FOC_E]]`;
+                                        const strVal = String(val);
+                                        if (!strVal.startsWith("[[FOC_S]]")) {
+                                            obj[key] = `[[FOC_S]]${strVal}[[FOC_E]]`;
+                                        }
                                     }
                                 } else if (typeof obj[key] === 'object') {
                                     applyMarkersToData(obj[key]);
@@ -954,6 +1715,22 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                         };
 
                         applyMarkersToData(data);
+
+                        // Also highlight values embedded in pre-built paragraphs (e.g. istisna_ikinci_abzas)
+                        // by wrapping BOLD markers whose key matches a highlighted tag.
+                        const keySet = new Set<string>(tagsToHighlight);
+                        const keyReAny = /\uE000B:([^\uE001]*)\uE001([\s\S]*?)\uE000\/B\uE001/g;
+                        const wrapFocInBold = (s: string) => s.replace(keyReAny, (m: string, k: string, v: string) => keySet.has(k) ? `\uE000B:${k}\uE001[[FOC_S]]${v}[[FOC_E]]\uE000/B\uE001` : m);
+                        const walkAndWrap = (obj: any) => {
+                            if (!obj || typeof obj !== 'object') return;
+                            if (Array.isArray(obj)) { obj.forEach(walkAndWrap); return; }
+                            Object.keys(obj).forEach(k => {
+                                const v = obj[k];
+                                if (typeof v === 'string' && v.indexOf('\uE000B:') !== -1) obj[k] = wrapFocInBold(v);
+                                else if (typeof v === 'object') walkAndWrap(v);
+                            });
+                        };
+                        walkAndWrap(data);
                     }
                 }
 
@@ -973,6 +1750,7 @@ const DocumentPreview = ({ template, customer, companyInfo, selectedCourt, onDow
                 }
 
                 try {
+                    applyBoldMarkersToDocx(doc.getZip());
                     const out = doc.getZip().generate({ type: "arraybuffer" });
 
                     // Use docx-preview for high-fidelity rendering
@@ -1161,23 +1939,7 @@ function GenerateDocumentContent() {
     const router = useRouter();
     const { user, can } = useAuth();
 
-    if (!user || !can("page_customers")) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 bg-slate-50/20 w-full">
-                <div className="h-16 w-16 rounded-3xl bg-red-50 flex items-center justify-center mb-6">
-                    <File size={32} className="text-red-400" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-800 mb-2">Giriş Məhdudlaşdırılıb</h2>
-                <p className="text-slate-500 max-w-[300px]">Bu bölməyə daxil olmaq üçün Hesabat Hazırlama icazəniz olmalıdır.</p>
-                <button
-                    onClick={() => router.push("/dashboard")}
-                    className="mt-6 px-8 py-3 bg-slate-900 text-white rounded-xl text-sm font-black transition-all hover:bg-slate-800"
-                >
-                    Geri qayıt
-                </button>
-            </div>
-        );
-    }
+
 
     const [customer, setCustomer] = useState<Customer | null>(null);
     const [allTemplates, setAllTemplates] = useState<Template[]>([]);
@@ -1261,6 +2023,32 @@ function GenerateDocumentContent() {
                             totalPrice: typedCust.details.totalPrice || "0.00"
                         }]
                     }];
+                }
+
+                // Initialize Qoşma items if missing
+                if (!typedCust.details?.qosmaItems || typedCust.details.qosmaItems.length === 0) {
+                    if (!typedCust.details) typedCust.details = {};
+                    const feeVal = parseFloat((typedCust.details?.fee || "0").toString().replace(',', '.')) || 0;
+                    typedCust.details.qosmaItems = feeVal > 0
+                        ? [
+                            "Müqavilə – əsli",
+                            "Çıxarışın surəti",
+                            "Dövlət rüsumu barədə qəbz",
+                            "Cavabdehin ş/v surəti",
+                            "Xəbərdarlıq (bildiriş)",
+                            "İnnovativ Layihələr Mərkəzinə ödənilən rüsum barədə Arayış",
+                            "Əmək müqaviləsi bildirişinin surəti",
+                            "Etibarnamə"
+                        ]
+                        : [
+                            "Müqavilə – əsli",
+                            "Çıxarışın surəti",
+                            "Dövlət rüsumu barədə qəbz",
+                            "Cavabdehin ş/v-nin surəti",
+                            "Xəbərdarlıq (bildiriş)",
+                            "Əmək müqaviləsi bildirişi",
+                            "Etibarnamə"
+                        ];
                 }
 
                 setCustomer(typedCust);
@@ -1425,8 +2213,8 @@ function GenerateDocumentContent() {
         const feeValTotal = parseFloat((customer.details?.fee || "0").toString().replace(',', '.')) || 0;
         const hasImeiAnywhere = feeValTotal > 0;
 
-        // Calculate totalDebt exactly as in buildInvoiceData for consistency
-        const totalDebtVal = (customer.details?.invoices || []).reduce((acc, inv) => {
+        // Calculate totalDebt exactly as in buildInvoiceData for consistency, considering Istisna conditionally
+        const { regularDebt, istisnaDebt } = (customer.details?.invoices || []).reduce((acc, inv) => {
             const invTotalPrice = (inv.orders || []).reduce((ordAcc, ord) => {
                 const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -1436,8 +2224,19 @@ function GenerateDocumentContent() {
             const invPaidSum = (inv.orders || []).reduce((ordAcc, ord) => {
                 return ordAcc + (parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0);
             }, 0);
-            const invUnpaid = Math.max(0, invTotalPrice - invPaidSum);
-            const invPenalty = invUnpaid * 0.10;
+
+            const baseUnpaid = Math.max(0, invTotalPrice - invPaidSum);
+
+            const isExceptionMode = inv.isException === true || String(inv.isException) === 'true';
+            const exceptionReturnedPrice = parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+            let istisnaUnpaid = baseUnpaid;
+            if (isExceptionMode && exceptionReturnedPrice > 0) {
+                istisnaUnpaid = Math.max(0, baseUnpaid - exceptionReturnedPrice);
+            }
+
+            const regPenalty = baseUnpaid * 0.10;
+            const istPenalty = istisnaUnpaid * 0.10;
+
             let invIlmFee = 0;
             (inv.orders || []).forEach(ord => {
                 if (Array.isArray((ord as any).checkedImeis) && (ord as any).checkedImeis.length > 0) {
@@ -1446,13 +2245,19 @@ function GenerateDocumentContent() {
                     invIlmFee += 23.6;
                 }
             });
-            return acc + invUnpaid + invPenalty + invIlmFee;
-        }, 0);
+
+            return {
+                regularDebt: acc.regularDebt + baseUnpaid + regPenalty + invIlmFee,
+                istisnaDebt: acc.istisnaDebt + istisnaUnpaid + istPenalty + invIlmFee
+            };
+        }, { regularDebt: 0, istisnaDebt: 0 });
 
         // Helper to decide if a template should be shown based on IMEI and Debt
         const shouldShowTemplate = (tName: string) => {
             const nl = tName.toLowerCase();
             const isNoImeiTemplate = nl.includes("no-imei");
+            const isIstisnaTemplate = nl.startsWith("istisna_");
+            const effectiveDebtVal = isIstisnaTemplate ? istisnaDebt : regularDebt;
 
             // Strip "no-imei" (and its dash) before checking debt markers + and -
             // This prevents the "-" in "no-imei" from being mistaken as a debt marker.
@@ -1474,7 +2279,7 @@ function GenerateDocumentContent() {
 
             // --- 2. Debt Logic: Exclusive filter for +/- variants ---
             if (hasPlus || hasMinus) {
-                if (totalDebtVal <= 5000) return hasMinus;
+                if (effectiveDebtVal < 5000) return hasMinus;
                 return hasPlus;
             }
 
@@ -1497,8 +2302,8 @@ function GenerateDocumentContent() {
                     const atMinus = anWithoutNoImei.includes("-");
                     if (!atPlus && !atMinus) return false;
 
-                    if (totalDebtVal <= 5000 && atMinus) return true;
-                    if (totalDebtVal > 5000 && atPlus) return true;
+                    if (effectiveDebtVal < 5000 && atMinus) return true;
+                    if (effectiveDebtVal >= 5000 && atPlus) return true;
                     return false;
                 });
                 if (hasSpecificMatch) return false;
@@ -1507,30 +2312,43 @@ function GenerateDocumentContent() {
             return true;
         };
 
-        // 1. Strict restriction if 'template' param is present
-        if (requestedTemplate) {
-            return allTemplates.filter(t => {
-                const nl = t.name.toLowerCase();
-                const is103 = nl.includes("103_siyahisi") || nl.includes("103_siyahısı");
-                if (is103) return false;
-                if (!t.name.includes(requestedTemplate)) return false;
+        const hasException = (customer.details?.invoices || []).some((inv: any) => inv.isException === true || inv.isException === 'true');
+        const istisnaBaseKeys = new Set(
+            allTemplates
+                .filter(t => t.name.toLowerCase().startsWith("istisna_"))
+                .map(t => t.name.toLowerCase().replace(/^istisna_/, "").replace(/\+|-/g, "").replace(/no-imei/g, "").replace(/\.docx/g, "").replace(/[^a-z0-9əöüçşğıi]/g, "").trim())
+        );
 
-                return shouldShowTemplate(t.name);
-            });
-        }
-
-        const sorted = allTemplates.filter(t => {
+        // First apply istisna overrides and general shouldShow rules
+        let filteredTemplates = allTemplates.filter(t => {
             const nameLower = t.name.toLowerCase();
 
             // 0. Hide Letter List Template from general use
             if (nameLower.includes("103_siyahisi") || nameLower.includes("103_siyahısı")) return false;
 
+            // 0.5. Istisna Template Logic — only affects documents that have both standard and istisna variants
+            const isIstisnaTemplate = nameLower.startsWith("istisna_");
+            const baseKey = nameLower.replace(/^istisna_/, "").replace(/\+|-/g, "").replace(/no-imei/g, "").replace(/\.docx/g, "").replace(/[^a-z0-9əöüçşğıi]/g, "").trim();
+            const hasIstisnaCounterpart = istisnaBaseKeys.has(baseKey);
+            // No exception → hide all istisna templates
+            if (!hasException && isIstisnaTemplate) return false;
+            // Has exception → for documents that have an istisna variant, show only the istisna one.
+            if (hasException && !isIstisnaTemplate && hasIstisnaCounterpart) return false;
+
             // 1. Hide 'Arayış' templates if NO IMEI found
             if (nameLower.includes("arayış") && !hasImeiAnywhere) return false;
 
-            // 2. Main Logic
+            // 2. Main Debt/IMEI Logic
             return shouldShowTemplate(t.name);
         });
+
+        // Strict restriction if 'template' param is present
+        if (requestedTemplate) {
+            filteredTemplates = filteredTemplates.filter(t => t.name.includes(requestedTemplate));
+            return filteredTemplates;
+        }
+
+        const sorted = filteredTemplates;
 
         // 3. APPLY PRIORITY SORTING
         // Sequence: Məhkəmə Sənədi, Arayış Sənədi, Ödəniş Cədvəli, Xəbərdarlıq, Etibarnamə Sənədi, Vergi Çıxarış Sənədi, Əmək Müqaviləsi
@@ -1702,10 +2520,14 @@ function GenerateDocumentContent() {
 
         let totalPrice = 0;
         let totalPaid = 0;
-        let totalPhoneCount = 0;
+        let totalReturned = 0;
         let imeFee = 0;
 
+        let totalPhoneCount = 0;
         invoices.forEach((inv: any) => {
+            if (inv.isException) {
+                totalReturned += parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+            }
             (inv.orders || []).forEach((ord: any) => {
                 const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -1716,19 +2538,21 @@ function GenerateDocumentContent() {
                 totalPrice += (p * m) + i;
                 totalPaid += paid;
 
-                const imeiCount = (desc.match(/imei/gi) || []).length;
-                const commaCount = (desc.match(/,/g) || []).length;
+                // Restore totalPhoneCount calculation
+                const normalizedDesc = desc.replace(/İ/g, 'i').toLowerCase();
+                const imeiCount = (normalizedDesc.match(/imei/g) || []).length;
+                const commaCount = (normalizedDesc.match(/,/g) || []).length;
                 totalPhoneCount += Math.max(1, imeiCount, commaCount + 1);
 
                 if (Array.isArray(ord.checkedImeis) && ord.checkedImeis.length > 0) {
                     imeFee += 23.6 * ord.checkedImeis.length;
-                } else if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
+                } else if (ord.hasImieFee === true) {
                     imeFee += 23.6;
                 }
             });
         });
 
-        const unpaid = Math.max(0, totalPrice - totalPaid);
+        const unpaid = Math.max(0, totalPrice - (totalPaid + totalReturned));
         const penalty = unpaid * 0.10;
         const discount = unpaid + penalty;
 
@@ -1919,6 +2743,53 @@ function GenerateDocumentContent() {
         }
     };
 
+    // --- Qosma (Attachments) Management ---
+    const addQosmaItem = () => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const items = [...(prev.details?.qosmaItems || [])];
+            return {
+                ...prev,
+                details: {
+                    ...prev.details,
+                    qosmaItems: [...items, ""]
+                }
+            } as Customer;
+        });
+        setIsModified(true);
+    };
+
+    const removeQosmaItem = (idx: number) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const items = (prev.details?.qosmaItems || []).filter((_, i) => i !== idx);
+            return {
+                ...prev,
+                details: {
+                    ...prev.details,
+                    qosmaItems: items
+                }
+            } as Customer;
+        });
+        setIsModified(true);
+    };
+
+    const updateQosmaItem = (idx: number, val: string) => {
+        setCustomer(prev => {
+            if (!prev) return null;
+            const items = [...(prev.details?.qosmaItems || [])];
+            items[idx] = val;
+            return {
+                ...prev,
+                details: {
+                    ...prev.details,
+                    qosmaItems: items
+                }
+            } as Customer;
+        });
+        setIsModified(true);
+    };
+
     // --- Automatic Calculations ---
     useEffect(() => {
         if (!customer) return;
@@ -1976,7 +2847,11 @@ function GenerateDocumentContent() {
         }
 
         // Use updatedInvoices for aggregation
+        let totalReturned = 0;
         updatedInvoices.forEach((inv, iidx) => {
+            if (inv.isException) {
+                totalReturned += parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+            }
             (inv.orders || []).forEach((ord, oidx) => {
                 const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -2011,7 +2886,8 @@ function GenerateDocumentContent() {
         const calculatedTotalPrice = totalAggregatedPrice;
 
         // 2. Unpaid Amount (Əsas borca ödənilməmiş məbləğ)
-        const calculatedUnpaid = Math.max(0, calculatedTotalPrice - paid);
+        // Subtract both paid amount and returned product price
+        const calculatedUnpaid = Math.max(0, calculatedTotalPrice - (paid + totalReturned));
 
         // 3. IDM Fee (İLM Rüsumu)
         // Aggregated from per-product İMEİ yoxla buttons
@@ -2033,8 +2909,8 @@ function GenerateDocumentContent() {
         // 5. Total Unpaid (Ümumilikdə ödənilməmiş məbləğ)
         const calculatedTotalUnpaid = calculatedUnpaid + calculatedFee + calculatedPenalty;
 
-        // 6. Discount (Güzəşt Məbləği: Əsas borca ödənilməmiş - Cərimə)
-        const calculatedDiscount = Math.max(0, calculatedUnpaid - calculatedPenalty);
+        // 6. Discount (Güzəşt Məbləği: Əsas borca ödənilməmiş + Cərimə)
+        const calculatedDiscount = calculatedUnpaid + calculatedPenalty;
 
         const updates: Record<string, string> = {};
         const currentTotalPrice = parseFloat((customer.details?.totalPrice || "0").toString().replace(',', '.'));
@@ -2238,12 +3114,12 @@ function GenerateDocumentContent() {
         //     }
         // }
 
-        const invoices = customer.details?.invoices || [];
-        const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
-        if (!isWarningOnly && invoices.length > 0 && !allArchived) {
-            if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
-            return null;
-        }
+        // const invoices = customer.details?.invoices || [];
+        // const allArchived = invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
+        // if (!isWarningOnly && invoices.length > 0 && !allArchived) {
+        //     if (!silent) toast.error("Ümumi çap üçün bütün fakturalar üzrə arxiv sənədləri yüklənməlidir");
+        //     return null;
+        // }
 
         if (!silent) setIsGenerating(template.id);
 
@@ -2255,15 +3131,43 @@ function GenerateDocumentContent() {
 
             const bytes = atobWithUint8(template.content);
             const zip = new PizZip(bytes.buffer);
+
+            const preData = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+            const MODEL_DATE_KEYS = new Set(["inv_model_date", "INV_MODEL_DATE", "invModelDate", "inv_model", "model_date", "MODEL_TARIX", "model_tarix"]);
+            const firstInvModelDate = (preData as any)?.invoices?.[0]?.inv_model_date
+                || (preData as any)?.istisna_items?.[0]?.inv_model_date
+                || (preData as any)?.inv_model_date
+                || "";
+
             const doc = new Docxtemplater(zip, {
                 paragraphLoop: true,
                 linebreaks: true,
                 delimiters: { start: "{{", end: "}}" },
-                nullGetter: () => ""
+                nullGetter: (part: any, scopeManager: any) => {
+                    const tag = part?.value;
+                    if (tag && MODEL_DATE_KEYS.has(tag)) {
+                        // Walk the scope chain to find a non-empty inv_model_date on any ancestor (e.g., current invoice row).
+                        try {
+                            const scopes = scopeManager?.scopeList || scopeManager?.scopes || [];
+                            for (let i = scopes.length - 1; i >= 0; i--) {
+                                const s = scopes[i];
+                                if (s && typeof s === 'object') {
+                                    for (const k of MODEL_DATE_KEYS) {
+                                        const v = (s as any)[k];
+                                        if (typeof v === 'string' && v.trim()) return v;
+                                    }
+                                }
+                            }
+                        } catch { }
+                        return firstInvModelDate;
+                    }
+                    return "";
+                }
             });
 
-            const data = prepareTemplateData(customer, companyInfo, template, selectedCourt, allUsers, user);
+            const data = preData;
             doc.render(data);
+            applyBoldMarkersToDocx(doc.getZip());
             const fileName = `${customer.fullName.replace(/\s+/g, '_')}_${template.name}.docx`;
 
             if (silent) {
@@ -2298,9 +3202,13 @@ function GenerateDocumentContent() {
         const invoices = customer?.details?.invoices || [];
         let totalPrice = 0;
         let totalPaid = 0;
+        let totalReturned = 0;
         let imeFee = 0;
 
         invoices.forEach((inv: any) => {
+            if (inv.isException) {
+                totalReturned += parseFloat((inv.exceptionReturnedPrice || "0").toString().replace(',', '.')) || 0;
+            }
             (inv.orders || []).forEach((ord: any) => {
                 const p = parseFloat((ord.paymentPeriod || "0").toString().replace(',', '.')) || 0;
                 const m = parseFloat((ord.monthlyPayment || "0").toString().replace(',', '.')) || 0;
@@ -2308,13 +3216,15 @@ function GenerateDocumentContent() {
                 const paid = parseFloat((ord.paidAmount || "0").toString().replace(',', '.')) || 0;
                 totalPrice += (p * m) + i;
                 totalPaid += paid;
-                if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
+                if (Array.isArray(ord.checkedImeis) && ord.checkedImeis.length > 0) {
+                    imeFee += 23.6 * ord.checkedImeis.length;
+                } else if ((ord as any).hasImieFee === true || (ord as any).hasImieFee === 'true') {
                     imeFee += 23.6;
                 }
             });
         });
 
-        const unpaid = Math.max(0, totalPrice - totalPaid);
+        const unpaid = Math.max(0, totalPrice - (totalPaid + totalReturned));
         const penalty = unpaid * 0.10;
         const discount = unpaid + penalty;
         const totalUnpaid = unpaid + penalty + imeFee;
@@ -2473,10 +3383,11 @@ function GenerateDocumentContent() {
                                     const invoices = customer.details?.invoices || [];
                                     const invoiceDocsUploaded = invoices.length > 0 && invoices.every(inv => inv.archiveUrl || inv.archiveBase64);
 
-                                    if (invoices.length > 0 && !invoiceDocsUploaded) {
-                                        toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir.");
-                                        return;
-                                    }
+                                    // TEMPORARILY DISABLED: Arxiv sənədləri olmadan da çapa icazə verilir
+                                    // if (invoices.length > 0 && !invoiceDocsUploaded) {
+                                    //     toast.error("Bütün fakturalar üzrə arxiv sənədləri yüklənməlidir.");
+                                    //     return;
+                                    // }
                                 }
                                 // Auto-save if modified (ensures new uploads/changes are archived before print)
                                 if (isModified) {
@@ -2577,18 +3488,20 @@ function GenerateDocumentContent() {
                                     const zipContent = mainZip.generate({ type: "blob", mimeType: "application/zip" });
                                     saveAs(zipContent, `${customer.fullName.replace(/\s+/g, '_')}_BUTUN_SENEDLER.zip`);
 
-                                    // 2. Update status to COMPLETED and save Court Name
+                                    // 2. Update status to COMPLETED, archive the customer, and save Court Name
                                     await updateCustomer(customer.id, {
                                         ...customer,
                                         process_status: 'COMPLETED',
+                                        isArchived: true,
                                         courtName: selectedCourt?.name || "",
-                                        printedAt: new Date().toISOString()
+                                        printedAt: new Date().toISOString(),
+                                        archivedAt: new Date().toISOString()
                                     }, user?.email);
 
-                                    toast.success("Bütün sənədlər ZIP olaraq yükləndi və status 'Tamamlandı' olaraq yeniləndi", { id: loadingId });
+                                    toast.success("Bütün sənədlər ZIP olaraq yükləndi və müştəri arxivləndi", { id: loadingId });
 
                                     // Refresh local customer state
-                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', courtName: selectedCourt?.name || "" } : null);
+                                    setCustomer(prev => prev ? { ...prev, process_status: 'COMPLETED', isArchived: true, courtName: selectedCourt?.name || "" } : null);
 
                                     // High-Fidelity Print Pass
                                     const printContainer = document.getElementById('print-iframe') as HTMLIFrameElement;
@@ -3057,12 +3970,28 @@ function GenerateDocumentContent() {
                                                         {idx + 1}
                                                     </div>
                                                     {!isWarningOnly && (
-                                                        <input
-                                                            value={inv.invoiceNumber}
-                                                            onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
-                                                            className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/30 transition-all shadow-sm"
-                                                            placeholder="Faktura Nömrəsi"
-                                                        />
+                                                        <div className="flex items-center gap-2 flex-1">
+                                                            <input
+                                                                value={inv.invoiceNumber}
+                                                                onChange={(e) => updateInvoice(inv.id, 'invoiceNumber', e.target.value)}
+                                                                className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg font-bold text-[11px] outline-none focus:border-primary/30 transition-all shadow-sm max-w-[280px]"
+                                                                placeholder="Faktura Nömrəsi"
+                                                            />
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    updateInvoice(inv.id, 'isException', !inv.isException);
+                                                                }}
+                                                                className={cn(
+                                                                    "h-9 px-4 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border flex items-center gap-2 shrink-0",
+                                                                    inv.isException
+                                                                        ? "bg-purple-600 text-white border-purple-700 shadow-md shadow-purple-200"
+                                                                        : "bg-purple-50 text-purple-600 border-purple-200/50 hover:bg-purple-100"
+                                                                )}
+                                                            >
+                                                                İSTİSNA
+                                                            </button>
+                                                        </div>
                                                     )}
                                                 </div>
                                                 {!isWarningOnly && (
@@ -3244,6 +4173,144 @@ function GenerateDocumentContent() {
                                                     </div>
                                                 ))}
                                             </div>
+
+                                            {/* EXCEPTION FIELDS */}
+                                            {inv.isException && (
+                                                <div className="mt-3 p-3 rounded-xl bg-purple-50 border border-purple-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                    <h5 className="text-[10px] font-black text-purple-800 uppercase tracking-widest mb-3">İstisna Təfərrüatları</h5>
+
+                                                    <div className="grid grid-cols-2 gap-3 mb-1">
+                                                        <div className="space-y-1 min-w-0">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmtina Tarixi</label>
+                                                            <input
+                                                                value={inv.exceptionDate || ""}
+                                                                onFocus={() => setFocusedField("İmtina Tarixi")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionDate', formatDateInput(e.target.value))}
+                                                                placeholder="GG.AA.İİİİ"
+                                                                inputMode="numeric"
+                                                                maxLength={10}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1 min-w-0">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmt. Faktura №</label>
+                                                            <input
+                                                                value={inv.exceptionInvoice || ""}
+                                                                onFocus={() => setFocusedField("İmt. Faktura №")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionInvoice', e.target.value)}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                                placeholder="Məs: 020910768"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1 min-w-0">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">İmt. Fakt. Tarixi</label>
+                                                            <input
+                                                                value={inv.exceptionInvoiceDate || ""}
+                                                                onFocus={() => setFocusedField("İmt. Fakt. Tarixi")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionInvoiceDate', formatDateInput(e.target.value))}
+                                                                placeholder="GG.AA.İİİİ"
+                                                                inputMode="numeric"
+                                                                maxLength={10}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white text-center"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1 min-w-0 col-span-2">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">Məhsul & Say (qaytarılanları seçin)</label>
+                                                            {(() => {
+                                                                const parsedProducts: { raw: string; name: string; qty: number }[] = [];
+                                                                (inv.orders || []).forEach((ord: any) => {
+                                                                    const desc = (ord.productDescription || "").trim();
+                                                                    if (!desc) return;
+                                                                    desc.split(",").forEach((part: string) => {
+                                                                        const trimmed = part.trim();
+                                                                        if (!trimmed) return;
+                                                                        const qtyMatch = trimmed.match(/^(\d+)\s*ədəd\s+(.+)$/i);
+                                                                        if (qtyMatch) {
+                                                                            parsedProducts.push({ raw: trimmed, name: qtyMatch[2].trim(), qty: parseInt(qtyMatch[1]) });
+                                                                        } else {
+                                                                            parsedProducts.push({ raw: trimmed, name: trimmed, qty: 1 });
+                                                                        }
+                                                                    });
+                                                                });
+
+                                                                let selections: Array<{ name: string; qty: number }> = Array.isArray((inv as any).exceptionProducts) ? (inv as any).exceptionProducts : [];
+                                                                if (selections.length === 0 && inv.exceptionProduct) {
+                                                                    selections = [{ name: inv.exceptionProduct, qty: parseInt(inv.exceptionProductQty || "1") || 1 }];
+                                                                }
+
+                                                                const commit = (next: Array<{ name: string; qty: number }>) => {
+                                                                    updateInvoice(inv.id, 'exceptionProducts', next as any);
+                                                                    if (next.length === 0) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', "");
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    } else if (next.length === 1) {
+                                                                        updateInvoice(inv.id, 'exceptionProduct', next[0].name);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', String(next[0].qty));
+                                                                    } else {
+                                                                        const joined = next.map(s => s.qty > 1 ? `${s.qty} ədəd ${s.name}` : s.name).join(", ");
+                                                                        updateInvoice(inv.id, 'exceptionProduct', joined);
+                                                                        updateInvoice(inv.id, 'exceptionProductQty', "1");
+                                                                    }
+                                                                };
+
+                                                                if (parsedProducts.length === 0) {
+                                                                    return <div className="h-8 flex items-center px-2 text-[10px] text-purple-400 italic border border-dashed border-purple-200 rounded-lg bg-white">Məhsul tapılmadı</div>;
+                                                                }
+
+                                                                return (
+                                                                    <div className="border border-purple-200 rounded-lg bg-white p-1.5 max-h-[140px] overflow-y-auto space-y-1">
+                                                                        {parsedProducts.map((p, pi) => {
+                                                                            const checked = !!selections.find(s => s.name === p.name);
+                                                                            const selectedQty = selections.find(s => s.name === p.name)?.qty || p.qty;
+                                                                            return (
+                                                                                <div key={pi} className={cn("flex items-center gap-1.5 px-1.5 py-1 rounded-md transition-colors", checked ? "bg-purple-50" : "hover:bg-slate-50")}>
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        checked={checked}
+                                                                                        onChange={() => {
+                                                                                            const exists = selections.find(s => s.name === p.name);
+                                                                                            commit(exists ? selections.filter(s => s.name !== p.name) : [...selections, { name: p.name, qty: p.qty }]);
+                                                                                        }}
+                                                                                        className="w-3.5 h-3.5 accent-purple-600 cursor-pointer shrink-0"
+                                                                                    />
+                                                                                    <span className="flex-1 text-[10px] font-semibold text-slate-700 truncate" title={p.name}>
+                                                                                        {p.qty > 1 ? `${p.qty} ədəd ${p.name}` : p.name}
+                                                                                    </span>
+                                                                                    {checked && p.qty > 1 && (
+                                                                                        <select
+                                                                                            value={selectedQty}
+                                                                                            onChange={(e) => commit(selections.map(s => s.name === p.name ? { ...s, qty: parseInt(e.target.value) || 1 } : s))}
+                                                                                            className="h-6 px-0.5 rounded-md text-[9px] font-bold border border-purple-200 bg-white text-center shrink-0"
+                                                                                        >
+                                                                                            {Array.from({ length: p.qty }, (_, i) => i + 1).map(n => (
+                                                                                                <option key={n} value={n}>{n} əd.</option>
+                                                                                            ))}
+                                                                                        </select>
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </div>
+                                                        <div className="space-y-1 min-w-0">
+                                                            <label className="text-[9px] font-bold text-purple-600 uppercase tracking-wider block truncate">Silinən Borc AZN</label>
+                                                            <input
+                                                                value={inv.exceptionReturnedPrice || ""}
+                                                                onFocus={() => setFocusedField("Silinən Borc AZN")}
+                                                                onBlur={() => setFocusedField(null)}
+                                                                onChange={(e) => updateInvoice(inv.id, 'exceptionReturnedPrice', e.target.value)}
+                                                                className="w-full h-8 px-2 rounded-lg text-[10px] font-bold outline-none transition-all border border-purple-200 focus:border-purple-500 bg-white"
+                                                                placeholder="0.00"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -3364,6 +4431,60 @@ function GenerateDocumentContent() {
                                                         </label>
                                                     </div>
                                                 )}
+
+                                                {/* Qoşma Sənədlər List */}
+                                                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+                                                    <div className="flex items-center justify-between border-b border-slate-50 pb-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="h-6 w-6 rounded-md bg-emerald-50 flex items-center justify-center text-emerald-600">
+                                                                <AlignLeft size={12} />
+                                                            </div>
+                                                            <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                                                                Iddiaya qoşulan sənədlər (Qoşma)
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            onClick={(e) => { e.preventDefault(); addQosmaItem(); }}
+                                                            className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-all text-[10px] font-bold"
+                                                        >
+                                                            <Plus size={14} /> Əlavə et
+                                                        </button>
+                                                    </div>
+                                                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 scrollbar-thin">
+                                                        {(customer?.details?.qosmaItems || []).map((item: string, idx: number) => (
+                                                            <div key={idx} className="flex gap-2 group animate-in slide-in-from-right-2 fade-in duration-200">
+                                                                <div className="flex-none w-6 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-[10px] font-bold text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-colors">
+                                                                    {idx + 1}
+                                                                </div>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item}
+                                                                    onChange={(e) => updateQosmaItem(idx, e.target.value)}
+                                                                    className="flex-1 px-4 py-2 bg-slate-50 border border-transparent focus:border-emerald-200 focus:bg-white rounded-xl text-xs font-medium transition-all"
+                                                                    placeholder="Sənədin adı..."
+                                                                />
+                                                                <button
+                                                                    onClick={(e) => { e.preventDefault(); removeQosmaItem(idx); }}
+                                                                    className="flex-none w-10 h-10 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </div>
+                                                        ))}
+
+                                                        {(customer?.details?.qosmaItems || []).length === 0 && (
+                                                            <div className="py-10 text-center space-y-2">
+                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Siyahı Boşdur</p>
+                                                                <button
+                                                                    onClick={(e) => { e.preventDefault(); addQosmaItem(); }}
+                                                                    className="text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:underline"
+                                                                >
+                                                                    Bənd Əlavə Et
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

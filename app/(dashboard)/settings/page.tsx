@@ -512,7 +512,7 @@ export default function UsersPage() {
                                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Səhifə Girişləri</h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         {AVAILABLE_PERMISSIONS
-                                            .filter(p => currentUser?.role === 'SUPERADMIN' || !['page_analytics', 'page_audit_logs'].includes(p.id))
+                                            .filter(p => currentUser?.role === 'SUPERADMIN' || !['page_audit_logs'].includes(p.id))
                                             .map((p) => (
                                                 <label
                                                     key={p.id}

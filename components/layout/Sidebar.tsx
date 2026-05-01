@@ -20,6 +20,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { BotStatusIndicator } from "@/components/shared/BotStatusIndicator";
+import { toast } from "sonner";
+import { useBotStatus } from "@/hooks/useBotStatus";
 
 const menuItems = [
     { icon: LayoutDashboard, label: "Statistika", href: "/analytics" },
@@ -40,6 +43,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     const { user, hasAccess, logout, isSuperAdmin, isAdmin, updateProfile } = useAuth();
     const [phoneValue, setPhoneValue] = useState(user?.phoneNumber || "");
     const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
+    const { isBotOnline, handleLaunchBot } = useBotStatus();
 
     useEffect(() => {
         setPhoneValue(user?.phoneNumber || "");
@@ -113,6 +117,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 })}
             </nav>
 
+            {/* <BotStatusIndicator isOnline={isBotOnline} onStart={handleLaunchBot} /> */}
             <div className="border-t border-border-soft p-6 bg-bg-main/20">
                 <div className="mb-6 px-2">
                     <div className="flex items-center gap-3">
