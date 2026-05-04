@@ -19,6 +19,7 @@ interface EntryRow {
     serial_number: string;
 }
 
+
 const EMPTY_ROW: EntryRow = {
     customer_code: "",
     full_name: "",
@@ -471,7 +472,7 @@ export default function InspectorPage() {
         dataToExport.forEach(row => {
             const email = row.createdBy || "Bilinmir";
             const saa = row.details?.executorName || email.split('@')[0];
-            
+
             if (statsMap.has(email)) {
                 statsMap.get(email)!.count += 1;
             } else {
@@ -1112,7 +1113,7 @@ export default function InspectorPage() {
                             <div className="space-y-3">
                                 <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Müfəttişlər</label>
                                 <div className="relative">
-                                    <div 
+                                    <div
                                         className="w-full flex flex-wrap items-center gap-2 pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:border-slate-300 transition-all cursor-pointer min-h-[48px]"
                                         onClick={() => setIsExportComboboxOpen(!isExportComboboxOpen)}
                                     >
@@ -1122,13 +1123,13 @@ export default function InspectorPage() {
                                             exportInspectors.map(email => (
                                                 <span key={email} className="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg flex items-center gap-1 text-[11px]">
                                                     {email.split('@')[0]}
-                                                    <X 
-                                                        size={12} 
-                                                        className="cursor-pointer hover:text-red-500" 
+                                                    <X
+                                                        size={12}
+                                                        className="cursor-pointer hover:text-red-500"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setExportInspectors(prev => prev.filter(i => i !== email));
-                                                        }} 
+                                                        }}
                                                     />
                                                 </span>
                                             ))
