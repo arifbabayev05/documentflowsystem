@@ -51,6 +51,7 @@ ENV NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-731BZ2G3SLq
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 8080
 CMD ["node", "server.js"]
