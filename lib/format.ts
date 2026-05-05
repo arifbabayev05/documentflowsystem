@@ -1,5 +1,3 @@
-import { Timestamp } from "firebase/firestore";
-
 /**
  * Converts a numerical amount to Azerbaijani words for Manats and keeps qepiks as numbers.
  * Example: 683.20 -> "altı yüz səksən üç manat 20 qəpik"
@@ -107,11 +105,10 @@ export function formatPhoneInput(value: string): string {
 
 /** 
  * Safely parses any date/timestamp value into a Date object.
- * Handles ISO strings, Firestore Timestamps, and Azerbaijani date format (DD.MM.YYYY).
+ * Handles ISO strings, timestamp-like values, and Azerbaijani date format (DD.MM.YYYY).
  */
 export const parseDate = (dateVal: any): Date | null => {
     if (!dateVal) return null;
-    if (dateVal instanceof Timestamp) return dateVal.toDate();
     if (dateVal.toDate && typeof dateVal.toDate === 'function') return dateVal.toDate();
 
     if (typeof dateVal === 'string') {

@@ -611,7 +611,7 @@ export default function SeedCourtsPage() {
         <div className="p-10 max-w-2xl mx-auto">
             <h1 className="text-2xl font-bold mb-4">Seed Courts</h1>
             <div className="mb-4 text-sm text-gray-600">
-                Click below to parse and upload the hardcoded court data to Firestore.
+                Click below to parse and upload the hardcoded court data to MySQL.
             </div>
 
             <button

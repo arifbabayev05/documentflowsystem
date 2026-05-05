@@ -30,7 +30,6 @@ import {
 import { getCustomers, getAuditLogs, getCourts } from "@/lib/db";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
-import { Timestamp } from "firebase/firestore";
 import { parseDate, calculateWorkingHours, formatDetailedTime, formatWorkTime } from "@/lib/format";
 import {
     ResponsiveContainer,

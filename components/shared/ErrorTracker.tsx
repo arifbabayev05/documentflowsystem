@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 /**
  * Global Error Tracker Component
  * Captures unhandled client-side errors and promise rejections
- * and logs them to Firestore for production debugging.
+ * and logs them to MySQL for production debugging.
  */
 export default function ErrorTracker() {
     const { user } = useAuth();
@@ -23,7 +23,7 @@ export default function ErrorTracker() {
         };
 
         const handleRejection = (event: PromiseRejectionEvent) => {
-            // Log unhandled promise rejections (e.g. failed fetch/firebase calls)
+            // Log unhandled promise rejections (e.g. failed fetch calls)
             logError(
                 event.reason,
                 "GLOBAL_PROMISE_REJECTION",
