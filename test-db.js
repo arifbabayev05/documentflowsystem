@@ -1,13 +1,10 @@
 // test-db.js
 const mysql = require('mysql2/promise');
 
-const connectionString = process.env.MYSQL_URI || process.env.DATABASE_URL;
+const DEFAULT_MYSQL_URI = 'mysql://ai_dev_user:%40%21123%23%40%21D3v0ps@10.113.1.8:3306/ai_dev';
+const connectionString = process.env.MYSQL_URI || process.env.DATABASE_URL || DEFAULT_MYSQL_URI;
 
 async function main() {
-    if (!connectionString) {
-        throw new Error('MYSQL_URI or DATABASE_URL environment variable is required');
-    }
-
     const connection = await mysql.createConnection(connectionString);
 
     const [db] = await connection.query('SELECT DATABASE() AS db');

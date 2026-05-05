@@ -2,14 +2,12 @@
 
 import mysql from 'mysql2/promise';
 
-const connectionString = process.env.MYSQL_URI || process.env.DATABASE_URL;
+const DEFAULT_MYSQL_URI = 'mysql://ai_dev_user:%40%21123%23%40%21D3v0ps@10.113.1.8:3306/ai_dev';
+const connectionString = process.env.MYSQL_URI || process.env.DATABASE_URL || DEFAULT_MYSQL_URI;
 
 let pool: mysql.Pool;
 
 function getPool() {
-    if (!connectionString) {
-        throw new Error('MYSQL_URI or DATABASE_URL environment variable is required for MySQL mode');
-    }
     if (!pool) {
         pool = mysql.createPool(connectionString);
     }

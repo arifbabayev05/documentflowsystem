@@ -1,8 +1,11 @@
 import 'server-only';
 import { storageProxyUrl } from './storage-shared';
 
-const STORAGE_BASE_URL = process.env.STORAGE_API_BASE_URL;
-const STORAGE_AUTH_TOKEN = process.env.STORAGE_API_TOKEN;
+const DEFAULT_STORAGE_BASE_URL = 'http://10.10.10.127:11133/api/Storage';
+const DEFAULT_STORAGE_AUTH_TOKEN = 'uUotdJmwm132zjbb202dFKZkkoCf67n6mr6HgLyOvmUVK5oplN ';
+
+const STORAGE_BASE_URL = process.env.STORAGE_API_BASE_URL || DEFAULT_STORAGE_BASE_URL;
+const STORAGE_AUTH_TOKEN = process.env.STORAGE_API_TOKEN || DEFAULT_STORAGE_AUTH_TOKEN;
 const STORAGE_MODULE_NAME = process.env.STORAGE_API_MODULE || 'Common';
 const STORAGE_BUCKET_NAME = process.env.STORAGE_API_BUCKET || 'Documents';
 
@@ -23,13 +26,6 @@ function normalizeDirectory(directory?: string | null) {
 }
 
 function getStorageConfig() {
-    if (!STORAGE_BASE_URL) {
-        throw new Error('STORAGE_API_BASE_URL environment variable is required for Storage API mode');
-    }
-    if (!STORAGE_AUTH_TOKEN) {
-        throw new Error('STORAGE_API_TOKEN environment variable is required for Storage API mode');
-    }
-
     return {
         baseUrl: STORAGE_BASE_URL.replace(/\/+$/, ''),
         authToken: STORAGE_AUTH_TOKEN,
