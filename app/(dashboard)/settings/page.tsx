@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { withBasePath } from "@/lib/basePath";
 
 import { AVAILABLE_PERMISSIONS, PermissionID } from "@/lib/permissions";
 import { getAllUsers, updateUserRole, getRolePermissions, deleteUser } from "@/lib/db";
@@ -94,7 +95,7 @@ export default function UsersPage() {
 
     useEffect(() => {
         if (!isLoading && !currentUser) {
-            router.replace("/login");
+            router.replace(withBasePath("/login"));
         }
     }, [isLoading, currentUser, router]);
 

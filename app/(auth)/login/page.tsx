@@ -15,6 +15,7 @@ import {
     Briefcase
 } from "lucide-react";
 import { toast } from "sonner";
+import { withBasePath } from "@/lib/basePath";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -23,7 +24,7 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (!isLoading && user) {
-            router.replace("/dashboard");
+            router.replace(withBasePath("/dashboard"));
         }
     }, [user, isLoading, router]);
 

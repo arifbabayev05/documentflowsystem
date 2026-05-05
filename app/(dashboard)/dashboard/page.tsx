@@ -42,6 +42,7 @@ import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from 
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
 import { API_ENDPOINTS } from "@/config/api";
+import { withBasePath } from "@/lib/basePath";
 import * as XLSX from "xlsx";
 import { MultiSelect } from "@/components/shared/MultiSelect";
 
@@ -1232,7 +1233,7 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
             await savePromise;
         }
 
-        router.push(`/reports/generate?id=${row.id}&template=Xəbərdarlıq Sənədi`);
+        router.push(withBasePath(`/reports/generate?id=${row.id}&template=Xəbərdarlıq Sənədi`));
     };
 
     const handleArchiveRequest = async (invId: string, e: React.MouseEvent) => {
@@ -1952,7 +1953,7 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
                                                             }
                                                         }
                                                     }
-                                                    router.push(`/reports/generate?id=${row.id}`);
+                                                    router.push(withBasePath(`/reports/generate?id=${row.id}`));
                                                 }}
                                                 icon={<FileText size={13} />}
                                                 label="Sənəd Çapı"

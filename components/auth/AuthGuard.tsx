@@ -35,7 +35,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         try {
             await updateProfile({ phoneNumber: phoneValue });
             toast.success("Məlumatlar yeniləndi");
-            router.push("/inspector");
+            router.push(withBasePath("/inspector"));
         } catch (e) {
             // Error toast handled in updateProfile
         } finally {
@@ -49,7 +49,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
             // Use window.location for a hard redirect to ensure state is clear
             // But router.replace is smoother. Let's stick to router.replace but log it.
             localStorage.setItem("returnUrl", withoutBasePath(pathname));
-            router.replace("/login");
+            router.replace(withBasePath("/login"));
         }
     }, [user, isLoading, router, pathname]);
 

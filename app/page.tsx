@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { withBasePath } from "@/lib/basePath";
 
 export default function RootPage() {
   const router = useRouter();
@@ -13,10 +14,10 @@ export default function RootPage() {
     if (!isLoading) {
       if (user) {
         console.log("RootPage: User found, redirecting to dashboard");
-        router.replace("/dashboard");
+        router.replace(withBasePath("/dashboard"));
       } else {
         console.log("RootPage: No user, redirecting to login");
-        router.replace("/login");
+        router.replace(withBasePath("/login"));
       }
     }
   }, [user, isLoading, router]);

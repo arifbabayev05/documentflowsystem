@@ -33,6 +33,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, deleteCustomer, updateCustomer, getStores, getAllUsers } from "@/lib/db";
 import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { withBasePath } from "@/lib/basePath";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "@/lib/firebase";
 import * as XLSX from 'xlsx';
@@ -377,7 +378,7 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
                                 <button onClick={handleRestore} className="h-9 px-4 flex items-center gap-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-emerald-100">
                                     <RefreshCw size={14} /> Bərpa Et
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); router.push(`/reports/generate?id=${row.id}`); }} className="h-9 px-4 flex items-center gap-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-blue-100">
+                                <button onClick={(e) => { e.stopPropagation(); router.push(withBasePath(`/reports/generate?id=${row.id}`)); }} className="h-9 px-4 flex items-center gap-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all font-bold text-[10px] uppercase tracking-wider border border-blue-100">
                                     <FileText size={14} /> Sənədə Bax
                                 </button>
                                 {canDelete && (

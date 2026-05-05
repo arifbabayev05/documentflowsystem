@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { bulkAddCustomers } from "@/lib/db";
 import { Loader2, Database, ArrowLeft, CheckCircle2, AlertTriangle, FileUp } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { withBasePath } from "@/lib/basePath";
 
 export default function SeedPage() {
     const { user, can } = useAuth();
@@ -258,7 +259,7 @@ export default function SeedPage() {
 
                                 <div className="pt-2">
                                     <button
-                                        onClick={() => router.push("/dashboard")}
+                                        onClick={() => router.push(withBasePath("/dashboard"))}
                                         className="w-full bg-slate-100 text-slate-600 rounded-xl py-3 font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
                                     >
                                         Dashboard-a qayıt

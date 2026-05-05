@@ -23,7 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { BotStatusIndicator } from "@/components/shared/BotStatusIndicator";
 import { toast } from "sonner";
 import { useBotStatus } from "@/hooks/useBotStatus";
-import { withoutBasePath } from "@/lib/basePath";
+import { withBasePath, withoutBasePath } from "@/lib/basePath";
 
 const menuItems = [
     { icon: LayoutDashboard, label: "Statistika", href: "/analytics" },
@@ -97,7 +97,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                     return (
                         <Link
                             key={item.href}
-                            href={item.href}
+                            href={withBasePath(item.href)}
                             onClick={handleLinkClick}
                             className={cn(
                                 "group flex items-center justify-between rounded-2xl px-5 py-3.5 text-sm font-bold transition-all duration-300",

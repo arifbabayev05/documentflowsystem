@@ -54,6 +54,7 @@ import { saveAs } from "file-saver";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
 import { numberToAzerbaijaniFinancialWords, formatDateInput, formatPhoneInput } from "@/lib/format";
+import { withBasePath } from "@/lib/basePath";
 import { storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -1986,7 +1987,7 @@ function GenerateDocumentContent() {
         if (id) {
             fetchData();
         } else {
-            router.push("/dashboard");
+            router.push(withBasePath("/dashboard"));
         }
     }, [id]);
 
@@ -2195,7 +2196,7 @@ function GenerateDocumentContent() {
                 }
             } else {
                 toast.error("Müştəri tapılmadı");
-                router.push("/dashboard");
+                router.push(withBasePath("/dashboard"));
             }
         } catch (error) {
             console.error(error);
@@ -3261,7 +3262,7 @@ function GenerateDocumentContent() {
                 {/* Fixed Top Header */}
                 <div className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0 z-50 shadow-sm no-print">
                     <div className="flex items-center gap-10">
-                        <button onClick={() => router.push("/dashboard")} className="h-10 w-10 flex items-center justify-center bg-slate-100 text-slate-600 hover:text-primary rounded-xl border border-slate-300 transition-all hover:bg-white hover:shadow-md">
+                        <button onClick={() => router.push(withBasePath("/dashboard"))} className="h-10 w-10 flex items-center justify-center bg-slate-100 text-slate-600 hover:text-primary rounded-xl border border-slate-300 transition-all hover:bg-white hover:shadow-md">
                             <ArrowLeft size={18} />
                         </button>
 
