@@ -9,7 +9,14 @@ let pool: mysql.Pool;
 
 function getPool() {
     if (!pool) {
-        pool = mysql.createPool(connectionString);
+        pool = mysql.createPool({
+            uri: connectionString,
+            waitForConnections: true,
+            connectionLimit: 5,
+            queueLimit: 20,
+            connectTimeout: 3000,
+            enableKeepAlive: true,
+        });
     }
     return pool;
 }

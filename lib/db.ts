@@ -6,6 +6,7 @@ const DB_MODE_STORAGE_KEY = "legal12_db_mode";
 
 let currentDBMode: DBMode = "firebase";
 let modeInitialized = false;
+let modePromise: Promise<DBMode> | null = null;
 
 async function firebaseDb() {
     return await import('./firebase-db');
@@ -34,9 +35,19 @@ function setClientStoredMode(mode: DBMode) {
     } catch { }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(fallback), ms);
+        promise
+            .then((value) => resolve(value))
+            .catch(() => resolve(fallback))
+            .finally(() => clearTimeout(timer));
+    });
+}
+
 async function getMySQLMode(): Promise<DBMode | null> {
     try {
-        const settings = await my.mysqlGetGlobalSettings();
+        const settings = await withTimeout(my.mysqlGetGlobalSettings(), 1500, null as any);
         return normalizeMode(settings?.dbMode);
     } catch {
         return null;
@@ -46,7 +57,7 @@ async function getMySQLMode(): Promise<DBMode | null> {
 async function getFirebaseMode(): Promise<DBMode | null> {
     try {
         const fb = await firebaseDb();
-        const settings = await fb.getGlobalSettings();
+        const settings = await withTimeout(fb.getGlobalSettings(), 2000, null as any);
         return normalizeMode(settings?.dbMode);
     } catch {
         return null;
@@ -54,16 +65,8 @@ async function getFirebaseMode(): Promise<DBMode | null> {
 }
 
 export async function getDBMode(): Promise<DBMode> {
-    if (typeof window !== "undefined" && modeInitialized && currentDBMode === "mysql") {
+    if (modeInitialized) {
         return currentDBMode;
-    }
-
-    // MySQL is authoritative after cutover. This avoids any Firestore read when
-    // MySQL already stores dbMode='mysql'.
-    const mysqlMode = await getMySQLMode();
-    if (mysqlMode) {
-        setClientStoredMode(mysqlMode);
-        return mysqlMode;
     }
 
     const storedMode = getClientStoredMode();
@@ -73,10 +76,24 @@ export async function getDBMode(): Promise<DBMode> {
         return storedMode;
     }
 
-    const firebaseMode = await getFirebaseMode();
-    currentDBMode = firebaseMode || "firebase";
-    modeInitialized = true;
-    return currentDBMode;
+    if (!modePromise) {
+        modePromise = (async () => {
+            const firebaseMode = await getFirebaseMode();
+            if (firebaseMode) return firebaseMode;
+
+            const explicitServerMode = normalizeMode(process.env.DB_MODE);
+            if (explicitServerMode) return explicitServerMode;
+
+            return "firebase";
+        })().then((mode) => {
+            setClientStoredMode(mode);
+            return mode;
+        }).finally(() => {
+            modePromise = null;
+        });
+    }
+
+    return modePromise;
 }
 
 export async function getRolePermissions(role: string) {
@@ -231,10 +248,16 @@ export async function updateGlobalSettings(data: any, userEmail: string = "syste
     if (targetMode === "mysql") {
         await my.mysqlUpdateGlobalSettings({ ...data, dbMode: "mysql" });
         setClientStoredMode("mysql");
+        try {
+            const fb = await firebaseDb();
+            await fb.updateGlobalSettings({ ...data, dbMode: "mysql" }, userEmail);
+        } catch { }
         return true;
     }
 
-    await my.mysqlUpdateGlobalSettings({ dbMode: "firebase" });
+    try {
+        await withTimeout(my.mysqlUpdateGlobalSettings({ dbMode: "firebase" }), 1500, false as any);
+    } catch { }
     setClientStoredMode("firebase");
     const fb = await firebaseDb();
     await fb.updateGlobalSettings(data, userEmail);
