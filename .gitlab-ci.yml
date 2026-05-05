@@ -7,4 +7,4 @@ variables:
 include:
   - project: 'gitops/template-pipeline'
     ref: master
-    file: 'pipeline/frontend/.all.yml'
+    file: 'pipeline/backend/.all.yml'
