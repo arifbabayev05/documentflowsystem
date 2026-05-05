@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   output: 'export',
   trailingSlash: true,
+  basePath: '/legal12',
   images: {
     unoptimized: true
   }

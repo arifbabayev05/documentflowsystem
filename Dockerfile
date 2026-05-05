@@ -32,6 +32,7 @@ RUN npm run build
 
 # Final Stage: Nginx on 8080
 FROM nginx:alpine
+COPY --from=builder /app/out /usr/share/nginx/html/legal12
 COPY --from=builder /app/out /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080
