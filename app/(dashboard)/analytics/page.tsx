@@ -43,6 +43,7 @@ import {
     RadarChart, PolarGrid, PolarAngleAxis, Radar
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
+import { withBasePath } from "@/lib/basePath";
 
 /** Conditional Class Helper */
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
@@ -1641,7 +1642,7 @@ function DrillDownModal({ isOpen, onClose, title, customers }: { isOpen: boolean
 
                                 <div className="flex items-center gap-3">
                                     <button
-                                        onClick={() => window.open(`/reports/generate?id=${c.id}`, '_blank')}
+                                        onClick={() => window.open(withBasePath(`/reports/generate?id=${c.id}`), '_blank')}
                                         className="h-12 px-6 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 transition-all flex items-center gap-3 active:scale-95 shadow-md shadow-slate-300 hover:shadow-indigo-200"
                                     >
                                         Detala Bax <ExternalLink size={14} />

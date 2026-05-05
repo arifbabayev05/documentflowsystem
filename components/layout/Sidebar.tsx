@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { BotStatusIndicator } from "@/components/shared/BotStatusIndicator";
 import { toast } from "sonner";
 import { useBotStatus } from "@/hooks/useBotStatus";
+import { withoutBasePath } from "@/lib/basePath";
 
 const menuItems = [
     { icon: LayoutDashboard, label: "Statistika", href: "/analytics" },
@@ -40,6 +41,7 @@ const menuItems = [
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {
     const pathname = usePathname();
+    const normalizedPathname = withoutBasePath(pathname);
     const { user, hasAccess, logout, isSuperAdmin, isAdmin, updateProfile } = useAuth();
     const [phoneValue, setPhoneValue] = useState(user?.phoneNumber || "");
     const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
@@ -91,7 +93,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
             <nav className="flex-1 space-y-1 px-4 py-8">
                 {visibleItems.map((item) => {
-                    const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
+                    const isActive = normalizedPathname === item.href || (item.href !== "/dashboard" && normalizedPathname.startsWith(item.href + "/"));
                     return (
                         <Link
                             key={item.href}

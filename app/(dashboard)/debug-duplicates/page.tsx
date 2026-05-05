@@ -6,6 +6,7 @@ import { AlertCircle, User, Code, ArrowRight, RefreshCw, CheckCircle2 } from "lu
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { withBasePath } from "@/lib/basePath";
 
 export default function DebugDuplicatesPage() {
     const { user } = useAuth();
@@ -142,7 +143,7 @@ export default function DebugDuplicatesPage() {
                                                     {fixingId === item.id ? "..." : "Həll Et"}
                                                 </button>
                                                 <button
-                                                    onClick={() => window.open(`/dashboard?search=${item.id}`, '_blank')}
+                                                    onClick={() => window.open(withBasePath(`/dashboard?search=${item.id}`), '_blank')}
                                                     className="h-10 w-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
                                                     title="Dashboard-da gör"
                                                 >

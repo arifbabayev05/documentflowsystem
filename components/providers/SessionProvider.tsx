@@ -7,6 +7,7 @@ import { syncUser } from "@/lib/db";
 import { PATH_TO_PERMISSION_MAP, PermissionID } from "@/lib/permissions";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { withBasePath, withoutBasePath } from "@/lib/basePath";
 
 interface AppUser {
     email: string;
@@ -90,16 +91,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const hasAccess = useCallback((path: string) => {
         if (!user) return false;
+        const normalizedPath = withoutBasePath(path);
 
         // Block everything for Inspector if phone is missing
         if (isPhoneRequiredMissing) return false;
 
         if (user.role === "SUPERADMIN") return true;
 
-        const requiredPermissions = PATH_TO_PERMISSION_MAP[path] || [];
+        const requiredPermissions = PATH_TO_PERMISSION_MAP[normalizedPath] || [];
         if (requiredPermissions.length === 0) return true;
 
-        if (user.role === "MANAGER" && path === "/settings") return true;
+        if (user.role === "MANAGER" && normalizedPath === "/settings") return true;
 
         return user.permissions.some(p => requiredPermissions.includes(p as PermissionID));
     }, [user]);
@@ -119,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await signOut(auth);
             localStorage.removeItem("legal12_user");
             setUser(null);
-            window.location.href = "/login";
+            window.location.href = withBasePath("/login");
         } catch (e: any) {
             toast.error("Çıxış zamanı xəta: " + e.message);
         }

@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import { Loader2, UserCircle, Menu, Save, Phone, AlertCircle } from "lucide-react";
 import { formatPhoneInput } from "@/lib/format";
 import { toast } from "sonner";
+import { withBasePath, withoutBasePath } from "@/lib/basePath";
 
 interface AuthGuardProps {
     children: React.ReactNode;
@@ -47,7 +48,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
             console.log(`AuthGuard: Unauthorized access to ${pathname}, redirecting to login.`);
             // Use window.location for a hard redirect to ensure state is clear
             // But router.replace is smoother. Let's stick to router.replace but log it.
-            localStorage.setItem("returnUrl", pathname);
+            localStorage.setItem("returnUrl", withoutBasePath(pathname));
             router.replace("/login");
         }
     }, [user, isLoading, router, pathname]);
@@ -95,7 +96,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
                         <button
                             onClick={async () => {
                                 localStorage.removeItem("legal12_user");
-                                window.location.href = "/login";
+                                window.location.href = withBasePath("/login");
                             }}
                             className="w-full py-4 bg-white border border-slate-200 text-slate-500 rounded-2xl font-black hover:bg-slate-50 transition-all text-sm"
                         >
