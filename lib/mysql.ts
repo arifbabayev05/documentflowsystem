@@ -6,6 +6,8 @@ const DEFAULT_MYSQL_URI = 'mysql://ai_dev_user:%40%21123%23%40%21D3v0ps@10.113.1
 const connectionString = process.env.MYSQL_URI || process.env.DATABASE_URL || DEFAULT_MYSQL_URI;
 
 let pool: mysql.Pool;
+const READ_CACHE_TTL_MS = Number(process.env.MYSQL_READ_CACHE_TTL_MS || 30000);
+const readCache = new Map<string, { expiresAt: number; value?: any; promise?: Promise<any> }>();
 
 function getPool() {
     if (!pool) {
@@ -19,6 +21,39 @@ function getPool() {
         });
     }
     return pool;
+}
+
+async function cachedRead<T>(key: string, loader: () => Promise<T>, ttlMs: number = READ_CACHE_TTL_MS): Promise<T> {
+    const now = Date.now();
+    const cached = readCache.get(key);
+    if (cached && cached.expiresAt > now) {
+        if (cached.promise) return cached.promise;
+        return cached.value as T;
+    }
+
+    const promise = loader()
+        .then((value) => {
+            readCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+            return value;
+        })
+        .catch((error) => {
+            readCache.delete(key);
+            throw error;
+        });
+
+    readCache.set(key, { promise, expiresAt: now + ttlMs });
+    return promise;
+}
+
+function invalidateReadCache(prefix?: string) {
+    if (!prefix) {
+        readCache.clear();
+        return;
+    }
+
+    for (const key of readCache.keys()) {
+        if (key.startsWith(prefix)) readCache.delete(key);
+    }
 }
 
 function parseJsonFields(row: any, fields: string[]) {
@@ -125,13 +160,15 @@ function parseBooleans(row: any, fields: string[]) {
 
 // --- Permissions ---
 export async function mysqlGetRolePermissions(role: string) {
-    const [rows] = await getPool().query('SELECT allowedPaths FROM Permissions WHERE id = ?', [role]) as any;
-    if (rows.length > 0) {
-        return parseJsonFields(rows[0], ['allowedPaths']).allowedPaths || [];
-    }
-    // Fallbacks identical to firebase
-    if (role === "SUPERADMIN") return [/* all from format but firebase logic handles this if we return default */]; 
-    return null; // Return null to let the caller handle defaults
+    return cachedRead(`permissions:${role}`, async () => {
+        const [rows] = await getPool().query('SELECT allowedPaths FROM Permissions WHERE id = ?', [role]) as any;
+        if (rows.length > 0) {
+            return parseJsonFields(rows[0], ['allowedPaths']).allowedPaths || [];
+        }
+        // Fallbacks identical to firebase
+        if (role === "SUPERADMIN") return [/* all from format but firebase logic handles this if we return default */]; 
+        return null; // Return null to let the caller handle defaults
+    }, 60000);
 }
 
 export async function mysqlUpdateRolePermissions(role: string, paths: string[]) {
@@ -142,6 +179,7 @@ export async function mysqlUpdateRolePermissions(role: string, paths: string[]) 
         'INSERT INTO Permissions (id, role, allowedPaths, updatedAt) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE allowedPaths = ?, updatedAt = ?',
         [id, role, allowedPaths, updatedAt, allowedPaths, updatedAt]
     );
+    invalidateReadCache('permissions:');
     return true;
 }
 
@@ -181,17 +219,21 @@ export async function mysqlSyncUser(user: { email: string; displayName?: string 
             [userDoc.id, userDoc.email, userDoc.displayName, userDoc.role, userDoc.lastLogin, userDoc.status, JSON.stringify(userDoc.permissions)]
         );
     }
+    invalidateReadCache('users');
     return userDoc;
 }
 
 export async function mysqlGetAllUsers() {
-    const [rows] = await getPool().query('SELECT * FROM Users') as any;
-    return rows.map((r: any) => parseJsonFields(r, ['permissions']));
+    return cachedRead('users:all', async () => {
+        const [rows] = await getPool().query('SELECT * FROM Users') as any;
+        return rows.map((r: any) => parseJsonFields(r, ['permissions']));
+    });
 }
 
 export async function mysqlUpdateUserRole(email: string, role: string, permissions: string[] | null) {
     const permsStr = permissions ? JSON.stringify(permissions) : '[]'; // Simplified, caller should provide
     await getPool().query('UPDATE Users SET role = ?, permissions = ? WHERE id = ?', [role, permsStr, email]);
+    invalidateReadCache('users');
     return true;
 }
 
@@ -213,11 +255,13 @@ export async function mysqlUpdateUserData(email: string, data: any) {
         values.push(email);
         await getPool().query(`UPDATE Users SET ${updates.join(', ')} WHERE id = ?`, values);
     }
+    invalidateReadCache('users');
     return true;
 }
 
 export async function mysqlDeleteUser(email: string) {
     await getPool().query('DELETE FROM Users WHERE id = ?', [email]);
+    invalidateReadCache('users');
     return true;
 }
 
@@ -289,7 +333,6 @@ function parseCustomer(row: any) {
 }
 async function attachInvoicesToCustomers(customers: any[]) {
     if (customers.length === 0) return customers;
-    await ensureInvoiceSchema();
     const customerIds = customers.map(c => c.id);
     const [invoices] = await getPool().query(`SELECT * FROM CustomerInvoices WHERE customerId IN (?)`, [customerIds]) as any;
     if (invoices.length === 0) {
@@ -346,38 +389,47 @@ async function attachInvoicesToCustomers(customers: any[]) {
 }
 
 export async function mysqlGetCustomers() {
-    const [rows] = await getPool().query('SELECT * FROM Customers') as any;
-    const customers = rows.map(parseCustomer);
-    return await attachInvoicesToCustomers(customers);
+    return cachedRead('customers:all', async () => {
+        const [rows] = await getPool().query('SELECT * FROM Customers') as any;
+        const customers = rows.map(parseCustomer);
+        return await attachInvoicesToCustomers(customers);
+    });
 }
 
 export async function mysqlGetInspectorCustomers(email: string) {
-    const [rows] = await getPool().query('SELECT * FROM Customers WHERE createdBy = ?', [email]) as any;
-    const customers = rows.map(parseCustomer);
-    return await attachInvoicesToCustomers(customers);
+    return cachedRead(`customers:inspector:${email}`, async () => {
+        const [rows] = await getPool().query('SELECT * FROM Customers WHERE createdBy = ?', [email]) as any;
+        const customers = rows.map(parseCustomer);
+        return await attachInvoicesToCustomers(customers);
+    });
 }
 
 export async function mysqlDeleteCustomer(id: string) {
     await getPool().query('DELETE FROM Customers WHERE id = ?', [id]);
+    invalidateReadCache('customers:');
     return true;
 }
 
 export async function mysqlGetCustomer(id: string) {
-    const [rows] = await getPool().query('SELECT * FROM Customers WHERE id = ?', [id]) as any;
-    if (rows.length > 0) {
-        const customers = await attachInvoicesToCustomers([parseCustomer(rows[0])]);
-        return customers[0];
-    }
-    return null;
+    return cachedRead(`customers:id:${id}`, async () => {
+        const [rows] = await getPool().query('SELECT * FROM Customers WHERE id = ?', [id]) as any;
+        if (rows.length > 0) {
+            const customers = await attachInvoicesToCustomers([parseCustomer(rows[0])]);
+            return customers[0];
+        }
+        return null;
+    });
 }
 
 export async function mysqlFindCustomerByCode(code: string) {
-    const [rows] = await getPool().query('SELECT * FROM Customers WHERE customerCode = ? LIMIT 1', [code]) as any;
-    if (rows.length > 0) {
-        const customers = await attachInvoicesToCustomers([parseCustomer(rows[0])]);
-        return customers[0];
-    }
-    return null;
+    return cachedRead(`customers:code:${code}`, async () => {
+        const [rows] = await getPool().query('SELECT * FROM Customers WHERE customerCode = ? LIMIT 1', [code]) as any;
+        if (rows.length > 0) {
+            const customers = await attachInvoicesToCustomers([parseCustomer(rows[0])]);
+            return customers[0];
+        }
+        return null;
+    });
 }
 
 async function upsertCustomerInvoices(customerId: string, invoices: any[]) {
@@ -497,6 +549,7 @@ export async function mysqlAddCustomer(customer: any) {
         await upsertCustomerInvoices(data.id, invoices);
     }
     
+    invalidateReadCache('customers:');
     return true;
 }
 
@@ -538,6 +591,7 @@ export async function mysqlUpdateCustomerRaw(id: string, customer: any) {
         await upsertCustomerInvoices(id, invoices);
     }
 
+    invalidateReadCache('customers:');
     return true;
 }
 
@@ -557,16 +611,21 @@ export async function mysqlAddAuditLog(log: any) {
         'INSERT INTO AuditLogs (`id`, `action`, `category`, `details`, `userEmail`, `metadata`, `createdAt`) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [data.id, action, category, details, userEmail, metadata, createdAt]
     );
+    invalidateReadCache('audit:');
     return true;
 }
 
 export async function mysqlGetAuditLogs(limitCount: number) {
-    const [rows] = await getPool().query(`SELECT * FROM AuditLogs ORDER BY createdAt DESC LIMIT ${Number(limitCount)}`) as any;
-    return rows.map((r: any) => parseJsonFields(r, ['metadata']));
+    const safeLimit = Number(limitCount);
+    return cachedRead(`audit:${safeLimit}`, async () => {
+        const [rows] = await getPool().query(`SELECT * FROM AuditLogs ORDER BY createdAt DESC LIMIT ${safeLimit}`) as any;
+        return rows.map((r: any) => parseJsonFields(r, ['metadata']));
+    }, 15000);
 }
 
 export async function mysqlDeleteAuditLogsBeforeDate(dateStr: string) {
     const [result] = await getPool().query('DELETE FROM AuditLogs WHERE createdAt <= ?', [dateStr]) as any;
+    invalidateReadCache('audit:');
     return result.affectedRows;
 }
 
@@ -576,19 +635,25 @@ export async function mysqlLogError(errorData: any) {
         'INSERT INTO SystemErrors (id, message, stack, context, userEmail, url, userAgent, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [id, errorData.message, errorData.stack, errorData.context, errorData.userEmail, errorData.url, errorData.userAgent, errorData.createdAt || new Date().toISOString()]
     );
+    invalidateReadCache('errors:');
     return true;
 }
 
 export async function mysqlGetSystemErrors(limitCount: number) {
-    const [rows] = await getPool().query(`SELECT * FROM SystemErrors ORDER BY createdAt DESC LIMIT ${Number(limitCount)}`) as any;
-    return rows;
+    const safeLimit = Number(limitCount);
+    return cachedRead(`errors:${safeLimit}`, async () => {
+        const [rows] = await getPool().query(`SELECT * FROM SystemErrors ORDER BY createdAt DESC LIMIT ${safeLimit}`) as any;
+        return rows;
+    }, 15000);
 }
 
 // --- Global Settings ---
 export async function mysqlGetGlobalSettings() {
-    const [rows] = await getPool().query('SELECT * FROM GlobalSettings WHERE id = "current"') as any;
-    if (rows.length > 0) return rows[0];
-    return null;
+    return cachedRead('settings:current', async () => {
+        const [rows] = await getPool().query('SELECT * FROM GlobalSettings WHERE id = "current"') as any;
+        if (rows.length > 0) return rows[0];
+        return null;
+    }, 15000);
 }
 
 export async function mysqlUpdateGlobalSettings(data: any) {
@@ -606,53 +671,69 @@ export async function mysqlUpdateGlobalSettings(data: any) {
     values.push('current');
 
     await getPool().query(`UPDATE GlobalSettings SET ${updates} WHERE id = ?`, values);
+    invalidateReadCache('settings:');
     return true;
 }
 
 // --- Courts, Stores, Templates ---
 export async function mysqlGetCourts() {
-    const [rows] = await getPool().query('SELECT * FROM Courts') as any;
-    return rows;
+    return cachedRead('courts:all', async () => {
+        const [rows] = await getPool().query('SELECT * FROM Courts') as any;
+        return rows;
+    }, 30000);
 }
 export async function mysqlAddCourt(data: any) {
     await getPool().query('INSERT INTO Courts (id, name, address, phone, fax, createdAt) VALUES (?, ?, ?, ?, ?, ?)', [data.id, data.name, data.address || null, data.phone || null, data.fax || null, data.createdAt]);
+    invalidateReadCache('courts:');
 }
 export async function mysqlUpdateCourt(id: string, data: any) {
     const updatedAt = data.updatedAt || new Date().toISOString();
     await getPool().query('UPDATE Courts SET name = ?, address = ?, phone = ?, fax = ?, updatedAt = ? WHERE id = ?', [data.name, data.address || null, data.phone || null, data.fax || null, updatedAt, id]);
+    invalidateReadCache('courts:');
 }
 export async function mysqlDeleteCourt(id: string) {
     await getPool().query('DELETE FROM Courts WHERE id = ?', [id]);
+    invalidateReadCache('courts:');
 }
 
 export async function mysqlGetStores() {
-    const [rows] = await getPool().query('SELECT * FROM Stores') as any;
-    return rows;
+    return cachedRead('stores:all', async () => {
+        const [rows] = await getPool().query('SELECT * FROM Stores') as any;
+        return rows;
+    }, 30000);
 }
 export async function mysqlAddStore(data: any) {
     await getPool().query('INSERT INTO Stores (id, name, createdAt) VALUES (?, ?, ?)', [data.id, data.name, data.createdAt]);
+    invalidateReadCache('stores:');
 }
 export async function mysqlUpdateStore(id: string, name: string, updatedAt?: string) {
     const ts = updatedAt || new Date().toISOString();
     await getPool().query('UPDATE Stores SET name = ?, updatedAt = ? WHERE id = ?', [name, ts, id]);
+    invalidateReadCache('stores:');
 }
 export async function mysqlDeleteStore(id: string) {
     await getPool().query('DELETE FROM Stores WHERE id = ?', [id]);
+    invalidateReadCache('stores:');
 }
 
 export async function mysqlGetTemplates() {
-    const [rows] = await getPool().query('SELECT * FROM Templates') as any;
-    return rows;
+    return cachedRead('templates:all', async () => {
+        const [rows] = await getPool().query('SELECT * FROM Templates') as any;
+        return rows;
+    }, 30000);
 }
 export async function mysqlAddTemplate(data: any) {
     await getPool().query('INSERT INTO Templates (id, name, content, createdAt) VALUES (?, ?, ?, ?)', [data.id, data.name, data.content, data.createdAt]);
+    invalidateReadCache('templates:');
 }
 export async function mysqlUpdateTemplate(id: string, data: any) {
     const updatedAt = data.updatedAt || new Date().toISOString();
     await getPool().query('UPDATE Templates SET name = ?, content = ?, updatedAt = ? WHERE id = ?', [data.name, data.content, updatedAt, id]);
+    invalidateReadCache('templates:');
 }
 export async function mysqlDeleteTemplate(id: string) {
     await getPool().query('DELETE FROM Templates WHERE id = ?', [id]);
+    invalidateReadCache('templates:');
 }
 
 export async function mysqlBulkAddCustomers(customers: any[], userEmail: string = "system") {
@@ -688,6 +769,7 @@ export async function mysqlBulkAddCustomers(customers: any[], userEmail: string 
         metadata: { count: customers.length },
         createdAt: timestamp
     });
+    invalidateReadCache('customers:');
     return results;
 }
 
@@ -734,6 +816,7 @@ export async function mysqlMoveCustomer(oldId: string, newCode: string, userEmai
         conn.release();
     }
     
+    invalidateReadCache('customers:');
     return true;
 }
 
