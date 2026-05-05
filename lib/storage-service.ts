@@ -8,6 +8,7 @@ const STORAGE_BASE_URL = process.env.STORAGE_API_BASE_URL || DEFAULT_STORAGE_BAS
 const STORAGE_AUTH_TOKEN = process.env.STORAGE_API_TOKEN || DEFAULT_STORAGE_AUTH_TOKEN;
 const STORAGE_MODULE_NAME = process.env.STORAGE_API_MODULE || 'Common';
 const STORAGE_BUCKET_NAME = process.env.STORAGE_API_BUCKET || 'Documents';
+const STORAGE_DIRECTORY = process.env.STORAGE_API_DIRECTORY ?? 'null';
 const STORAGE_FETCH_TIMEOUT_MS = Number(process.env.STORAGE_FETCH_TIMEOUT_MS || 15000);
 
 export interface StorageUploadResult {
@@ -17,13 +18,18 @@ export interface StorageUploadResult {
 }
 
 function normalizeDirectory(directory?: string | null) {
-    if (!directory || directory === 'null') return 'Legal12';
+    if (!directory || directory === 'null') return STORAGE_DIRECTORY;
     return directory
         .replace(/\\/g, '/')
         .split('/')
         .map(part => part.trim())
         .filter(Boolean)
-        .join('/') || 'Legal12';
+        .join('/') || STORAGE_DIRECTORY;
+}
+
+function storageErrorPrefix(action: string) {
+    const { baseUrl } = getStorageConfig();
+    return `${action} failed against ${baseUrl}`;
 }
 
 function getStorageConfig() {
@@ -53,14 +59,19 @@ export async function uploadToStorageApi(file: Blob, fileName: string, directory
     url.searchParams.set('BucketName', STORAGE_BUCKET_NAME);
     url.searchParams.set('Directory', normalizeDirectory(directory));
 
-    const response = await fetchWithTimeout(url.toString(), {
-        method: 'POST',
-        headers: {
-            accept: 'text/plain',
-            Authorization: authToken
-        },
-        body: form
-    });
+    let response: Response;
+    try {
+        response = await fetchWithTimeout(url.toString(), {
+            method: 'POST',
+            headers: {
+                accept: 'text/plain',
+                Authorization: authToken
+            },
+            body: form
+        });
+    } catch (error: any) {
+        throw new Error(`${storageErrorPrefix('Storage upload')}: ${error?.message || error}`);
+    }
 
     const text = await response.text();
     if (!response.ok) {

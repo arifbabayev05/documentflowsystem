@@ -1,4 +1,4 @@
-import { directoryFromPath, parseStorageIdFromUrl } from './storage-shared';
+import { parseStorageIdFromUrl } from './storage-shared';
 import { withBasePath } from './basePath';
 
 export interface AppUploadResult {
@@ -12,7 +12,7 @@ export async function uploadAppFile(path: string, file: Blob, fileName?: string)
     const form = new FormData();
     form.append('file', file, finalName);
     form.append('fileName', finalName);
-    form.append('directory', directoryFromPath(path));
+    form.append('directory', 'null');
 
     const response = await fetch(withBasePath('/api/storage/upload'), {
         method: 'POST',
