@@ -55,8 +55,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuth } from "@/hooks/useAuth";
 import { numberToAzerbaijaniFinancialWords, formatDateInput, formatPhoneInput } from "@/lib/format";
 import { withBasePath } from "@/lib/basePath";
-import { storage } from "@/lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { uploadAppFile } from "@/lib/app-storage";
 
 const base64ToBlob = (base64: string, type: string) => {
     const bin = atob(base64.split(',')[1] || base64);
@@ -65,6 +64,15 @@ const base64ToBlob = (base64: string, type: string) => {
         array[i] = bin.charCodeAt(i);
     }
     return new Blob([array], { type });
+};
+
+const isStoredFileReference = (value?: string | null) => {
+    return !!value && (
+        value.startsWith('http://') ||
+        value.startsWith('https://') ||
+        value.startsWith('/api/storage/file/') ||
+        value.startsWith('/legal12/api/storage/file/')
+    );
 };
 
 const normalizeAZ = (str: string | undefined) => {
@@ -2680,29 +2688,25 @@ function GenerateDocumentContent() {
             const details = { ...(customer.details || {}) };
 
             // 1. Upload Mandatory Scanned Images if new/modified (not already a URL)
-            if (receiptFile && !receiptFile.content.startsWith('http')) {
+            if (receiptFile && !isStoredFileReference(receiptFile.content)) {
                 const blob = base64ToBlob(receiptFile.content, "image/jpeg");
-                const storageRef = ref(storage, `Customers/${customer.id}/receipt_${Date.now()}.jpg`);
-                await uploadBytes(storageRef, blob);
-                const url = await getDownloadURL(storageRef);
-                (details as any).receiptUrl = url;
+                const upload = await uploadAppFile(`Customers/${customer.id}/receipt_${Date.now()}.jpg`, blob, receiptFile.name || "receipt.jpg");
+                (details as any).receiptUrl = upload.url;
+                (details as any).receiptStorageId = upload.storageId || "";
             }
-            if (postageFile && !postageFile.content.startsWith('http')) {
+            if (postageFile && !isStoredFileReference(postageFile.content)) {
                 const blob = base64ToBlob(postageFile.content, "image/jpeg");
-                const storageRef = ref(storage, `Customers/${customer.id}/postage_${Date.now()}.jpg`);
-                await uploadBytes(storageRef, blob);
-                const url = await getDownloadURL(storageRef);
-                (details as any).postageUrl = url;
+                const upload = await uploadAppFile(`Customers/${customer.id}/postage_${Date.now()}.jpg`, blob, postageFile.name || "postage.jpg");
+                (details as any).postageUrl = upload.url;
+                (details as any).postageStorageId = upload.storageId || "";
             }
 
             // 2. Generate and Upload ALL Word Documents as permanent evidence
             const docUploads = filteredTemplates.map(async (temp) => {
                 const result = await generateDocument(temp, true) as any;
                 if (result && result.content) {
-                    const storageRef = ref(storage, `Customers/${customer.id}/GeneratedDocs/${result.fileName}`);
-                    await uploadBytes(storageRef, result.content);
-                    const url = await getDownloadURL(storageRef);
-                    return { name: result.fileName, url, createdAt: new Date().toISOString() };
+                    const upload = await uploadAppFile(`Customers/${customer.id}/GeneratedDocs/${result.fileName}`, result.content, result.fileName);
+                    return { name: result.fileName, url: upload.url, storageId: upload.storageId || "", createdAt: new Date().toISOString() };
                 }
                 return null;
             });

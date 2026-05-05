@@ -33,8 +33,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
 import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
-import { storage } from "@/lib/firebase";
+import { deleteAppFile, uploadAppFile } from "@/lib/app-storage";
 import * as XLSX from 'xlsx';
 import { ProcessStatus } from "../dashboard/page";
 import { MultiSelect } from "@/components/shared/MultiSelect";
@@ -222,15 +221,14 @@ export default function ArchiveDocumentsPage() {
         if (!file.name.endsWith(".pdf")) { toast.error("Yalnız PDF formatı!"); return; }
         try {
             setUploadingId(invoiceId);
-            const storageRef = ref(storage, `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`);
-            const snapshot = await uploadBytes(storageRef, file);
-            const url = await getDownloadURL(snapshot.ref);
+            const upload = await uploadAppFile(`UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`, file, file.name);
 
             // Create a minimal update object
             const invoiceUpdate = {
                 id: invoiceId,
-                archiveUrl: url,
-                archiveName: file.name
+                archiveUrl: upload.url,
+                archiveName: file.name,
+                archiveStorageId: upload.storageId || ""
             };
 
             const updatePayload = {
@@ -256,13 +254,14 @@ export default function ArchiveDocumentsPage() {
     const handleRemoveFile = async (invoiceId: string) => {
         if (!selectedCustomer) return;
         try {
-            const storageRef = ref(storage, `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`);
-            await deleteObject(storageRef).catch(() => { });
+            const existing = selectedCustomer.details?.invoices?.find(inv => inv.id === invoiceId);
+            await deleteAppFile(existing?.archiveUrl || `UploadedPDFs/${selectedCustomer.id}/${invoiceId}.pdf`);
 
             const invoiceUpdate = {
                 id: invoiceId,
                 archiveUrl: "",
-                archiveName: ""
+                archiveName: "",
+                archiveStorageId: ""
             };
 
             const updatePayload = {

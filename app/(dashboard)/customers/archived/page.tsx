@@ -34,8 +34,7 @@ import { getCustomers, deleteCustomer, updateCustomer, getStores, getAllUsers } 
 import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { withBasePath } from "@/lib/basePath";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
-import { storage } from "@/lib/firebase";
+import { deleteAppFile, uploadAppFile } from "@/lib/app-storage";
 import * as XLSX from 'xlsx';
 
 /** Internal helper for conditional classes */
@@ -104,6 +103,7 @@ interface CustomerRow {
             archiveUrl?: string;
             archiveBase64?: string;
             archiveName?: string;
+            archiveStorageId?: string;
             orders: Array<{
                 id: string;
                 productDescription: string;
@@ -211,17 +211,16 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
         try {
             setUploading(invId);
             const storagePath = `UploadedPDFs/${row.id}/${invId}.pdf`;
-            const storageRef = ref(storage, storagePath);
-            const snapshot = await uploadBytes(storageRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
+            const upload = await uploadAppFile(storagePath, file, file.name);
 
             const updatedInvoices = [...(localData.details?.invoices || [])];
             const invIdx = updatedInvoices.findIndex(i => i.id === invId);
             if (invIdx !== -1) {
                 updatedInvoices[invIdx] = {
                     ...updatedInvoices[invIdx],
-                    archiveUrl: downloadURL,
-                    archiveName: file.name
+                    archiveUrl: upload.url,
+                    archiveName: file.name,
+                    archiveStorageId: upload.storageId || ""
                 };
             }
             const updatedData = { ...localData, process_status: 'ARCHIVE_UPLOADED' as ProcessStatus, details: { ...localData.details, invoices: updatedInvoices } };
@@ -239,13 +238,12 @@ const CustomerCard = memo(({ row, index, totalRows, canUpdate, canDelete, stores
         try {
             const inv = localData.details?.invoices?.find(i => i.id === invId);
             if (inv?.archiveUrl) {
-                const storageRef = ref(storage, `UploadedPDFs/${row.id}/${invId}.pdf`);
-                await deleteObject(storageRef).catch(() => { });
+                await deleteAppFile(inv.archiveUrl);
             }
             const updatedInvoices = [...(localData.details?.invoices || [])];
             const invIdx = updatedInvoices.findIndex(i => i.id === invId);
             if (invIdx !== -1) {
-                updatedInvoices[invIdx] = { ...updatedInvoices[invIdx], archiveUrl: "", archiveName: "" };
+                updatedInvoices[invIdx] = { ...updatedInvoices[invIdx], archiveUrl: "", archiveName: "", archiveStorageId: "" };
             }
             const updatedData = { ...localData, details: { ...localData.details, invoices: updatedInvoices } };
             await onSave(updatedData, user?.email);

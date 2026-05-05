@@ -56,6 +56,7 @@ interface CompanyInfo {
     address: string;
     phone: string;
     fax: string;
+    dbMode?: "firebase" | "mysql";
 }
 
 export default function ParametersPage() {
@@ -78,7 +79,8 @@ export default function ParametersPage() {
         representativeFin: "",
         address: "",
         phone: "",
-        fax: ""
+        fax: "",
+        dbMode: "firebase"
     });
     const [isSavingSettings, setIsSavingSettings] = useState(false);
 
@@ -419,6 +421,54 @@ export default function ParametersPage() {
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.1em] ml-1">Telefon</label>
                                         <input value={companyInfo.phone || ""} onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })} className="w-full px-6 py-4 bg-slate-50/50 border border-blue-100 rounded-[1.5rem] outline-none focus:border-primary/30 focus:bg-white transition-all font-bold text-sm text-slate-800 shadow-sm" />
+                                    </div>
+                                </div>
+                                <div className="mt-8 p-6 rounded-[2rem] bg-slate-950 text-white relative z-10 overflow-hidden border border-slate-800">
+                                    <div className="flex items-start justify-between gap-4 mb-6">
+                                        <div>
+                                            <h4 className="text-lg font-black uppercase tracking-tight">Məlumat Bazası Rejimi</h4>
+                                            <p className="text-[11px] font-bold text-slate-400 mt-1">Sistemin Firebase və ya MySQL üzərindən işləməsini seçir.</p>
+                                        </div>
+                                        <div className={cn(
+                                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                                            companyInfo.dbMode === "mysql" ? "bg-blue-500/20 text-blue-200 border border-blue-400/30" : "bg-amber-500/20 text-amber-200 border border-amber-400/30"
+                                        )}>
+                                            Aktiv: {companyInfo.dbMode === "mysql" ? "MySQL" : "Firebase"}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <button
+                                            type="button"
+                                            onClick={() => setCompanyInfo({ ...companyInfo, dbMode: "firebase" })}
+                                            className={cn(
+                                                "p-5 rounded-[1.5rem] border-2 text-left transition-all",
+                                                companyInfo.dbMode === "firebase" || !companyInfo.dbMode
+                                                    ? "bg-amber-500/20 border-amber-500 text-amber-50"
+                                                    : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
+                                            )}
+                                        >
+                                            <div className="flex items-center justify-between mb-2">
+                                                <h5 className="font-black">Firebase / Firestore</h5>
+                                                {(!companyInfo.dbMode || companyInfo.dbMode === "firebase") && <span className="h-3 w-3 bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.8)]" />}
+                                            </div>
+                                            <p className="text-xs opacity-70">Mövcud NoSQL baza və Firebase Storage ilə işləyir.</p>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCompanyInfo({ ...companyInfo, dbMode: "mysql" })}
+                                            className={cn(
+                                                "p-5 rounded-[1.5rem] border-2 text-left transition-all",
+                                                companyInfo.dbMode === "mysql"
+                                                    ? "bg-blue-500/20 border-blue-500 text-blue-50"
+                                                    : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
+                                            )}
+                                        >
+                                            <div className="flex items-center justify-between mb-2">
+                                                <h5 className="font-black">MySQL / Storage API</h5>
+                                                {companyInfo.dbMode === "mysql" && <span className="h-3 w-3 bg-blue-500 rounded-full shadow-[0_0_10px_rgba(59,130,246,0.8)]" />}
+                                            </div>
+                                            <p className="text-xs opacity-70">Məlumat MySQL-dən, fayllar Storage API proxy-dən oxunur/yazılır.</p>
+                                        </button>
                                     </div>
                                 </div>
                             </div>

@@ -27,4 +27,4 @@ microsoftProvider.setCustomParameters({
     tenant: 'common'
 });
 
-export { auth, db, storage, microsoftProvider };
+export { app, auth, db, storage, microsoftProvider };
