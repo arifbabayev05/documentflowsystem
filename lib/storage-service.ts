@@ -8,7 +8,7 @@ const STORAGE_BASE_URL = process.env.STORAGE_API_BASE_URL || DEFAULT_STORAGE_BAS
 const STORAGE_AUTH_TOKEN = process.env.STORAGE_API_TOKEN || DEFAULT_STORAGE_AUTH_TOKEN;
 const STORAGE_MODULE_NAME = process.env.STORAGE_API_MODULE || 'Common';
 const STORAGE_BUCKET_NAME = process.env.STORAGE_API_BUCKET || 'Documents';
-const STORAGE_DIRECTORY = process.env.STORAGE_API_DIRECTORY ?? 'null';
+const STORAGE_DIRECTORY = 'null';
 const STORAGE_FETCH_TIMEOUT_MS = Number(process.env.STORAGE_FETCH_TIMEOUT_MS || 15000);
 
 export interface StorageUploadResult {
