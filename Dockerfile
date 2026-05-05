@@ -39,6 +39,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8080
 ENV HOSTNAME="0.0.0.0"
 
+# Set runtime environment variables for Firebase
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyACk7G1pClIIVXgMwzGI8othZVexL58hHU
+ENV NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=legal12-kontakt.firebaseapp.com
+ENV NEXT_PUBLIC_FIREBASE_PROJECT_ID=legal12-kontakt
+ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=legal12-kontakt.firebasestorage.app
+ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=895536839180
+ENV NEXT_PUBLIC_FIREBASE_APP_ID=1:895536839180:web:d5636f343eb79f5d81cc29
+ENV NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-731BZ2G3SLq
+
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
