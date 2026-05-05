@@ -30,10 +30,18 @@ RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 
-# Final Stage: Nginx on 8080
-FROM nginx:alpine
-COPY --from=builder /app/out /usr/share/nginx/html/legal12
-COPY --from=builder /app/out /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Final Stage: Node.js server
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=8080
+ENV HOSTNAME="0.0.0.0"
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]
