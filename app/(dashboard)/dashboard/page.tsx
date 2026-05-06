@@ -37,7 +37,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
+import { getCustomersPage, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
 import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
@@ -3061,6 +3061,46 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
 });
 CustomerCard.displayName = "CustomerCard";
 
+const emptyDashboardStats = {
+    active: 0,
+    archived: 0,
+    total: 0,
+    unassigned: 0,
+    isGlobal: true,
+    workload: {} as Record<string, number>,
+    breakdown: {
+        active: [] as Array<{ label: string; value: number }>,
+        archived: [] as Array<{ label: string; value: number }>,
+        total: [] as Array<{ label: string; value: number }>
+    }
+};
+
+const dashboardBreakdownLabel = (status: string) => {
+    if (status === "ACTIVE") return "Davam edən işlər";
+    if (status === "ARCHIVED") return "Arxivə Göndərilən";
+    if (status === "INSPECTOR_ENTERED") return STATUS_LABELS.INSPECTOR_ENTERED.label;
+    return STATUS_LABELS[status as ProcessStatus]?.label || status || "Təyinat edilmiş";
+};
+
+const normalizeDashboardStats = (stats: any) => {
+    if (!stats) return emptyDashboardStats;
+    const mapItems = (items: any[] = []) => items.map(item => ({
+        label: dashboardBreakdownLabel(item.status || item.label),
+        value: Number(item.value || 0)
+    }));
+
+    return {
+        ...emptyDashboardStats,
+        ...stats,
+        workload: stats.workload || {},
+        breakdown: {
+            active: mapItems(stats.breakdown?.active),
+            archived: mapItems(stats.breakdown?.archived),
+            total: mapItems(stats.breakdown?.total)
+        }
+    };
+};
+
 /**
  * DASHBOARD PAGE COMPONENT
  */
@@ -3068,13 +3108,17 @@ export default function DashboardPage() {
     const router = useRouter();
     const { user, can } = useAuth();
     const [rows, setRows] = useState<CustomerRow[]>([]);
+    const [totalRows, setTotalRows] = useState(0);
     const [appUsers, setAppUsers] = useState<any[]>([]);
     const [stores, setStores] = useState<any[]>([]);
     const [loadingData, setLoadingData] = useState(true);
+    const [dashboardStats, setDashboardStats] = useState(emptyDashboardStats);
+    const [userWorkload, setUserWorkload] = useState<Record<string, number>>({});
     const { isBotOnline, agents, handleLaunchBot } = useBotStatus();
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState<ProcessStatus | "all">("all");
     const [page, setPage] = useState(1);
     const itemsPerPage = 50;
@@ -3125,32 +3169,30 @@ export default function DashboardPage() {
         }
     };
 
-    const fetchCustomers = async (isInitial = false) => {
-        if (isInitial) {
-            try {
-                const cached = localStorage.getItem("legal12_customers");
-                if (cached) {
-                    const parsed = JSON.parse(cached);
-                    setRows(parsed);
-                    setLoadingData(false);
-                }
-            } catch (e) {
-                localStorage.removeItem("legal12_customers");
-            }
-        }
-
+    const fetchCustomers = useCallback(async () => {
+        if (!user?.email) return;
         try {
-            const data = await getCustomers() as CustomerRow[];
-            const sorted = data.sort((a, b) =>
-                new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-            );
+            setLoadingData(true);
+            const result = await getCustomersPage({
+                mode: "dashboard",
+                page,
+                pageSize: itemsPerPage,
+                search: debouncedSearchTerm,
+                currentUserEmail: user.email,
+                currentUserRole: user.role,
+                statusFilter,
+                warningFilter,
+                invoiceCount,
+                invoiceMode,
+                executorFilter
+            }) as any;
 
-            const mergedRows = sorted.map(row => ({
+            const mergedRows = ((result.rows || []) as CustomerRow[]).map(row => ({
                 ...row,
                 customerCode: row.customerCode || row.details?.fin || ""
             }));
 
-            const finalRows = mergedRows.length > 0 ? mergedRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+            const finalRows = mergedRows;
 
             // DIAGNOSTIC
             const idsSeen = new Set();
@@ -3164,6 +3206,10 @@ export default function DashboardPage() {
             if (dupIds.length > 0) console.warn("DUPLICATE IDs IN FETCH:", dupIds);
 
             setRows(finalRows);
+            setTotalRows(Number(result.total || 0));
+            const normalizedStats = normalizeDashboardStats(result.stats);
+            setDashboardStats(normalizedStats);
+            setUserWorkload(normalizedStats.workload || {});
             updateLocalRowsCache(finalRows);
         } catch (err) {
             console.error("Failed to load customers:", err);
@@ -3171,10 +3217,13 @@ export default function DashboardPage() {
         } finally {
             setLoadingData(false);
         }
-    };
+    }, [user?.email, user?.role, page, debouncedSearchTerm, statusFilter, warningFilter, invoiceCount, invoiceMode, executorFilter]);
 
     useEffect(() => {
-        fetchCustomers(true);
+        fetchCustomers();
+    }, [fetchCustomers]);
+
+    useEffect(() => {
         if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD') {
             getAllUsers().then(users => {
                 const assignable = users.filter((u: any) => u.role === 'ADMIN');
@@ -3183,6 +3232,11 @@ export default function DashboardPage() {
         }
         getStores().then(setStores);
     }, [user?.role]);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+        return () => window.clearTimeout(timer);
+    }, [searchTerm]);
 
     useEffect(() => {
         setPage(1);
@@ -3259,14 +3313,15 @@ export default function DashboardPage() {
                 await deleteCustomer(rowToDelete.id, user?.email);
 
                 const nextRows = rows.filter(r => r.id !== rowToDelete.id);
-                const finalRows = nextRows.length > 0 ? nextRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+                const finalRows = nextRows;
                 setRows(finalRows);
+                setTotalRows(prev => Math.max(0, prev - 1));
                 updateLocalRowsCache(finalRows);
                 toast.error("Məlumat silindi");
             } else {
                 // For unsaved rows
                 const nextRows = rows.filter((_, i) => i !== index);
-                const finalRows = nextRows.length > 0 ? nextRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+                const finalRows = nextRows;
                 setRows(finalRows);
                 updateLocalRowsCache(finalRows);
             }
@@ -3277,78 +3332,7 @@ export default function DashboardPage() {
         setDeleteModal({ isOpen: false, index: null, id: null });
     };
 
-    const filteredRows = useMemo(() => {
-        const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
-
-        return rows.filter(c => {
-            // Archive filter: dashboard primarily shows active work.
-            // Items in 'UNFINISHED_ARCHIVE' are technically archived but should be visible if that status is selected.
-            if (c.isArchived) {
-                if (statusFilter !== 'UNFINISHED_ARCHIVE') return false;
-            }
-
-            // First level: Role based access
-            // Inspectors/Admins see only what's assigned to them
-            // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE tasks that are unassigned
-            const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
-            const isAssignedToMe = c.assignedTo === user?.email;
-
-            if (!isManager && !isAssignedToMe && !canSeeUnfinished) {
-                // Exceptional case: If it's a new unsaved row being created right now
-                if (!c.id) return true;
-                return false;
-            }
-
-            const matchesSearch = !searchTerm ||
-                c.fullName.toLowerCase().includes(lowSearch) ||
-                (c.customerCode || "").toLowerCase().includes(lowSearch) ||
-                (c.details?.fin || "").toLowerCase().includes(lowSearch);
-
-            const isSent = !!c.details?.isWarningSent;
-            const overdue = isOverdue(c.details?.warningDate);
-
-            let matchesWarning = true;
-            if (warningFilter === "sent") matchesWarning = isSent;
-            else if (warningFilter === "overdue") matchesWarning = isSent && overdue;
-            else if (warningFilter === "unsent") matchesWarning = !isSent;
-
-            let matchesInvoiceCount = true;
-            if (invoiceMode !== "all" && invoiceCount !== "") {
-                const invoices = c.details?.invoices || [];
-                // Support legacy data structure (items with a contract number but no invoices array yet)
-                const count = invoices.length > 0 ? invoices.length : (c.details?.contractNumber ? 1 : 0);
-                const target = parseInt(invoiceCount);
-                if (!isNaN(target)) {
-                    if (invoiceMode === "exact") matchesInvoiceCount = count === target;
-                    else if (invoiceMode === "min") matchesInvoiceCount = count >= target;
-                    else if (invoiceMode === "max") matchesInvoiceCount = count <= target;
-                }
-            }
-
-            let matchesStatus = true;
-            if (statusFilter !== "all") {
-                matchesStatus = c.process_status === statusFilter;
-            }
-
-            let matchesExecutor = true;
-            if (executorFilter !== "all") {
-                matchesExecutor = c.assignedTo === executorFilter;
-            }
-
-            return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus && matchesExecutor;
-        });
-    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter, user?.email, user?.role]);
-
-    const userWorkload = useMemo(() => {
-        const map: Record<string, number> = {};
-        rows.forEach(r => {
-            if (r.assignedTo && !r.isArchived) {
-                map[r.assignedTo] = (map[r.assignedTo] || 0) + 1;
-            }
-        });
-        return map;
-    }, [rows]);
+    const filteredRows = useMemo(() => rows, [rows]);
 
     const handleExcelExport = () => {
         let dataToExport = filteredRows.filter(c => {
@@ -3512,7 +3496,7 @@ export default function DashboardPage() {
         toast.success("Excel faylı hazırlandı və yükləndi!");
     };
 
-    const myStats = useMemo(() => {
+    const myStats = dashboardStats; /*
         if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0, breakdown: null };
 
         const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD';
@@ -3594,7 +3578,7 @@ export default function DashboardPage() {
                 ].filter(b => b.value > 0)
             }
         };
-    }, [rows, user?.email, user?.role, executorFilter]);
+    */
 
     if (loadingData && rows.length === 0) {
         return (
@@ -3840,13 +3824,13 @@ export default function DashboardPage() {
                         }
                     `}} />
 
-                    {filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, index) => {
+                    {filteredRows.map((row, index) => {
                         return (
                             <CustomerCard
                                 key={row.id || `new-${index}`}
                                 row={row}
-                                index={index}
-                                totalRows={filteredRows.length}
+                                index={(page - 1) * itemsPerPage + index}
+                                totalRows={totalRows}
                                 canUpdate={can('page_customers')}
                                 canDelete={user?.role === 'SUPERADMIN' || user?.role === 'MANAGER'}
                                 appUsers={appUsers}
@@ -3863,7 +3847,7 @@ export default function DashboardPage() {
                     })}
                 </div>
 
-                {filteredRows.length > 0 && (
+                {totalRows > 0 && (
                     <div className="flex flex-col items-center gap-4 pt-10 pb-20">
                         <div className="flex items-center gap-2">
                             <button
@@ -3876,7 +3860,7 @@ export default function DashboardPage() {
 
                             <div className="flex items-center gap-1.5 mx-4">
                                 {(() => {
-                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
+                                    const totalPages = Math.ceil(totalRows / itemsPerPage);
                                     let startPage = Math.max(1, page - 2);
                                     let endPage = Math.min(totalPages, startPage + 4);
 
@@ -3904,21 +3888,21 @@ export default function DashboardPage() {
                                     return pages;
                                 })()}
 
-                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
+                                {Math.ceil(totalRows / itemsPerPage) > 5 && page < Math.ceil(totalRows / itemsPerPage) - 2 && (
                                     <>
                                         <span className="text-slate-300 mx-1">...</span>
                                         <button
-                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
+                                            onClick={() => setPage(Math.ceil(totalRows / itemsPerPage))}
                                             className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
                                         >
-                                            {Math.ceil(filteredRows.length / itemsPerPage)}
+                                            {Math.ceil(totalRows / itemsPerPage)}
                                         </button>
                                     </>
                                 )}
                             </div>
 
                             <button
-                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
+                                disabled={page >= Math.ceil(totalRows / itemsPerPage)}
                                 onClick={() => setPage(p => p + 1)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
@@ -3926,12 +3910,12 @@ export default function DashboardPage() {
                             </button>
                         </div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                            SƏHİFƏ {page} / {Math.ceil(totalRows / itemsPerPage)} — CƏM {totalRows} MƏLUMAT
                         </span>
                     </div>
                 )}
 
-                {filteredRows.length === 0 && (
+                {!loadingData && totalRows === 0 && (
                     <div className="py-40 text-center flex flex-col items-center gap-6 opacity-20">
                         <div className="p-10 bg-gray-100 rounded-full">
                             <Search size={80} />

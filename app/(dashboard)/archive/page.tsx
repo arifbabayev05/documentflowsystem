@@ -16,6 +16,8 @@ import {
     Bell,
     Check,
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     Clock,
     FolderOpen,
     Trash2,
@@ -30,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
+import { getCustomersPage, updateCustomer, getAllUsers } from "@/lib/db";
 import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { deleteAppFile, uploadAppFile } from "@/lib/app-storage";
@@ -103,6 +105,18 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
 const months = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
 const NEW_ARCHIVE_CUTOFF = new Date("2026-04-17T00:00:00").getTime();
 
+const emptyArchiveStats = {
+    filterStats: {
+        all: "0 iş / 0 faktura",
+        unassigned: "0 iş / 0 faktura",
+        pending: "0 iş / 0 faktura",
+        done: "0 iş / 0 faktura"
+    },
+    workloadsByEmail: {} as Record<string, any>,
+    myStats: { customerCount: 0, customersDone: 0, totalInvoices: 0, doneInvoices: 0, pendingInvoices: 0, completionRate: 0 },
+    overallStats: { totalCustomers: 0, totalInvoices: 0, doneInvoices: 0, pendingInvoices: 0, pendingCustomers: 0, completionRate: 0, avgInvoices: "0", storeDist: [] as any[] }
+};
+
 const formatRequestDate = (dateVal: any) => {
     if (!dateVal) return "";
     const d = parseDate(dateVal);
@@ -120,13 +134,18 @@ export default function ArchiveDocumentsPage() {
     const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || can("page_archive_manager");
 
     const [customers, setCustomers] = useState<CustomerRow[]>([]);
+    const [totalCustomers, setTotalCustomers] = useState(0);
     const [archivers, setArchivers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
     const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
     const [uploadingId, setUploadingId] = useState<string | null>(null);
     const [sideTab, setSideTab] = useState<"tasks" | "stats">("tasks");
     const [filter, setFilter] = useState<"all" | "pending" | "done" | "unassigned">("all");
+    const [page, setPage] = useState(1);
+    const itemsPerPage = 50;
+    const [archiveStats, setArchiveStats] = useState(emptyArchiveStats);
 
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [assignOpen, setAssignOpen] = useState(false);
@@ -147,47 +166,47 @@ export default function ArchiveDocumentsPage() {
     const [exportArchiveStatus, setExportArchiveStatus] = useState<string[]>([]);
 
     const fetchData = useCallback(async () => {
+        if (!user?.email) return;
         try {
             setLoading(true);
-            const [custData, userData] = await Promise.all([getCustomers(), getAllUsers()]);
-            const CUTOFF_DATE = new Date("2026-03-04T00:00:00").getTime();
+            const result = await getCustomersPage({
+                mode: "archive-tasks",
+                page,
+                pageSize: itemsPerPage,
+                search: debouncedSearchTerm,
+                currentUserEmail: user.email,
+                currentUserRole: user.role,
+                archiveFilter: filter,
+                selectedArchiverEmail
+            }) as any;
 
-            const archiveRequired = (custData as CustomerRow[]).filter(c => {
-                // Heuristic: Check if customer has any archival activity after cutoff
-                const hasRecentInvoiceAction = c.details?.invoices?.some(inv => {
-                    if (!inv.archiveRequested && !inv.archiveUrl) return false;
-
-                    // If we have explicit timestamp on invoice
-                    if (inv.archiveRequestedAt) {
-                        return new Date(inv.archiveRequestedAt).getTime() >= CUTOFF_DATE;
-                    }
-
-                    // Fallback: Check status history for the specific request or upload
-                    const latestAction = c.statusHistory
-                        ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
-                        ?.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
-
-                    if (latestAction) {
-                        return new Date(latestAction.timestamp).getTime() >= CUTOFF_DATE;
-                    }
-
-                    // If no timestamp found, we treat as old unless it's very recent (no status history yet)
-                    return false;
-                });
-                return hasRecentInvoiceAction;
-            });
-
-            setCustomers(archiveRequired);
-            setArchivers((userData as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+            setCustomers((result.rows || []) as CustomerRow[]);
+            setTotalCustomers(Number(result.total || 0));
+            setArchiveStats({ ...emptyArchiveStats, ...(result.stats || {}) });
         } catch (error) {
             console.error("Fetch error:", error);
             toast.error("Məlumatlar yüklənmədi");
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [user?.email, user?.role, page, debouncedSearchTerm, filter, selectedArchiverEmail]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    useEffect(() => {
+        getAllUsers().then(userData => {
+            setArchivers((userData as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+        });
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+        return () => window.clearTimeout(timer);
+    }, [searchTerm]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [searchTerm, filter]);
 
     useEffect(() => {
         if (sideTab === "stats") {
@@ -372,14 +391,14 @@ export default function ArchiveDocumentsPage() {
         return { totalInv, doneInv };
     }, []);
 
-    const visibleCustomers = useMemo(() => {
+    const visibleCustomers = customers; /*
         return customers.filter(c => {
             if (getArchiveRequestTime(c) < NEW_ARCHIVE_CUTOFF) return false;
             return isManager || c.archiveAssignedTo === user?.email;
         });
-    }, [customers, isManager, user?.email, getArchiveRequestTime]);
+    */
 
-    const filteredCustomers = useMemo(() => {
+    const filteredCustomers = customers; /*
         const s = searchTerm.toLowerCase();
         return visibleCustomers.filter(c => {
             const nameMatch = c.fullName.toLowerCase().includes(s) || (c.customerCode || "").toLowerCase().includes(s);
@@ -395,10 +414,10 @@ export default function ArchiveDocumentsPage() {
             if (filter === "done" && !isCustomerDone(c)) return false;
             return true;
         });
-    }, [visibleCustomers, searchTerm, filter, getArchiveRequestTime]);
+    */
 
 
-    const filterStats = useMemo(() => {
+    const filterStats = archiveStats.filterStats; /*
         const getStr = (list: CustomerRow[]) => {
             const invoices = getTotalInvoiceCounts(list).totalInv;
             return `${list.length} iş / ${invoices} faktura`;
@@ -409,10 +428,16 @@ export default function ArchiveDocumentsPage() {
             pending: getStr(visibleCustomers.filter(c => !!c.archiveAssignedTo && !isCustomerDone(c))),
             done: getStr(visibleCustomers.filter(c => isCustomerDone(c)))
         };
-    }, [visibleCustomers, getArchiveRequestTime, getTotalInvoiceCounts]);
+    */
 
 
-    const archiverWorkloads = useMemo(() => {
+    const archiverWorkloads = useMemo(() => archivers.map(a => ({
+        ...a,
+        customerCount: Number(archiveStats.workloadsByEmail?.[a.email]?.customerCount || 0),
+        invoiceCount: Number(archiveStats.workloadsByEmail?.[a.email]?.invoiceCount || 0),
+        customerDone: Number(archiveStats.workloadsByEmail?.[a.email]?.customerDone || 0),
+        invoiceDone: Number(archiveStats.workloadsByEmail?.[a.email]?.invoiceDone || 0)
+    })).sort((a, b) => b.customerCount - a.customerCount), [archivers, archiveStats.workloadsByEmail]); /*
         return archivers.map(a => {
             const assigned = customers.filter(c => c.archiveAssignedTo === a.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
             const { totalInv, doneInv } = getTotalInvoiceCounts(assigned);
@@ -424,9 +449,9 @@ export default function ArchiveDocumentsPage() {
                 invoiceDone: doneInv
             };
         }).sort((a, b) => b.customerCount - a.customerCount);
-    }, [customers, archivers, getTotalInvoiceCounts, getArchiveRequestTime]);
+    */
 
-    const myStats = useMemo(() => {
+    const myStats = archiveStats.myStats; /*
         if (!user) return { customerCount: 0, customersDone: 0, totalInvoices: 0, doneInvoices: 0, pendingInvoices: 0, completionRate: 0 };
         const assigned = customers.filter(c => c.archiveAssignedTo === user.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
         const customersDone = assigned.filter(c => isCustomerDone(c)).length;
@@ -439,7 +464,7 @@ export default function ArchiveDocumentsPage() {
             pendingInvoices: totalInv - doneInv,
             completionRate: totalInv > 0 ? Math.round((doneInv / totalInv) * 100) : 0
         };
-    }, [customers, user, getTotalInvoiceCounts, getArchiveRequestTime]);
+    */
 
     const filteredArchivers = useMemo(() => {
         const s = dropdownSearch.toLowerCase();
@@ -451,7 +476,7 @@ export default function ArchiveDocumentsPage() {
         return archiverWorkloads.find(a => a.email === selectedArchiverEmail);
     }, [selectedArchiverEmail, archiverWorkloads]);
 
-    const overallStats = useMemo(() => {
+    const overallStats = archiveStats.overallStats; /*
         let targets = selectedArchiverEmail
             ? customers.filter(c => c.archiveAssignedTo === selectedArchiverEmail)
             : customers;
@@ -489,7 +514,7 @@ export default function ArchiveDocumentsPage() {
             avgInvoices: targets.length > 0 ? (totalInv / targets.length).toFixed(1) : "0",
             storeDist
         };
-    }, [customers, selectedArchiverEmail, getTotalInvoiceCounts, getArchiveRequestTime]);
+    */
 
     useEffect(() => {
         if (isExportModalOpen) {
@@ -955,6 +980,30 @@ export default function ArchiveDocumentsPage() {
                                 </div>
                             );
                         })}
+
+                        {sideTab === "tasks" && !loading && totalCustomers > itemsPerPage && (
+                            <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t border-slate-200 pt-3 pb-1 mt-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <button
+                                        disabled={page === 1}
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                        className="h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-30 flex items-center justify-center hover:border-slate-400 transition-all"
+                                    >
+                                        <ChevronLeft size={16} />
+                                    </button>
+                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
+                                        Səhifə {page} / {Math.ceil(totalCustomers / itemsPerPage)} · Cəm {totalCustomers}
+                                    </div>
+                                    <button
+                                        disabled={page >= Math.ceil(totalCustomers / itemsPerPage)}
+                                        onClick={() => setPage(p => p + 1)}
+                                        className="h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-30 flex items-center justify-center hover:border-slate-400 transition-all"
+                                    >
+                                        <ChevronRight size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Bulk Action Bar - Floating Center Pill */}

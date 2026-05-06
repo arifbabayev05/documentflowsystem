@@ -30,7 +30,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, deleteCustomer, updateCustomer, getStores, getAllUsers } from "@/lib/db";
+import { getCustomersPage, deleteCustomer, updateCustomer, getStores, getAllUsers } from "@/lib/db";
 import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { withBasePath } from "@/lib/basePath";
@@ -638,8 +638,10 @@ export default function ArchivedCustomersPage() {
     const { user, can } = useAuth();
     const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || user?.role === "MANAGER" || user?.role === "DEP_HEAD";
     const [rows, setRows] = useState<CustomerRow[]>([]);
+    const [totalRows, setTotalRows] = useState(0);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; index: number | null }>({ isOpen: false, index: null });
@@ -663,28 +665,46 @@ export default function ArchivedCustomersPage() {
     const itemsPerPage = 50;
 
     const fetchData = useCallback(async () => {
+        if (!user?.email) return;
         try {
             setLoading(true);
-            const [custData, storeData] = await Promise.all([
-                getCustomers(),
-                getStores()
-            ]);
-            setRows(custData as CustomerRow[]);
-            setStores(storeData);
+            const result = await getCustomersPage({
+                mode: "archived",
+                page,
+                pageSize: itemsPerPage,
+                search: debouncedSearchTerm,
+                currentUserEmail: user.email,
+                currentUserRole: user.role,
+                startDate,
+                endDate,
+                executorFilter,
+                statusFilter
+            }) as any;
+            setRows((result.rows || []) as CustomerRow[]);
+            setTotalRows(Number(result.total || 0));
         } catch (e) {
             toast.error("Məlumatlar yüklənmədi");
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [user?.email, user?.role, page, debouncedSearchTerm, startDate, endDate, executorFilter, statusFilter]);
 
     useEffect(() => {
         fetchData();
+    }, [fetchData]);
+
+    useEffect(() => {
+        getStores().then(setStores);
         getAllUsers().then(users => {
             const admins = users.filter((u: any) => u.role === 'ADMIN');
             setAppUsers(admins);
         });
-    }, [fetchData]);
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+        return () => window.clearTimeout(timer);
+    }, [searchTerm]);
 
     useEffect(() => {
         setPage(1);
@@ -702,6 +722,7 @@ export default function ArchivedCustomersPage() {
             if (customer.id) {
                 await deleteCustomer(customer.id, user?.email);
                 setRows(prev => prev.filter(r => r.id !== customer.id));
+                setTotalRows(prev => Math.max(0, prev - 1));
                 toast.success("Müştəri silindi");
             }
         }
@@ -868,7 +889,7 @@ export default function ArchivedCustomersPage() {
         toast.success("Excel faylı hazırlandı və yükləndi!");
     };
 
-    const filteredRows = useMemo(() => {
+    const filteredRows = rows; /*
         const lowSearch = searchTerm.toLowerCase();
 
         return rows.filter(c => {
@@ -923,7 +944,7 @@ export default function ArchivedCustomersPage() {
 
             return true;
         });
-    }, [rows, searchTerm, startDate, endDate, user, executorFilter, statusFilter]);
+    */
 
     if (!user || !can('page_archive_customers')) {
         return (
@@ -1047,7 +1068,7 @@ export default function ArchivedCustomersPage() {
 
                         <div className="bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm whitespace-nowrap">
                             <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">Cəmi:</span>
-                            <span className="text-sm font-black text-slate-900">{filteredRows.length}</span>
+                            <span className="text-sm font-black text-slate-900">{totalRows}</span>
                         </div>
                     </div>
                 </div>
@@ -1055,15 +1076,15 @@ export default function ArchivedCustomersPage() {
                 <div className="space-y-4">
                     {loading ? (
                         <div className="py-20 flex flex-col items-center gap-4"><Loader2 className="animate-spin text-slate-300" size={40} /><p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Arxiv Yüklənir...</p></div>
-                    ) : filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, idx) => (
-                        <CustomerCard key={row.id || (page - 1) * itemsPerPage + idx} row={row} index={(page - 1) * itemsPerPage + idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
+                    ) : filteredRows.map((row, idx) => (
+                        <CustomerCard key={row.id || idx} row={row} index={idx} totalRows={totalRows} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
                     ))}
-                    {!loading && filteredRows.length === 0 && (
+                    {!loading && totalRows === 0 && (
                         <div className="py-20 text-center opacity-20"><Search size={60} className="mx-auto mb-4" /><p className="font-black text-2xl uppercase tracking-widest italic">Arxiv Boşdur</p></div>
                     )}
                 </div>
 
-                {filteredRows.length > 0 && (
+                {totalRows > 0 && (
                     <div className="flex flex-col items-center gap-4 pt-10 pb-20">
                         <div className="flex items-center gap-2">
                             <button
@@ -1076,7 +1097,7 @@ export default function ArchivedCustomersPage() {
 
                             <div className="flex items-center gap-1.5 mx-4">
                                 {(() => {
-                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
+                                    const totalPages = Math.ceil(totalRows / itemsPerPage);
                                     let startPage = Math.max(1, page - 2);
                                     let endPage = Math.min(totalPages, startPage + 4);
 
@@ -1104,21 +1125,21 @@ export default function ArchivedCustomersPage() {
                                     return pages;
                                 })()}
 
-                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
+                                {Math.ceil(totalRows / itemsPerPage) > 5 && page < Math.ceil(totalRows / itemsPerPage) - 2 && (
                                     <>
                                         <span className="text-slate-300 mx-1">...</span>
                                         <button
-                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
+                                            onClick={() => setPage(Math.ceil(totalRows / itemsPerPage))}
                                             className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
                                         >
-                                            {Math.ceil(filteredRows.length / itemsPerPage)}
+                                            {Math.ceil(totalRows / itemsPerPage)}
                                         </button>
                                     </>
                                 )}
                             </div>
 
                             <button
-                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
+                                disabled={page >= Math.ceil(totalRows / itemsPerPage)}
                                 onClick={() => setPage(p => p + 1)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
@@ -1126,7 +1147,7 @@ export default function ArchivedCustomersPage() {
                             </button>
                         </div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                            SƏHİFƏ {page} / {Math.ceil(totalRows / itemsPerPage)} — CƏM {totalRows} MƏLUMAT
                         </span>
                     </div>
                 )}

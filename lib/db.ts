@@ -42,6 +42,10 @@ export async function getCustomers() {
     return await my.mysqlGetCustomers();
 }
 
+export async function getCustomersPage(options: my.CustomerListOptions) {
+    return await my.mysqlGetCustomersPage(options);
+}
+
 export async function getInspectorCustomers(email: string) {
     return await my.mysqlGetInspectorCustomers(email);
 }

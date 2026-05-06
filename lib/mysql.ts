@@ -14,9 +14,9 @@ function getPool() {
         pool = mysql.createPool({
             uri: connectionString,
             waitForConnections: true,
-            connectionLimit: 5,
-            queueLimit: 20,
-            connectTimeout: 3000,
+            connectionLimit: 10,
+            queueLimit: 100,
+            connectTimeout: 10000,
             enableKeepAlive: true,
         });
     }
@@ -331,6 +331,518 @@ function parseCustomer(row: any) {
 
     return parsed;
 }
+
+export type CustomerListMode = "dashboard" | "archived" | "archive-tasks";
+
+export type CustomerListOptions = {
+    mode: CustomerListMode;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    currentUserEmail?: string;
+    currentUserRole?: string;
+    statusFilter?: string;
+    warningFilter?: string;
+    invoiceCount?: string;
+    invoiceMode?: string;
+    executorFilter?: string;
+    startDate?: string;
+    endDate?: string;
+    archiveFilter?: "all" | "pending" | "done" | "unassigned";
+    selectedArchiverEmail?: string | null;
+};
+
+export type CustomerListResult = {
+    rows: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+    stats?: any;
+};
+
+const MAX_CUSTOMER_PAGE_SIZE = 500;
+const DASHBOARD_MANAGER_ROLES = new Set(["SUPERADMIN", "MANAGER", "INSPECTOR_LEAD", "DEP_HEAD"]);
+const ARCHIVE_MANAGER_ROLES = new Set(["ARCHIVE_MANAGER", "SUPERADMIN", "MANAGER", "DEP_HEAD"]);
+const ARCHIVE_TASK_CUTOFF_SQL = "2026-04-17 00:00:00";
+
+function clampCustomerPage(options: CustomerListOptions) {
+    const page = Math.max(1, Number(options.page || 1));
+    const requestedPageSize = Number(options.pageSize || 50);
+    const pageSize = Math.min(MAX_CUSTOMER_PAGE_SIZE, Math.max(1, requestedPageSize));
+    const offset = (page - 1) * pageSize;
+    return { page, pageSize, offset };
+}
+
+function truthySql(column: string) {
+    return `(${column} = 1 OR ${column} = '1' OR ${column} = 'true' OR ${column} = TRUE)`;
+}
+
+function falsySql(column: string) {
+    return `(${column} IS NULL OR ${column} = 0 OR ${column} = '0' OR ${column} = 'false' OR ${column} = FALSE OR ${column} = '')`;
+}
+
+function emptySql(column: string) {
+    return `(${column} IS NULL OR ${column} = '')`;
+}
+
+function notEmptySql(column: string) {
+    return `(${column} IS NOT NULL AND ${column} <> '')`;
+}
+
+function normalizeRole(role?: string) {
+    return (role || "").toUpperCase();
+}
+
+function normalizeEmail(email?: string) {
+    return (email || "").toLowerCase().trim();
+}
+
+function addSearchFilter(where: string[], params: any[], search?: string) {
+    const normalized = (search || "").trim();
+    if (!normalized) return;
+    const like = `%${normalized}%`;
+    where.push(`(
+        COALESCE(c.fullName, '') LIKE ?
+        OR COALESCE(c.customerCode, '') LIKE ?
+        OR COALESCE(c.fin, '') LIKE ?
+        OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.document_data, '$.details.fin')), '') LIKE ?
+        OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.document_data, '$.fin')), '') LIKE ?
+    )`);
+    params.push(like, like, like, like, like);
+}
+
+function invoiceCountSql() {
+    return `(SELECT COUNT(*) FROM CustomerInvoices ci WHERE ci.customerId = c.id)`;
+}
+
+function archiveInvoiceTotalSql(alias = "c") {
+    return `(SELECT COUNT(*) FROM CustomerInvoices ci WHERE ci.customerId = ${alias}.id AND (ci.archiveRequested = 1 OR ci.archiveRequested = TRUE OR ci.archiveUrl IS NOT NULL AND ci.archiveUrl <> ''))`;
+}
+
+function archiveInvoiceDoneSql(alias = "c") {
+    return `(SELECT COUNT(*) FROM CustomerInvoices ci WHERE ci.customerId = ${alias}.id AND (ci.archiveRequested = 1 OR ci.archiveRequested = TRUE OR ci.archiveUrl IS NOT NULL AND ci.archiveUrl <> '') AND ci.archiveUrl IS NOT NULL AND ci.archiveUrl <> '')`;
+}
+
+function archiveTaskActivitySql() {
+    return `EXISTS (
+        SELECT 1
+        FROM CustomerInvoices ci
+        WHERE ci.customerId = c.id
+          AND (ci.archiveRequested = 1 OR ci.archiveRequested = TRUE OR ci.archiveUrl IS NOT NULL AND ci.archiveUrl <> '')
+          AND (
+              ci.archiveRequestedAt >= ?
+              OR (ci.archiveRequestedAt IS NULL AND c.updatedAt >= ?)
+              OR (ci.archiveRequestedAt IS NULL AND c.archivedAt >= ?)
+          )
+    )`;
+}
+
+async function queryCustomersWithInvoices(where: string[], params: any[], orderBy: string, pageSize: number, offset: number) {
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const [rows] = await getPool().query(
+        `SELECT c.* FROM Customers c ${whereSql} ${orderBy} LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset]
+    ) as any;
+    const customers = rows.map(parseCustomer);
+    return await attachInvoicesToCustomers(customers);
+}
+
+async function queryCustomerCount(where: string[], params: any[]) {
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const [rows] = await getPool().query(
+        `SELECT COUNT(*) AS total FROM Customers c ${whereSql}`,
+        params
+    ) as any;
+    return Number(rows?.[0]?.total || 0);
+}
+
+function buildDashboardWhere(options: CustomerListOptions, includeUiFilters = true) {
+    const where: string[] = ["c.id IS NOT NULL"];
+    const params: any[] = [];
+    const role = normalizeRole(options.currentUserRole);
+    const email = normalizeEmail(options.currentUserEmail);
+    const isManager = DASHBOARD_MANAGER_ROLES.has(role);
+
+    if (!isManager && email) {
+        where.push(`(
+            c.assignedTo = ?
+            OR (? = 'ADMIN' AND c.process_status = 'UNFINISHED_ARCHIVE' AND ${emptySql("c.assignedTo")})
+        )`);
+        params.push(email, role);
+    }
+
+    if (includeUiFilters) {
+        if (options.statusFilter !== "UNFINISHED_ARCHIVE") {
+            where.push(falsySql("c.isArchived"));
+        }
+
+        addSearchFilter(where, params, options.search);
+
+        if (options.warningFilter === "sent") {
+            where.push(truthySql("c.isWarningSent"));
+        } else if (options.warningFilter === "unsent") {
+            where.push(falsySql("c.isWarningSent"));
+        } else if (options.warningFilter === "overdue") {
+            where.push(`${truthySql("c.isWarningSent")} AND STR_TO_DATE(c.warningDate, '%d.%m.%Y') < DATE_SUB(CURDATE(), INTERVAL 5 DAY)`);
+        }
+
+        if (options.invoiceMode && options.invoiceMode !== "all" && options.invoiceCount) {
+            const target = Number(options.invoiceCount);
+            if (!Number.isNaN(target)) {
+                const countExpr = invoiceCountSql();
+                if (options.invoiceMode === "exact") where.push(`${countExpr} = ?`);
+                else if (options.invoiceMode === "min") where.push(`${countExpr} >= ?`);
+                else if (options.invoiceMode === "max") where.push(`${countExpr} <= ?`);
+                params.push(target);
+            }
+        }
+
+        if (options.statusFilter && options.statusFilter !== "all") {
+            where.push("c.process_status = ?");
+            params.push(options.statusFilter);
+        }
+
+        if (options.executorFilter && options.executorFilter !== "all") {
+            where.push("c.assignedTo = ?");
+            params.push(options.executorFilter);
+        }
+    }
+
+    return { where, params };
+}
+
+function buildDashboardStatsWhere(options: CustomerListOptions) {
+    const where: string[] = ["c.id IS NOT NULL"];
+    const params: any[] = [];
+    const role = normalizeRole(options.currentUserRole);
+    const email = normalizeEmail(options.currentUserEmail);
+    const isManager = DASHBOARD_MANAGER_ROLES.has(role);
+    const targetEmail = options.executorFilter && options.executorFilter !== "all"
+        ? options.executorFilter
+        : (isManager ? "" : email);
+
+    if (targetEmail) {
+        where.push("c.assignedTo = ?");
+        params.push(targetEmail);
+    }
+
+    return { where, params, isGlobal: !targetEmail };
+}
+
+async function getDashboardStats(options: CustomerListOptions) {
+    const { where, params, isGlobal } = buildDashboardStatsWhere(options);
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const notArchived = falsySql("c.isArchived");
+    const archived = `(${truthySql("c.isArchived")} OR c.process_status = 'UNFINISHED_ARCHIVE')`;
+
+    const countExtra = async (extra: string, extraParams: any[] = []) => {
+        const [rows] = await getPool().query(
+            `SELECT COUNT(*) AS total FROM Customers c ${whereSql} AND ${extra}`,
+            [...params, ...extraParams]
+        ) as any;
+        return Number(rows?.[0]?.total || 0);
+    };
+
+    const [active, archivedCount, total, unassigned, newRows] = await Promise.all([
+        countExtra(`${notArchived} AND c.process_status <> 'UNFINISHED_ARCHIVE' AND c.process_status <> 'INSPECTOR_ENTERED'`),
+        countExtra(archived),
+        queryCustomerCount(where, params),
+        countExtra(`${emptySql("c.assignedTo")} AND ${notArchived} AND c.process_status <> 'UNFINISHED_ARCHIVE'`),
+        countExtra(`${notArchived} AND c.process_status <> 'UNFINISHED_ARCHIVE' AND c.process_status = 'INSPECTOR_ENTERED'`)
+    ]);
+
+    const [activeBreakdownRows] = await getPool().query(
+        `SELECT COALESCE(c.process_status, 'Təyinat edilmiş') AS status, COUNT(*) AS value
+         FROM Customers c
+         ${whereSql}
+           AND ${notArchived}
+           AND c.process_status <> 'UNFINISHED_ARCHIVE'
+           AND c.process_status <> 'INSPECTOR_ENTERED'
+         GROUP BY c.process_status
+         ORDER BY value DESC`,
+        params
+    ) as any;
+
+    const archivedCompleted = await countExtra(`${archived} AND c.process_status <> 'UNFINISHED_ARCHIVE'`);
+    const archivedUnfinished = await countExtra("c.process_status = 'UNFINISHED_ARCHIVE'");
+
+    const [workloadRows] = await getPool().query(
+        `SELECT c.assignedTo AS email, COUNT(*) AS count
+         FROM Customers c
+         WHERE ${notEmptySql("c.assignedTo")} AND ${falsySql("c.isArchived")}
+         GROUP BY c.assignedTo`
+    ) as any;
+
+    const workload = (workloadRows || []).reduce((acc: Record<string, number>, row: any) => {
+        if (row.email) acc[row.email] = Number(row.count || 0);
+        return acc;
+    }, {});
+
+    return {
+        active,
+        archived: archivedCount,
+        total,
+        unassigned,
+        isGlobal,
+        workload,
+        breakdown: {
+            active: (activeBreakdownRows || []).map((row: any) => ({ status: row.status, value: Number(row.value || 0) })),
+            archived: [
+                { status: "COMPLETED", value: archivedCompleted },
+                { status: "UNFINISHED_ARCHIVE", value: archivedUnfinished }
+            ].filter(item => item.value > 0),
+            total: [
+                { status: "ACTIVE", value: active },
+                { status: "INSPECTOR_ENTERED", value: newRows },
+                { status: "ARCHIVED", value: archivedCount }
+            ].filter(item => item.value > 0)
+        }
+    };
+}
+
+function buildArchiveTaskWhere(options: CustomerListOptions, includeUiFilters = true) {
+    const where: string[] = [archiveTaskActivitySql()];
+    const params: any[] = [ARCHIVE_TASK_CUTOFF_SQL, ARCHIVE_TASK_CUTOFF_SQL, ARCHIVE_TASK_CUTOFF_SQL];
+    const role = normalizeRole(options.currentUserRole);
+    const email = normalizeEmail(options.currentUserEmail);
+    const isManager = ARCHIVE_MANAGER_ROLES.has(role);
+    const totalExpr = archiveInvoiceTotalSql();
+    const doneExpr = archiveInvoiceDoneSql();
+    const doneCondition = `(${totalExpr} > 0 AND ${doneExpr} = ${totalExpr})`;
+
+    if (!isManager && email) {
+        where.push("c.archiveAssignedTo = ?");
+        params.push(email);
+    }
+
+    if (includeUiFilters) {
+        addSearchFilter(where, params, options.search);
+
+        if (options.archiveFilter === "all") {
+            where.push(notEmptySql("c.archiveAssignedTo"));
+        } else if (options.archiveFilter === "unassigned") {
+            where.push(emptySql("c.archiveAssignedTo"));
+        } else if (options.archiveFilter === "pending") {
+            where.push(`${notEmptySql("c.archiveAssignedTo")} AND NOT ${doneCondition}`);
+        } else if (options.archiveFilter === "done") {
+            where.push(doneCondition);
+        }
+    }
+
+    return { where, params, isManager };
+}
+
+async function getArchiveFilterStat(baseWhere: string[], baseParams: any[], condition: string) {
+    const totalExpr = archiveInvoiceTotalSql();
+    const whereSql = `WHERE ${baseWhere.join(" AND ")} AND ${condition}`;
+    const [rows] = await getPool().query(
+        `SELECT COUNT(*) AS customerCount, COALESCE(SUM(${totalExpr}), 0) AS invoiceCount
+         FROM Customers c
+         ${whereSql}`,
+        baseParams
+    ) as any;
+    const customerCount = Number(rows?.[0]?.customerCount || 0);
+    const invoiceCount = Number(rows?.[0]?.invoiceCount || 0);
+    return `${customerCount} iş / ${invoiceCount} faktura`;
+}
+
+async function getArchiveTaskStats(options: CustomerListOptions) {
+    const { where, params } = buildArchiveTaskWhere({ ...options, search: "", archiveFilter: undefined }, false);
+    const totalExpr = archiveInvoiceTotalSql();
+    const doneExpr = archiveInvoiceDoneSql();
+    const doneCondition = `(${totalExpr} > 0 AND ${doneExpr} = ${totalExpr})`;
+    const assignedCondition = notEmptySql("c.archiveAssignedTo");
+    const unassignedCondition = emptySql("c.archiveAssignedTo");
+
+    const [filterStats, workloadRows, myRows, storeRows, overallRows] = await Promise.all([
+        Promise.all([
+            getArchiveFilterStat(where, params, assignedCondition),
+            getArchiveFilterStat(where, params, unassignedCondition),
+            getArchiveFilterStat(where, params, `${assignedCondition} AND NOT ${doneCondition}`),
+            getArchiveFilterStat(where, params, doneCondition)
+        ]),
+        getPool().query(
+            `SELECT
+                c.archiveAssignedTo AS email,
+                COUNT(*) AS customerCount,
+                COALESCE(SUM(${totalExpr}), 0) AS invoiceCount,
+                COALESCE(SUM(${doneExpr}), 0) AS invoiceDone,
+                COALESCE(SUM(CASE WHEN ${doneCondition} THEN 1 ELSE 0 END), 0) AS customerDone
+             FROM Customers c
+             WHERE ${where.join(" AND ")} AND ${notEmptySql("c.archiveAssignedTo")}
+             GROUP BY c.archiveAssignedTo`,
+            params
+        ),
+        getPool().query(
+            `SELECT
+                COUNT(*) AS customerCount,
+                COALESCE(SUM(CASE WHEN ${doneCondition} THEN 1 ELSE 0 END), 0) AS customersDone,
+                COALESCE(SUM(${totalExpr}), 0) AS totalInvoices,
+                COALESCE(SUM(${doneExpr}), 0) AS doneInvoices
+             FROM Customers c
+             WHERE ${where.join(" AND ")} AND c.archiveAssignedTo = ?`,
+            [...params, normalizeEmail(options.currentUserEmail)]
+        ),
+        getPool().query(
+            `SELECT
+                COALESCE(NULLIF(c.store, ''), 'Seçilməyən Mağaza') AS name,
+                COALESCE(SUM(${totalExpr}), 0) AS total,
+                COALESCE(SUM(${doneExpr}), 0) AS done
+             FROM Customers c
+             WHERE ${where.join(" AND ")} ${options.selectedArchiverEmail ? "AND c.archiveAssignedTo = ?" : ""}
+             GROUP BY COALESCE(NULLIF(c.store, ''), 'Seçilməyən Mağaza')
+             ORDER BY total DESC
+             LIMIT 4`,
+            options.selectedArchiverEmail ? [...params, options.selectedArchiverEmail] : params
+        ),
+        getPool().query(
+            `SELECT
+                COUNT(*) AS totalCustomers,
+                COALESCE(SUM(${totalExpr}), 0) AS totalInvoices,
+                COALESCE(SUM(${doneExpr}), 0) AS doneInvoices,
+                COALESCE(SUM(CASE WHEN NOT ${doneCondition} THEN 1 ELSE 0 END), 0) AS pendingCustomers
+             FROM Customers c
+             WHERE ${where.join(" AND ")} ${options.selectedArchiverEmail ? "AND c.archiveAssignedTo = ?" : ""}`,
+            options.selectedArchiverEmail ? [...params, options.selectedArchiverEmail] : params
+        )
+    ]);
+
+    const workloadsByEmail = ((workloadRows as any)[0] || []).reduce((acc: Record<string, any>, row: any) => {
+        if (!row.email) return acc;
+        acc[row.email] = {
+            customerCount: Number(row.customerCount || 0),
+            invoiceCount: Number(row.invoiceCount || 0),
+            customerDone: Number(row.customerDone || 0),
+            invoiceDone: Number(row.invoiceDone || 0)
+        };
+        return acc;
+    }, {});
+
+    const my = ((myRows as any)[0] || [])[0] || {};
+    const totalInvoices = Number(my.totalInvoices || 0);
+    const doneInvoices = Number(my.doneInvoices || 0);
+    const overall = ((overallRows as any)[0] || [])[0] || {};
+    const overallTotalInvoices = Number(overall.totalInvoices || 0);
+    const overallDoneInvoices = Number(overall.doneInvoices || 0);
+
+    const storeDist = (((storeRows as any)[0] || []) as any[]).map(row => ({
+        name: row.name,
+        total: Number(row.total || 0),
+        done: Number(row.done || 0),
+        rate: Number(row.total || 0) > 0 ? Math.round((Number(row.done || 0) / Number(row.total || 0)) * 100) : 0
+    }));
+
+    return {
+        filterStats: {
+            all: filterStats[0],
+            unassigned: filterStats[1],
+            pending: filterStats[2],
+            done: filterStats[3]
+        },
+        workloadsByEmail,
+        myStats: {
+            customerCount: Number(my.customerCount || 0),
+            customersDone: Number(my.customersDone || 0),
+            totalInvoices,
+            doneInvoices,
+            pendingInvoices: totalInvoices - doneInvoices,
+            completionRate: totalInvoices > 0 ? Math.round((doneInvoices / totalInvoices) * 100) : 0
+        },
+        overallStats: {
+            totalCustomers: Number(overall.totalCustomers || 0),
+            totalInvoices: overallTotalInvoices,
+            doneInvoices: overallDoneInvoices,
+            pendingInvoices: overallTotalInvoices - overallDoneInvoices,
+            pendingCustomers: Number(overall.pendingCustomers || 0),
+            completionRate: overallTotalInvoices > 0 ? Math.round((overallDoneInvoices / overallTotalInvoices) * 100) : 0,
+            avgInvoices: Number(overall.totalCustomers || 0) > 0 ? (overallTotalInvoices / Number(overall.totalCustomers || 0)).toFixed(1) : "0",
+            storeDist
+        }
+    };
+}
+
+function buildArchivedCustomersWhere(options: CustomerListOptions, includeUiFilters = true) {
+    const where: string[] = [truthySql("c.isArchived")];
+    const params: any[] = [];
+    const role = normalizeRole(options.currentUserRole);
+    const email = normalizeEmail(options.currentUserEmail);
+    const isManager = ARCHIVE_MANAGER_ROLES.has(role);
+
+    if (!isManager && role === "ARCHIVER" && email) {
+        where.push("c.archiveAssignedTo = ?");
+        params.push(email);
+    } else if (!isManager && role === "ADMIN" && email) {
+        where.push("(c.statusHistory LIKE ? AND c.statusHistory LIKE '%ARCHIVE%')");
+        params.push(`%${email}%`);
+    }
+
+    if (includeUiFilters) {
+        addSearchFilter(where, params, options.search);
+
+        const dateExpr = "COALESCE(NULLIF(c.archivedAt, ''), NULLIF(c.createdAt, ''))";
+        if (options.startDate) {
+            where.push(`${dateExpr} >= ?`);
+            params.push(`${options.startDate} 00:00:00`);
+        }
+        if (options.endDate) {
+            where.push(`${dateExpr} <= ?`);
+            params.push(`${options.endDate} 23:59:59`);
+        }
+
+        if (options.executorFilter && options.executorFilter !== "all") {
+            where.push("c.assignedTo = ?");
+            params.push(options.executorFilter);
+        }
+
+        if (options.statusFilter && options.statusFilter !== "all") {
+            where.push("c.process_status = ?");
+            params.push(options.statusFilter);
+        }
+    }
+
+    return { where, params };
+}
+
+export async function mysqlGetCustomersPage(options: CustomerListOptions): Promise<CustomerListResult> {
+    const normalizedOptions = {
+        ...options,
+        currentUserEmail: normalizeEmail(options.currentUserEmail),
+        currentUserRole: normalizeRole(options.currentUserRole),
+        search: (options.search || "").trim()
+    };
+    const { page, pageSize, offset } = clampCustomerPage(normalizedOptions);
+    const cacheKey = `customers:page:${JSON.stringify({ ...normalizedOptions, page, pageSize })}`;
+
+    return cachedRead(cacheKey, async () => {
+        if (normalizedOptions.mode === "dashboard") {
+            const { where, params } = buildDashboardWhere(normalizedOptions, true);
+            const [rows, total, stats] = await Promise.all([
+                queryCustomersWithInvoices(where, params, "ORDER BY COALESCE(c.createdAt, c.updatedAt) DESC", pageSize, offset),
+                queryCustomerCount(where, params),
+                getDashboardStats(normalizedOptions)
+            ]);
+            return { rows, total, page, pageSize, stats };
+        }
+
+        if (normalizedOptions.mode === "archive-tasks") {
+            const { where, params } = buildArchiveTaskWhere(normalizedOptions, true);
+            const [rows, total, stats] = await Promise.all([
+                queryCustomersWithInvoices(where, params, "ORDER BY COALESCE(c.updatedAt, c.createdAt) DESC", pageSize, offset),
+                queryCustomerCount(where, params),
+                getArchiveTaskStats(normalizedOptions)
+            ]);
+            return { rows, total, page, pageSize, stats };
+        }
+
+        const { where, params } = buildArchivedCustomersWhere(normalizedOptions, true);
+        const [rows, total] = await Promise.all([
+            queryCustomersWithInvoices(where, params, "ORDER BY COALESCE(c.archivedAt, c.updatedAt, c.createdAt) DESC", pageSize, offset),
+            queryCustomerCount(where, params)
+        ]);
+        return { rows, total, page, pageSize, stats: {} };
+    });
+}
+
 async function attachInvoicesToCustomers(customers: any[]) {
     if (customers.length === 0) return customers;
     const customerIds = customers.map(c => c.id);
