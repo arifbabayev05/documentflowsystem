@@ -1038,11 +1038,15 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
     if (istisnaItems.length > 0) {
         // Part 1: per-invoice exception sentence (for each exception invoice)
         const part1Lines = istisnaItems.map((inv: any) => {
-            const rawMuq = stripB(inv.muqavile_tarixi);
             const imtinaTarixiOrd = inv.imtina_tarixi_ord || stripB(inv.imtina_tarixi);
             const rawMehsul = stripB(inv.imtina_edilen_mehsul_tam);
             const rawSilinen = stripB(inv.silinen_borc);
-            return `Cavabdeh ${B(rawMuq, "muqavile_tarixi")} il tarixli müqaviləsinə əsasən, ${B(imtinaTarixiOrd, "imtina_tarixi")} il tarixində ${B(rawMehsul, "imtina_edilen_mehsul_tam")} imtina etmişdir, ${B(rawSilinen, "silinen_borc")} borcundan silinmişdir.`;
+
+            const cumle = inv.istisna_muqavile_cumlesi
+                ? inv.istisna_muqavile_cumlesi
+                : `${B(stripB(inv.muqavile_tarixi), "muqavile_tarixi")} il tarixli müqaviləsinə əsasən,`;
+
+            return `Cavabdeh ${cumle} ${B(imtinaTarixiOrd, "imtina_tarixi")} il tarixində ${B(rawMehsul, "imtina_edilen_mehsul_tam")} imtina etmişdir, ${B(rawSilinen, "silinen_borc")} borcundan silinmişdir.`;
         });
 
         if (tableInvoicesData.length > 1) {
@@ -1050,7 +1054,15 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             const part2Segments = istisnaItems.map((inv: any) => {
                 const rawMuq = stripB(inv.muqavile_tarixi);
                 const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
-                return `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat`;
+
+                let muqavileUzreStr = `${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə`;
+                if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+                    const extraDateOrd = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+                    const actInvNumber = inv.invoiceNumber || inv._invoiceNumber || "";
+                    muqavileUzreStr = `${extraDateOrd} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${B(muqDateOrd, "muqavile_tarixi")} il tarixli ${actInvNumber} saylı faktura üzrə`;
+                }
+
+                return `Cavabdehin ${muqavileUzreStr} cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat`;
             });
 
             const sumOtherOdenen = tableInvoicesData.reduce((acc: number, curr: any) => {
@@ -1070,7 +1082,15 @@ const prepareTemplateData = (customer: any, companyInfo: any, template: any, sel
             const inv = istisnaItems[0];
             const rawMuq = stripB(inv.muqavile_tarixi);
             const muqDateOrd = rawMuq ? `${rawMuq}${getAZOrdinal(rawMuq)}` : "";
-            const part2 = `Cavabdehin ${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat təşkil edir.`;
+
+            let muqavileUzreStr = `${B(muqDateOrd, "muqavile_tarixi")} il tarixli müqavilə üzrə`;
+            if (inv.is10Years && inv.extraContractDate && inv.extraInvoice) {
+                const extraDateOrd = `${inv.extraContractDate}${getAZOrdinal(inv.extraContractDate)}`;
+                const actInvNumber = inv.invoiceNumber || inv._invoiceNumber || "";
+                muqavileUzreStr = `${extraDateOrd} il tarixli ${inv.extraInvoice} saylı müqavilənin əlavəsi - ${B(muqDateOrd, "muqavile_tarixi")} il tarixli ${actInvNumber} saylı faktura üzrə`;
+            }
+
+            const part2 = `Cavabdehin ${muqavileUzreStr} cəmi ödədiyi məbləğ ${B(inv.odenen_mebleg, "odenen_mebleg")} manat, məhsul qaytarıldıqdan sonra qoyulan qiymət ${B(inv.qaytarildiqdan_sonra_qiymet, "qaytarildiqdan_sonra_qiymet")} manat təşkil edir.`;
             istisna_birlesmis_odeme_metni = part1Lines[0] + "\n" + part2;
         }
     }

@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle, Users, DollarSign, UserCheck, Search, Filter, FileDown, Check } from "lucide-react";
+import { Plus, Save, X, Zap, History, Calendar, ChevronLeft, ChevronRight, Shield, AlertTriangle, Users, DollarSign, UserCheck, Search, Filter, FileDown, Check, Edit2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
-import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers } from "@/lib/db";
+import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers, updateCustomer } from "@/lib/db";
 import * as XLSX from "xlsx";
 
 interface EntryRow {
@@ -224,7 +224,7 @@ function CustomDatePicker({ value, onChange, placeholder = "Tarix seçin" }: Cus
                                 key={idx}
                                 onClick={() => handleSelectDate(dayInfo.date)}
                                 className={`
-w - 9 h - 9 rounded - xl text - [13px] font - semibold transition - all
+                                    w-9 h-9 rounded-xl text-[13px] font-semibold transition-all
                                     ${!dayInfo.isCurrentMonth ? "text-slate-300" : "text-slate-700"}
                                     ${isSelected(dayInfo.date)
                                         ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
@@ -232,7 +232,7 @@ w - 9 h - 9 rounded - xl text - [13px] font - semibold transition - all
                                             ? "bg-blue-50 text-blue-600 ring-2 ring-blue-200"
                                             : "hover:bg-slate-100"
                                     }
-`}
+                                `}
                             >
                                 {dayInfo.day}
                             </button>
@@ -281,6 +281,8 @@ export default function InspectorPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(20);
     const [selectedInspector, setSelectedInspector] = useState("ALL");
+    const [editingRowId, setEditingRowId] = useState<string | null>(null);
+    const [editData, setEditData] = useState<any>(null);
 
     // Export Modal State
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -436,9 +438,24 @@ export default function InspectorPage() {
         );
     }
 
-
-
     /* ── excel export handler ── */
+    const parseDebtAmount = (value: unknown) => {
+        if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+        if (value === null || value === undefined) return 0;
+
+        const cleaned = value
+            .toString()
+            .replace(/\s/g, "")
+            .replace(/[^\d,.-]/g, "");
+        const decimalSeparator = cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".") ? "," : ".";
+        const normalized = decimalSeparator === ","
+            ? cleaned.replace(/\./g, "").replace(",", ".")
+            : cleaned.replace(/,/g, "");
+        const parsed = parseFloat(normalized);
+
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
     const handleExcelExport = () => {
         let dataToExport = history;
 
@@ -466,22 +483,25 @@ export default function InspectorPage() {
             dataToExport = dataToExport.filter(row => exportInspectors.includes(row.createdBy));
         }
 
-        const statsMap = new Map<string, { SAA: string, count: number }>();
+        const statsMap = new Map<string, { SAA: string, count: number, totalDebt: number }>();
 
         dataToExport.forEach(row => {
             const email = row.createdBy || "Bilinmir";
             const saa = row.details?.executorName || email.split('@')[0];
+            const debt = parseDebtAmount(row.debtAmount);
             
             if (statsMap.has(email)) {
                 statsMap.get(email)!.count += 1;
+                statsMap.get(email)!.totalDebt += debt;
             } else {
-                statsMap.set(email, { SAA: saa, count: 1 });
+                statsMap.set(email, { SAA: saa, count: 1, totalDebt: debt });
             }
         });
 
-        const excelData = Array.from(statsMap.values()).map(stat => ({
+        const excelData: Record<string, string | number>[] = Array.from(statsMap.values()).map(stat => ({
             "Daxil Edən": stat.SAA,
-            "Sayı": stat.count
+            "Sayı": stat.count,
+            "Cəmi Borc (AZN)": Number(stat.totalDebt.toFixed(2))
         }));
 
         if (excelData.length === 0) {
@@ -505,7 +525,6 @@ export default function InspectorPage() {
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length === 0) return;
 
-        // If it's a single line AND doesn't have tabs, it's a normal paste into a focused field
         if (lines.length === 1 && !text.includes("\t")) {
             return;
         }
@@ -516,7 +535,6 @@ export default function InspectorPage() {
             const p = line.split("\t").map(x => x.trim());
 
             if (p.length >= 7) {
-                // Layout: Code | Soyad | Ad | Ata Adı | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
                     full_name: toTitleCase([p[1], p[2], p[3]].filter(Boolean).join(" ")),
@@ -525,7 +543,6 @@ export default function InspectorPage() {
                     total_debt: p[6] || "",
                 };
             } else if (p.length === 6) {
-                // Layout from screenshot: Code | Name | (Blank) | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
                     full_name: toTitleCase(p[1] || ""),
@@ -534,7 +551,6 @@ export default function InspectorPage() {
                     total_debt: p[5] || "",
                 };
             } else {
-                // Standard Layout: Code | Name | FIN | Seriya | Borc
                 return {
                     customer_code: p[0] || "",
                     full_name: toTitleCase(p[1] || ""),
@@ -584,7 +600,6 @@ export default function InspectorPage() {
 
             for (const r of validRows) {
                 const cleanCode = r.customer_code.trim();
-                // Check for duplicates in DB
                 const existing = await getCustomer(cleanCode) as any;
                 if (existing) {
                     const dateStr = formatAZDate(existing.createdAt);
@@ -627,33 +642,73 @@ export default function InspectorPage() {
         }
     };
 
+    /* ── Edit History Row ── */
+    const startEditing = (row: any) => {
+        setEditingRowId(row.id);
+        setEditData({
+            customerCode: row.customerCode,
+            fullName: row.fullName,
+            fin: row.details?.fin || "",
+            passportSeries: row.details?.passportSeries || "",
+            debtAmount: row.debtAmount
+        });
+    };
+
+    const cancelEditing = () => {
+        setEditingRowId(null);
+        setEditData(null);
+    };
+
+    const handleSaveEdit = async (id: string) => {
+        if (!editData.customerCode || !editData.fullName) {
+            toast.error("Kod və S.A.A mütləqdir");
+            return;
+        }
+        try {
+            setSaving(true);
+            await updateCustomer(id, {
+                customerCode: editData.customerCode,
+                fullName: toTitleCase(editData.fullName),
+                debtAmount: editData.debtAmount,
+                details: {
+                    fin: editData.fin,
+                    passportSeries: editData.passportSeries,
+                }
+            }, user?.email);
+
+            toast.success("Məlumat yeniləndi");
+            setEditingRowId(null);
+            setEditData(null);
+            fetchHistory();
+        } catch (e) {
+            console.error(e);
+            toast.error("Xəta baş verdi");
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const formatDateTime = (value?: string | Date) => {
         if (!value) return null;
-
         const date = new Date(value);
-
         const day = String(date.getDate()).padStart(2, "0");
         const month = String(date.getMonth() + 1).padStart(2, "0");
         const year = date.getFullYear();
-
         const hours = String(date.getHours()).padStart(2, "0");
         const minutes = String(date.getMinutes()).padStart(2, "0");
-
         return {
-            date: `${day} /${month}/${year} `,
-            time: `${hours}:${minutes} `,
+            date: `${day}/${month}/${year}`,
+            time: `${hours}:${minutes}`,
         };
     };
 
-    /* ── keyboard (Tab on last cell → new row, Enter → next row) ── */
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIdx: number, colIdx: number) => {
         if (e.key === "Enter") {
             e.preventDefault();
-            // go to same column next row
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data - r= "${rowIdx + 1}"][data - c="${colIdx}"]`
+                    `[data-r="${rowIdx + 1}"][data-c="${colIdx}"]`
                 );
                 next?.focus();
             }, 0);
@@ -663,7 +718,7 @@ export default function InspectorPage() {
             if (rowIdx === rows.length - 1) setRows(prev => [...prev, { ...EMPTY_ROW }]);
             setTimeout(() => {
                 const next = tableRef.current?.querySelector<HTMLInputElement>(
-                    `[data - r= "${rowIdx + 1}"][data - c="0"]`
+                    `[data-r="${rowIdx + 1}"][data-c="0"]`
                 );
                 next?.focus();
             }, 0);
@@ -731,7 +786,6 @@ export default function InspectorPage() {
                     </div>
                 </div>
 
-
                 {/* ═══ ENTRY TABLE ═══ */}
                 <div ref={tableRef} className="mt-6">
                     <div
@@ -777,13 +831,8 @@ export default function InspectorPage() {
                                                 let v = e.target.value;
                                                 if (col.uppercase) v = v.toUpperCase();
 
-                                                // Handle numeric restriction for debt field
                                                 if (col.key === "total_debt") {
-                                                    // Allow only digits, dots, and commas
-                                                    v = v.replace(/[^0-9.,]/g, "");
-                                                    // Convert comma to dot
-                                                    v = v.replace(/,/g, ".");
-                                                    // Allow only one dot
+                                                    v = v.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
                                                     const parts = v.split(".");
                                                     if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
                                                 }
@@ -858,7 +907,6 @@ export default function InspectorPage() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2 flex-1 justify-end">
-                                {/* Search Bar - Integrated into the row */}
                                 <div className="relative flex-1 min-w-[200px] max-w-[400px]">
                                     <input
                                         type="text"
@@ -870,7 +918,6 @@ export default function InspectorPage() {
                                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                 </div>
 
-                                {/* Inspector Filter */}
                                 {isLeadOrAdmin && (
                                     <div className="relative">
                                         <select
@@ -939,19 +986,17 @@ export default function InspectorPage() {
                         className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-md"
                         style={{ fontSize: 18 }}
                     >
-                        {/* header - Borc moved after Seriya */}
                         <div
                             className="grid bg-[#fcfdfe] border-b border-slate-200"
-                            style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 200px" }}
+                            style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px 100px" }}
                         >
-                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Daxil edən"].map(h => (
+                            {["#", "Daxil Edilib", "Kod", "Müştəri (S.A.A)", "FİN", "Seriya", "Borc", "Daxil edən", "Əməliyyat"].map(h => (
                                 <div key={h} className="px-4 py-4.5 text-[13px] font-black text-slate-600 uppercase tracking-widest">
                                     {h}
                                 </div>
                             ))}
                         </div>
 
-                        {/* body */}
                         {loading ? (
                             <div className="py-10 text-center text-xs text-slate-300 font-bold">Yüklənir...</div>
                         ) : paginatedHistory.length === 0 ? (
@@ -960,15 +1005,14 @@ export default function InspectorPage() {
                             paginatedHistory.map((row: any, idx: number) => (
                                 <div
                                     key={row.id || idx}
-                                    className="grid border-b border-slate-50 last:border-b-0 hover:bg-slate-50 transition-colors items-center"
-                                    style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 200px" }}
+                                    className={`grid border-b border-slate-50 last:border-b-0 transition-colors items-center ${editingRowId === row.id ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
+                                    style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px 100px" }}
                                 >
                                     <div className="px-5 py-4 text-[13px] font-black text-slate-400 flex items-center">
                                         {filteredHistory.length - ((currentPage - 1) * itemsPerPage + idx)}
                                     </div>
                                     {(() => {
                                         const formatted = formatDateTime(row.createdAt);
-
                                         return (
                                             <div className="px-4 py-4 text-[13px] font-semibold text-slate-800 flex flex-col leading-tight">
                                                 <span className="text-[12px] font-black">
@@ -981,23 +1025,115 @@ export default function InspectorPage() {
                                         );
                                     })()}
 
-                                    <div className="px-4 py-4 text-[14px] font-black text-slate-900 flex items-center">{row.customerCode || "-"}</div>
-                                    <div className="px-4 py-4 text-[14px] font-black text-slate-900 flex items-center truncate">{row.fullName || "-"}</div>
-                                    <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.fin || "-"}</div>
-                                    <div className="px-4 py-4 text-[13px] font-black text-slate-600 uppercase flex items-center">{row.details?.passportSeries || "-"}</div>
-                                    <div className="px-4 py-4 text-[14px] font-black text-slate-600 flex items-center">{row.debtAmount || "0.00"} ₼</div>
+                                    <div className="px-2 py-4">
+                                        {editingRowId === row.id ? (
+                                            <input
+                                                value={editData.customerCode}
+                                                onChange={e => setEditData({ ...editData, customerCode: e.target.value })}
+                                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[13px] font-bold outline-none focus:border-blue-500"
+                                            />
+                                        ) : (
+                                            <div className="px-2 text-[14px] font-black text-slate-900 truncate">{row.customerCode || "-"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="px-2 py-4">
+                                        {editingRowId === row.id ? (
+                                            <input
+                                                value={editData.fullName}
+                                                onChange={e => setEditData({ ...editData, fullName: e.target.value })}
+                                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[13px] font-bold outline-none focus:border-blue-500"
+                                            />
+                                        ) : (
+                                            <div className="px-2 text-[14px] font-black text-slate-900 truncate">{row.fullName || "-"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="px-2 py-4">
+                                        {editingRowId === row.id ? (
+                                            <input
+                                                value={editData.fin}
+                                                maxLength={7}
+                                                onChange={e => setEditData({ ...editData, fin: e.target.value.toUpperCase() })}
+                                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[13px] font-bold outline-none focus:border-blue-500 uppercase"
+                                            />
+                                        ) : (
+                                            <div className="px-2 text-[13px] font-black text-slate-600 uppercase truncate">{row.details?.fin || "-"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="px-2 py-4">
+                                        {editingRowId === row.id ? (
+                                            <input
+                                                value={editData.passportSeries}
+                                                onChange={e => setEditData({ ...editData, passportSeries: e.target.value.toUpperCase() })}
+                                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[13px] font-bold outline-none focus:border-blue-500 uppercase"
+                                            />
+                                        ) : (
+                                            <div className="px-2 text-[13px] font-black text-slate-600 uppercase truncate">{row.details?.passportSeries || "-"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="px-2 py-4">
+                                        {editingRowId === row.id ? (
+                                            <input
+                                                value={editData.debtAmount}
+                                                onChange={e => {
+                                                    let v = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+                                                    const parts = v.split(".");
+                                                    if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+                                                    setEditData({ ...editData, debtAmount: v });
+                                                }}
+                                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[13px] font-bold outline-none focus:border-blue-500"
+                                            />
+                                        ) : (
+                                            <div className="px-2 text-[14px] font-black text-slate-600 truncate">{row.debtAmount || "0.00"} ₼</div>
+                                        )}
+                                    </div>
+
                                     <div className="px-4 py-4 truncate">
                                         <div className="flex flex-col leading-tight">
                                             <span className="text-[11px] font-black text-slate-900 truncate">{row.details?.executorName || row.createdBy?.split('@')[0]}</span>
                                             <span className="text-[9px] font-bold text-slate-400 truncate mt-0.5">{row.createdBy}</span>
                                         </div>
                                     </div>
+
+                                    <div className="px-4 py-4 flex items-center justify-center gap-2">
+                                        {editingRowId === row.id ? (
+                                            <>
+                                                <button
+                                                    onClick={() => handleSaveEdit(row.id)}
+                                                    disabled={saving}
+                                                    className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
+                                                    title="Yadda saxla"
+                                                >
+                                                    <Check size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={cancelEditing}
+                                                    className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors"
+                                                    title="Ləğv et"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </>
+                                        ) : (
+                                            (isLeadOrAdmin || user.email === row.createdBy) && (
+                                                <button
+                                                    onClick={() => startEditing(row)}
+                                                    className="p-1.5 bg-slate-50 text-slate-400 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors"
+                                                    title="Redaktə et"
+                                                >
+                                                    <Edit2 size={16} />
+                                                </button>
+                                            )
+                                        )}
+                                    </div>
                                 </div>
                             ))
                         )}
                     </div>
 
-                    {/* Pagination Controls */}
                     {totalPages > 1 && (
                         <div className="flex items-center justify-between mt-6 px-1">
                             <div className="text-[12px] font-bold text-slate-500">
@@ -1015,27 +1151,16 @@ export default function InspectorPage() {
                                 <div className="flex items-center gap-1">
                                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                                         let pageNum;
-                                        if (totalPages <= 5) {
-                                            pageNum = i + 1;
-                                        } else if (currentPage <= 3) {
-                                            pageNum = i + 1;
-                                        } else if (currentPage >= totalPages - 2) {
-                                            pageNum = totalPages - 4 + i;
-                                        } else {
-                                            pageNum = currentPage - 2 + i;
-                                        }
+                                        if (totalPages <= 5) pageNum = i + 1;
+                                        else if (currentPage <= 3) pageNum = i + 1;
+                                        else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                                        else pageNum = currentPage - 2 + i;
 
                                         return (
                                             <button
                                                 key={pageNum}
                                                 onClick={() => setCurrentPage(pageNum)}
-                                                className={`
-                                                    w-10 h-10 rounded-xl text-[13px] font-black transition-all shadow-sm
-                                                    ${currentPage === pageNum
-                                                        ? "bg-blue-600 text-white shadow-blue-200"
-                                                        : "bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-                                                    }
-                                                `}
+                                                className={`w-10 h-10 rounded-xl text-[13px] font-black transition-all shadow-sm ${currentPage === pageNum ? "bg-blue-600 text-white shadow-blue-200" : "bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
                                             >
                                                 {pageNum}
                                             </button>
@@ -1056,7 +1181,6 @@ export default function InspectorPage() {
                 </div>
             </div>
 
-            {/* Duplicate Confirm Modal */}
             <DuplicateConfirmModal
                 isOpen={confirmModal?.isOpen || false}
                 message={confirmModal?.message || ""}
@@ -1064,7 +1188,6 @@ export default function InspectorPage() {
                 onCancel={confirmModal?.onCancel || (() => { })}
             />
 
-            {/* Export Modal */}
             {isExportModalOpen && (
                 <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsExportModalOpen(false)} />
@@ -1083,7 +1206,6 @@ export default function InspectorPage() {
                         </div>
 
                         <div className="space-y-6">
-                            {/* Date Range */}
                             <div className="space-y-3">
                                 <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Tarix Aralığı</label>
                                 <div className="grid grid-cols-2 gap-4">
@@ -1108,7 +1230,6 @@ export default function InspectorPage() {
                                 </div>
                             </div>
 
-                            {/* Inspector Combobox */}
                             <div className="space-y-3">
                                 <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Müfəttişlər</label>
                                 <div className="relative">
@@ -1157,11 +1278,8 @@ export default function InspectorPage() {
                                                         <div
                                                             key={email}
                                                             onClick={() => {
-                                                                if (isSelected) {
-                                                                    setExportInspectors(prev => prev.filter(i => i !== email));
-                                                                } else {
-                                                                    setExportInspectors(prev => [...prev, email]);
-                                                                }
+                                                                if (isSelected) setExportInspectors(prev => prev.filter(i => i !== email));
+                                                                else setExportInspectors(prev => [...prev, email]);
                                                             }}
                                                             className={`px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}
                                                         >
@@ -1179,7 +1297,6 @@ export default function InspectorPage() {
                             </div>
                         </div>
 
-                        {/* Actions */}
                         <div className="flex items-center gap-4 mt-8 pt-6 border-t border-slate-100">
                             <button
                                 onClick={() => setIsExportModalOpen(false)}
