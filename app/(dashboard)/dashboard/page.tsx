@@ -37,7 +37,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomerPage, getCustomerDashboardStats, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores, CustomerPageCursor, CustomerDashboardStats } from "@/lib/db";
+import { getCustomerPage, getCustomerDashboardStats, getDashboardWorkloadStats, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores, CustomerPageCursor, CustomerDashboardStats } from "@/lib/db";
 import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
@@ -142,6 +142,14 @@ export const STATUS_LABELS: Record<ProcessStatus, { label: string, color: string
     COMPLETED: { label: 'Sənədlər tamamlandı', color: 'text-green-600', bg: 'bg-green-50' },
     UNFINISHED_ARCHIVE: { label: 'Tamamlanmayan Sənəd', color: 'text-orange-600', bg: 'bg-orange-50' }
 };
+
+const DASHBOARD_GLOBAL_ROLES = ['SUPERADMIN', 'MANAGER', 'INSPECTOR_LEAD', 'DEP_HEAD'];
+const DASHBOARD_EXECUTOR_FILTER_ROLES = ['SUPERADMIN', 'MANAGER', 'DEP_HEAD'];
+const DASHBOARD_ASSIGNMENT_ROLES = ['SUPERADMIN', 'MANAGER', 'DEP_HEAD'];
+
+function hasDashboardRole(role: string | undefined, roles: string[]) {
+    return !!role && roles.includes(role);
+}
 
 /** Helper to check if warning is older than 5 days */
 const isOverdue = (dateStr?: string) => {
@@ -579,6 +587,7 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
     } = props;
     const router = useRouter();
     const { user } = useAuth();
+    const canAssignCustomers = can('action_assignment') || hasDashboardRole(user?.role, DASHBOARD_ASSIGNMENT_ROLES);
     // New rows start expanded and editing
     const [isEditing, setIsEditing] = useState(!row.id);
     const [isExpanded, setIsExpanded] = useState(!row.id);
@@ -2959,8 +2968,8 @@ const CustomerCard = memo((props: CustomerCardProps & { isBotOnline: boolean; ag
 
             {/* RIGHT SIDE PANEL - Assignment, Store & status */}
             <div className="w-[180px] shrink-0 flex flex-col gap-2 self-start opacity-70 hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                {/* ASSIGNMENT - Only for Manager/Admin */}
-                {can('action_assignment') && (
+                {/* ASSIGNMENT */}
+                {canAssignCustomers && (
                     <div className="px-2 py-1.5">
                         <div className="flex items-center gap-2 mb-1.5 opacity-70">
                             <UserPlus size={10} />
@@ -3068,6 +3077,7 @@ export default function DashboardPage() {
     const { user, can } = useAuth();
     const [rows, setRows] = useState<CustomerRow[]>([]);
     const [appUsers, setAppUsers] = useState<any[]>([]);
+    const [userWorkload, setUserWorkload] = useState<Record<string, number>>({});
     const [stores, setStores] = useState<any[]>([]);
     const [loadingData, setLoadingData] = useState(true);
     const { isBotOnline, agents, handleLaunchBot } = useBotStatus();
@@ -3130,28 +3140,25 @@ export default function DashboardPage() {
     const fetchCustomers = async (targetPage = 1, cursor: CustomerPageCursor = null) => {
         try {
             setLoadingData(true);
-            const isManagerRole = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
-            const isSpecialAdminUnfinished = user?.role === 'ADMIN' && statusFilter === 'UNFINISHED_ARCHIVE' && executorFilter === "all";
-            const queryAssignedTo = executorFilter !== "all"
-                ? executorFilter
-                : (!isManagerRole && !isSpecialAdminUnfinished ? user?.email : undefined);
+            const isManagerRole = hasDashboardRole(user?.role, DASHBOARD_GLOBAL_ROLES);
+            const selectedAssignedTo = executorFilter !== "all" ? executorFilter : undefined;
             const hasClientOnlyFilters = warningFilter !== "all" || (invoiceMode !== "all" && invoiceCount !== "");
-            const needsClientFilter = hasClientOnlyFilters || isSpecialAdminUnfinished || (!isManagerRole && !queryAssignedTo);
             const data = await getCustomerPage({
                 pageSize: itemsPerPage,
                 cursor,
                 page: targetPage,
                 searchTerm,
+                sortBy: "updatedAt",
                 scope: statusFilter === 'UNFINISHED_ARCHIVE' ? 'all' : 'active',
-                status: statusFilter !== "all" ? statusFilter : undefined,
-                assignedTo: queryAssignedTo,
-                maxReads: searchTerm.trim() ? 250 : (needsClientFilter ? 300 : 120),
-                searchScanLimit: 3000,
-                filter: needsClientFilter ? (c: CustomerRow) => {
+                maxReads: searchTerm.trim() ? 1000 : (hasClientOnlyFilters || statusFilter !== "all" || selectedAssignedTo ? 5000 : 2500),
+                searchScanLimit: 5000,
+                filter: (c: CustomerRow) => {
                     const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
                     const isAssignedToMe = c.assignedTo === user?.email;
                     if (!isManagerRole && !isAssignedToMe && !canSeeUnfinished) return false;
                     if (c.isArchived && statusFilter !== 'UNFINISHED_ARCHIVE') return false;
+                    if (selectedAssignedTo && c.assignedTo !== selectedAssignedTo) return false;
+                    if (statusFilter !== "all" && c.process_status !== statusFilter) return false;
 
                     const isSent = !!c.details?.isWarningSent;
                     const overdue = isOverdue(c.details?.warningDate);
@@ -3171,7 +3178,7 @@ export default function DashboardPage() {
                     }
 
                     return true;
-                } : undefined
+                }
             });
 
             const mergedRows = (data.rows as CustomerRow[]).map(row => ({
@@ -3212,11 +3219,17 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD') {
+        if (hasDashboardRole(user?.role, [...DASHBOARD_EXECUTOR_FILTER_ROLES, 'INSPECTOR_LEAD'])) {
             getAllUsers().then(users => {
                 const assignable = users.filter((u: any) => u.role === 'ADMIN');
                 setAppUsers(assignable);
+                getDashboardWorkloadStats(assignable.map((u: any) => u.id || u.email).filter(Boolean))
+                    .then(setUserWorkload)
+                    .catch(err => console.warn("Dashboard workload count failed:", err));
             });
+        } else {
+            setAppUsers([]);
+            setUserWorkload({});
         }
         getStores().then(setStores);
     }, [user?.role]);
@@ -3224,13 +3237,27 @@ export default function DashboardPage() {
     const fetchDashboardStats = useCallback(async () => {
         if (!user?.email) return;
         try {
-            const isManagerRole = user.role === 'SUPERADMIN' || user.role === 'MANAGER' || user.role === 'DEP_HEAD';
+            const isManagerRole = hasDashboardRole(user.role, DASHBOARD_GLOBAL_ROLES);
             const targetEmail = executorFilter !== "all" ? executorFilter : (isManagerRole ? null : user.email);
             setDashboardStats(await getCustomerDashboardStats(targetEmail));
         } catch (err) {
             console.warn("Dashboard stats count failed:", err);
         }
     }, [executorFilter, user?.email, user?.role]);
+
+    const refreshUserWorkload = useCallback(async (users = appUsers) => {
+        const emails = users.map((u: any) => u.id || u.email).filter(Boolean);
+        if (emails.length === 0) {
+            setUserWorkload({});
+            return;
+        }
+
+        try {
+            setUserWorkload(await getDashboardWorkloadStats(emails));
+        } catch (err) {
+            console.warn("Dashboard workload count failed:", err);
+        }
+    }, [appUsers]);
 
     useEffect(() => {
         fetchDashboardStats();
@@ -3279,16 +3306,19 @@ export default function DashboardPage() {
                     return newRows;
                 });
                 fetchDashboardStats();
+                refreshUserWorkload();
+                refreshUserWorkload();
             } else {
                 await bulkAddCustomers([dataToSave], user?.email);
                 await fetchCustomers();
                 fetchDashboardStats();
+                refreshUserWorkload();
             }
         } catch (error) {
             console.error("Save error:", error);
             throw error;
         }
-    }, [user?.email, rows, fetchCustomers, updateLocalRowsCache, fetchDashboardStats]);
+    }, [user?.email, rows, fetchCustomers, updateLocalRowsCache, fetchDashboardStats, refreshUserWorkload]);
 
     const onDelete = useCallback((id: string | undefined, index: number) => {
         setDeleteModal({ isOpen: true, index, id: id || null });
@@ -3335,16 +3365,6 @@ export default function DashboardPage() {
     };
 
     const filteredRows = useMemo(() => rows, [rows]);
-
-    const userWorkload = useMemo(() => {
-        const map: Record<string, number> = {};
-        rows.forEach(r => {
-            if (r.assignedTo && !r.isArchived) {
-                map[r.assignedTo] = (map[r.assignedTo] || 0) + 1;
-            }
-        });
-        return map;
-    }, [rows]);
 
     const handleExcelExport = () => {
         let dataToExport = filteredRows.filter(c => {
@@ -3512,7 +3532,7 @@ export default function DashboardPage() {
         if (dashboardStats) return dashboardStats;
         if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0, isGlobal: true, breakdown: null };
 
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD';
+        const isManager = hasDashboardRole(user?.role, DASHBOARD_GLOBAL_ROLES);
         const targetEmail = (executorFilter !== 'all') ? executorFilter : (isManager ? null : user.email);
 
         const validRows = rows.filter(r => r.id);
@@ -3611,7 +3631,7 @@ export default function DashboardPage() {
                 {/* 0. USER STATS BANNER */}
                 <div className={cn(
                     "grid grid-cols-1 gap-4 mb-6 mt-4",
-                    (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') ? "md:grid-cols-4" : "md:grid-cols-3"
+                    hasDashboardRole(user?.role, DASHBOARD_EXECUTOR_FILTER_ROLES) ? "md:grid-cols-4" : "md:grid-cols-3"
                 )}>
                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-blue-400 transition-all relative z-40 hover:z-[60]">
                         <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-110 transition-transform">
@@ -3688,7 +3708,7 @@ export default function DashboardPage() {
                     </div>
 
                     {/* New: Unassigned status for Managers/Admins */}
-                    {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
+                    {hasDashboardRole(user?.role, DASHBOARD_EXECUTOR_FILTER_ROLES) && (
                         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4 group hover:border-orange-400 transition-all animate-in fade-in slide-in-from-right-4 duration-500 relative z-40 hover:z-[60]">
                             <div className="h-12 w-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100 group-hover:scale-110 transition-transform">
                                 <Users size={24} />
@@ -3793,7 +3813,7 @@ export default function DashboardPage() {
                                 )}
                             </div> */}
 
-                            {(user?.role === 'SUPERADMIN' || user?.role === 'MANAGER') && (
+                            {hasDashboardRole(user?.role, DASHBOARD_EXECUTOR_FILTER_ROLES) && (
                                 <div className="relative group/sel">
                                     <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/sel:text-primary transition-colors pointer-events-none" />
                                     <select
@@ -3803,7 +3823,7 @@ export default function DashboardPage() {
                                     >
                                         <option value="all">Bütün İnzibatçılar</option>
                                         {appUsers.map(u => (
-                                            <option key={u.id} value={u.email}>{u.displayName || u.email}</option>
+                                            <option key={u.id} value={u.id || u.email}>{u.displayName || u.email || u.id}</option>
                                         ))}
                                     </select>
                                     <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />

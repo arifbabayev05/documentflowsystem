@@ -56,6 +56,7 @@ export interface CustomerPageOptions {
     endDate?: string;
     archiveTaskKey?: string;
     archivedCustomerKey?: string;
+    sortBy?: "documentId" | "createdAt" | "updatedAt";
     filter?: (customer: any) => boolean;
     maxReads?: number;
     searchScanLimit?: number;
@@ -90,6 +91,13 @@ export interface ArchiveTaskCount {
 }
 
 export type ArchiveTaskStats = Record<ArchiveTaskFilter, ArchiveTaskCount>;
+
+export interface ArchiveWorkloadStat {
+    customerCount: number;
+    invoiceCount: number;
+    customerDone: number;
+    invoiceDone: number;
+}
 
 // --- Helpers ---
 /**
@@ -169,6 +177,43 @@ function addCustomerSearchMeta(data: any) {
                 .split(/[\s,.;:()/_-]+/)
                 .filter(token => token.length >= 2)
         ))).slice(0, 80)
+    };
+}
+
+function getCustomerActivityTime(customer: any, fallbackTime = 0) {
+    const statusTimes = Array.isArray(customer?.statusHistory)
+        ? customer.statusHistory.map((h: any) => parseArchiveTime(h?.timestamp)).filter((time: number) => time > 0)
+        : [];
+    const latestStatusTime = statusTimes.length > 0 ? Math.max(...statusTimes) : 0;
+
+    return Math.max(
+        parseArchiveTime(customer?.updatedAt),
+        latestStatusTime,
+        parseArchiveTime(customer?.archivedAt),
+        parseArchiveTime(customer?.createdAt),
+        fallbackTime
+    );
+}
+
+function getCustomerActivityMeta(customer: any, fallbackTime = Date.now()) {
+    const activityAt = getCustomerActivityTime(customer, fallbackTime) || fallbackTime;
+
+    return {
+        activityAt,
+        activityAtIso: new Date(activityAt).toISOString()
+    };
+}
+
+function getDashboardWorkloadMeta(customer: any) {
+    const keys: string[] = [];
+    const assignedTo = customer?.assignedTo || "";
+
+    if (assignedTo && !customer?.isArchived) {
+        keys.push(`dashboard:assigned:${assignedTo}`);
+    }
+
+    return {
+        dashboardWorkloadKeys: keys
     };
 }
 
@@ -549,6 +594,58 @@ export async function getCustomerDashboardStats(targetEmail?: string | null): Pr
     };
 }
 
+export async function getDashboardWorkloadStats(emails: string[] = []): Promise<Record<string, number>> {
+    const uniqueEmails = Array.from(new Set(emails.filter(Boolean)));
+    if (uniqueEmails.length === 0) return {};
+
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const entries = await Promise.all(uniqueEmails.map(async (email) => {
+        try {
+            const snap = await getCountFromServer(query(
+                customersRef,
+                where("dashboardWorkloadKeys", "array-contains", `dashboard:assigned:${email}`)
+            ));
+            return [email, snap.data().count || 0] as const;
+        } catch (error) {
+            console.warn("dashboard workload count fallback:", error);
+            const snap = await getDocs(query(customersRef, where("assignedTo", "==", email)));
+            const count = snap.docs.filter((snapDoc) => !snapDoc.data().isArchived).length;
+            return [email, count] as const;
+        }
+    }));
+
+    return Object.fromEntries(entries);
+}
+
+export async function getArchiveWorkloadStats(emails: string[] = []): Promise<Record<string, ArchiveWorkloadStat>> {
+    const allowedEmails = new Set(emails.filter(Boolean));
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const stats: Record<string, ArchiveWorkloadStat> = {};
+
+    const snap = await getDocs(query(customersRef, where("archiveFilterKeys", "array-contains", "archive:all")));
+    snap.docs.forEach((snapDoc) => {
+        const customer: any = snapDoc.data();
+        const email = customer.archiveAssignedTo || "";
+        if (!email || (allowedEmails.size > 0 && !allowedEmails.has(email))) return;
+
+        if (!stats[email]) {
+            stats[email] = {
+                customerCount: 0,
+                invoiceCount: 0,
+                customerDone: 0,
+                invoiceDone: 0
+            };
+        }
+
+        stats[email].customerCount += 1;
+        stats[email].invoiceCount += Number(customer.archiveInvoiceTotal || 0);
+        stats[email].invoiceDone += Number(customer.archiveInvoiceDone || 0);
+        if (customer.archiveIsDone) stats[email].customerDone += 1;
+    });
+
+    return stats;
+}
+
 // Permissions Logic
 export async function getRolePermissions(role: string) {
     try {
@@ -568,7 +665,7 @@ export async function getRolePermissions(role: string) {
     if (role === "INSPECTOR") return ["page_inspector"];
     if (role === "ARCHIVER") return ["page_archiver"];
     if (role === "ARCHIVE_MANAGER") return ["page_archiver", "page_archive_manager", "page_archive_customers", "page_users"];
-    if (role === "DEP_HEAD") return ["page_customers", "page_analytics", "page_parameters", "page_letter_list"];
+    if (role === "DEP_HEAD") return ["page_customers", "page_analytics", "page_parameters", "page_letter_list", "action_assignment"];
     if (role === "AUDIT_LEAD") return ["page_analytics", "page_audit_logs", "page_parameters", "page_users"];
     return []; // PENDING or others have no default permissions
 }
@@ -680,6 +777,7 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
         const batch = writeBatch(db);
         const results = [];
         const timestamp = new Date().toISOString();
+        const activityTime = Date.now();
         for (const customer of customers) {
             const cleanCode = customer.customerCode?.toString().trim();
             const customerId = cleanCode || Math.random().toString(36).substring(7);
@@ -703,7 +801,9 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
                 ...data,
                 ...addCustomerSearchMeta(data),
                 ...getArchiveMeta(data),
-                ...getArchivedCustomerMeta(data)
+                ...getArchivedCustomerMeta(data),
+                ...getDashboardWorkloadMeta(data),
+                ...getCustomerActivityMeta(data, activityTime)
             }), { merge: true });
             results.push(data);
         }
@@ -964,10 +1064,14 @@ async function getCustomerSearchPage(options: CustomerPageOptions): Promise<Cust
         searchMayHaveMore = byId.size < needed && !scanReachedEnd && scanned >= scanLimit;
     }
 
-    const rows = Array.from(byId.values()).sort((a, b) =>
-        new Date((options.scope === "archived" ? b.archivedAt : b.createdAt) || b.updatedAt || b.createdAt || 0).getTime()
-        - new Date((options.scope === "archived" ? a.archivedAt : a.createdAt) || a.updatedAt || a.createdAt || 0).getTime()
-    );
+    const rows = Array.from(byId.values()).sort((a, b) => {
+        if (options.sortBy === "updatedAt") {
+            return getCustomerActivityTime(b) - getCustomerActivityTime(a);
+        }
+
+        return new Date((options.scope === "archived" ? b.archivedAt : b.createdAt) || b.updatedAt || b.createdAt || 0).getTime()
+            - new Date((options.scope === "archived" ? a.archivedAt : a.createdAt) || a.updatedAt || a.createdAt || 0).getTime();
+    });
     const start = (page - 1) * pageSize;
 
     return {
@@ -1002,7 +1106,9 @@ export async function getCustomerPage(options: CustomerPageOptions = {}): Promis
         const remainingReads = Math.max(1, Math.min(batchSize, maxReads - readCount));
         const cursorConstraint = queryCursor ? [startAfter(queryCursor)] : [];
         const hasDateRange = !!(options.startDate || options.endDate);
-        const orderedConstraints = hasDateRange
+        const orderedConstraints = options.sortBy === "updatedAt"
+            ? [orderBy("activityAt", "desc")]
+            : options.sortBy === "createdAt" || hasDateRange
             ? [orderBy("createdAt", "desc")]
             : [orderBy(documentId())];
         const primaryConstraints = [
@@ -1139,6 +1245,7 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
             // Maintain status history
             let statusHistory = [...(oldData?.statusHistory || [])];
             const timestamp = new Date().toISOString();
+            const activityTime = Date.now();
 
             if (!oldSnap.exists() && statusHistory.length === 0) {
                 statusHistory.push({
@@ -1326,6 +1433,8 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
                 ...addCustomerSearchMeta(cleanedData),
                 ...getArchiveMeta(cleanedData),
                 ...getArchivedCustomerMeta(cleanedData),
+                ...getDashboardWorkloadMeta(cleanedData),
+                ...getCustomerActivityMeta(cleanedData, activityTime),
                 updatedAt: serverTimestamp()
             }), { merge: true });
 
@@ -1548,6 +1657,8 @@ export async function moveCustomer(oldId: string, newCode: string, userEmail: st
             ...addCustomerSearchMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
             ...getArchiveMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
             ...getArchivedCustomerMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
+            ...getDashboardWorkloadMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
+            ...getCustomerActivityMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }, Date.now()),
             updatedAt: serverTimestamp(),
             updatedBy: userEmail
         });

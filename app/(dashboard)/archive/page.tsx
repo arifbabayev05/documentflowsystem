@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomerPage, getArchiveTaskStats, updateCustomer, getAllUsers, CustomerPageCursor, ArchiveTaskStats } from "@/lib/db";
+import { getCustomerPage, getArchiveTaskStats, getArchiveWorkloadStats, updateCustomer, getAllUsers, CustomerPageCursor, ArchiveTaskStats, ArchiveWorkloadStat } from "@/lib/db";
 import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
@@ -132,6 +132,7 @@ export default function ArchiveDocumentsPage() {
     const [customers, setCustomers] = useState<CustomerRow[]>([]);
     const [archivers, setArchivers] = useState<any[]>([]);
     const [archiveTaskStats, setArchiveTaskStats] = useState<ArchiveTaskStats>(() => emptyArchiveTaskStats());
+    const [archiveWorkloads, setArchiveWorkloads] = useState<Record<string, ArchiveWorkloadStat>>({});
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
@@ -219,6 +220,7 @@ export default function ArchiveDocumentsPage() {
 
             setCustomers(custPage.rows as CustomerRow[]);
             setSelectedIds([]);
+            refreshArchiveTaskStats();
             setPage(targetPage);
             setHasNextPage(custPage.hasMore);
             if (!custPage.searchMode) {
@@ -244,9 +246,27 @@ export default function ArchiveDocumentsPage() {
         }
     }, [isManager, user?.email]);
 
+    const refreshArchiveWorkloads = useCallback(async (users = archivers) => {
+        const emails = users.map((u: any) => u.email || u.id).filter(Boolean);
+        if (emails.length === 0) {
+            setArchiveWorkloads({});
+            return;
+        }
+
+        try {
+            setArchiveWorkloads(await getArchiveWorkloadStats(emails));
+        } catch (error) {
+            console.warn("Archive workload stats failed:", error);
+        }
+    }, [archivers]);
+
     useEffect(() => {
         getAllUsers().then(users => {
-            setArchivers((users as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+            const archiveUsers = (users as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER");
+            setArchivers(archiveUsers);
+            getArchiveWorkloadStats(archiveUsers.map((u: any) => u.email || u.id).filter(Boolean))
+                .then(setArchiveWorkloads)
+                .catch(error => console.warn("Archive workload stats failed:", error));
         });
     }, []);
 
@@ -316,6 +336,7 @@ export default function ArchiveDocumentsPage() {
             setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? { ...c, ...updated } : c));
             setSelectedCustomer(prev => prev ? { ...prev, ...updated } : null);
             refreshArchiveTaskStats();
+            refreshArchiveWorkloads();
             toast.success("Sənəd uğurla yükləndi");
         } catch (error) {
             console.error("Upload error:", error);
@@ -347,6 +368,7 @@ export default function ArchiveDocumentsPage() {
             setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? { ...c, ...updated } : c));
             setSelectedCustomer(prev => prev ? { ...prev, ...updated } : null);
             refreshArchiveTaskStats();
+            refreshArchiveWorkloads();
             toast.success("Sənəd silindi");
         } catch { toast.error("Silinmə zamanı xəta baş verdi"); }
     };
@@ -390,6 +412,8 @@ export default function ArchiveDocumentsPage() {
             setQuickAssignId(null);
             setBulkAssignOpen(false);
             setSelectedIds([]);
+            refreshArchiveTaskStats();
+            refreshArchiveWorkloads();
             toast.success(archiverEmail ? `${idsToUpdate.length} tapşırıq təyin edildi` : "Təyinatlar ləğv edildi");
         } catch { toast.error("Xəta baş verdi"); } finally { setIsAssigning(false); }
     };
@@ -498,32 +522,26 @@ export default function ArchiveDocumentsPage() {
 
     const archiverWorkloads = useMemo(() => {
         return archivers.map(a => {
-            const assigned = customers.filter(c => c.archiveAssignedTo === a.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
-            const { totalInv, doneInv } = getTotalInvoiceCounts(assigned);
+            const workload = archiveWorkloads[a.email] || { customerCount: 0, invoiceCount: 0, customerDone: 0, invoiceDone: 0 };
             return {
                 ...a,
-                customerCount: assigned.length,
-                invoiceCount: totalInv,
-                customerDone: assigned.filter(c => isCustomerDone(c)).length,
-                invoiceDone: doneInv
+                ...workload
             };
         }).sort((a, b) => b.customerCount - a.customerCount);
-    }, [customers, archivers, getTotalInvoiceCounts, getArchiveRequestTime]);
+    }, [archivers, archiveWorkloads]);
 
     const myStats = useMemo(() => {
         if (!user) return { customerCount: 0, customersDone: 0, totalInvoices: 0, doneInvoices: 0, pendingInvoices: 0, completionRate: 0 };
-        const assigned = customers.filter(c => c.archiveAssignedTo === user.email && getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
-        const customersDone = assigned.filter(c => isCustomerDone(c)).length;
-        const { totalInv, doneInv } = getTotalInvoiceCounts(assigned);
+        const workload = archiveWorkloads[user.email] || { customerCount: 0, invoiceCount: 0, customerDone: 0, invoiceDone: 0 };
         return {
-            customerCount: assigned.length,
-            customersDone,
-            totalInvoices: totalInv,
-            doneInvoices: doneInv,
-            pendingInvoices: totalInv - doneInv,
-            completionRate: totalInv > 0 ? Math.round((doneInv / totalInv) * 100) : 0
+            customerCount: workload.customerCount,
+            customersDone: workload.customerDone,
+            totalInvoices: workload.invoiceCount,
+            doneInvoices: workload.invoiceDone,
+            pendingInvoices: workload.invoiceCount - workload.invoiceDone,
+            completionRate: workload.invoiceCount > 0 ? Math.round((workload.invoiceDone / workload.invoiceCount) * 100) : 0
         };
-    }, [customers, user, getTotalInvoiceCounts, getArchiveRequestTime]);
+    }, [archiveWorkloads, user]);
 
     const filteredArchivers = useMemo(() => {
         const s = dropdownSearch.toLowerCase();
