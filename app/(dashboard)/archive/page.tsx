@@ -15,7 +15,9 @@ import {
     CheckCircle2,
     Bell,
     Check,
+    ChevronLeft,
     ChevronDown,
+    ChevronRight,
     Clock,
     FolderOpen,
     Trash2,
@@ -30,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, updateCustomer, getAllUsers } from "@/lib/db";
+import { getCustomerPage, getArchiveTaskStats, updateCustomer, getAllUsers, CustomerPageCursor, ArchiveTaskStats } from "@/lib/db";
 import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
@@ -116,18 +118,30 @@ const formatRequestDate = (dateVal: any) => {
     return `${day} ${month} ${year} ${hours}:${minutes}`;
 };
 
+const emptyArchiveTaskStats = (): ArchiveTaskStats => ({
+    all: { jobs: 0, invoices: 0 },
+    unassigned: { jobs: 0, invoices: 0 },
+    pending: { jobs: 0, invoices: 0 },
+    done: { jobs: 0, invoices: 0 }
+});
+
 export default function ArchiveDocumentsPage() {
     const { user, can } = useAuth();
     const isManager = user?.role === "ARCHIVE_MANAGER" || user?.role === "SUPERADMIN" || can("page_archive_manager");
 
     const [customers, setCustomers] = useState<CustomerRow[]>([]);
     const [archivers, setArchivers] = useState<any[]>([]);
+    const [archiveTaskStats, setArchiveTaskStats] = useState<ArchiveTaskStats>(() => emptyArchiveTaskStats());
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
     const [uploadingId, setUploadingId] = useState<string | null>(null);
     const [sideTab, setSideTab] = useState<"tasks" | "stats">("tasks");
     const [filter, setFilter] = useState<"all" | "pending" | "done" | "unassigned">("all");
+    const itemsPerPage = 25;
+    const [page, setPage] = useState(1);
+    const [pageCursors, setPageCursors] = useState<CustomerPageCursor[]>([null]);
+    const [hasNextPage, setHasNextPage] = useState(false);
 
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [assignOpen, setAssignOpen] = useState(false);
@@ -147,48 +161,104 @@ export default function ArchiveDocumentsPage() {
     const [exportExecutor, setExportExecutor] = useState<string[]>([]);
     const [exportArchiveStatus, setExportArchiveStatus] = useState<string[]>([]);
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (targetPage = 1, cursor: CustomerPageCursor = null) => {
         try {
             setLoading(true);
-            const [custData, userData] = await Promise.all([getCustomers(), getAllUsers()]);
             const CUTOFF_DATE = new Date("2026-03-04T00:00:00").getTime();
-
-            const archiveRequired = (custData as CustomerRow[]).filter(c => {
-                // Heuristic: Check if customer has any archival activity after cutoff
-                const hasRecentInvoiceAction = c.details?.invoices?.some(inv => {
+            const getRequestTime = (c: CustomerRow) => {
+                const invoices = c.details?.invoices?.filter(inv => inv.archiveRequested || inv.archiveUrl) || [];
+                const invoiceTimes = invoices
+                    .map(inv => inv.archiveRequestedAt ? (parseDate(inv.archiveRequestedAt)?.getTime() || 0) : 0)
+                    .filter(Boolean);
+                if (invoiceTimes.length > 0) return Math.max(...invoiceTimes);
+                const latestAction = c.statusHistory
+                    ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
+                    ?.sort((a, b) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[0];
+                return latestAction ? (parseDate(latestAction.timestamp)?.getTime() || 0) : 0;
+            };
+            const matchesArchiveFilter = (c: CustomerRow) => {
+                const invoices = c.details?.invoices?.filter(inv => inv.archiveRequested || inv.archiveUrl) || [];
+                const total = invoices.length;
+                const done = invoices.filter(inv => !!inv.archiveUrl).length;
+                const requestTime = getRequestTime(c);
+                const hasRecentInvoiceAction = invoices.some(inv => {
                     if (!inv.archiveRequested && !inv.archiveUrl) return false;
-
-                    // If we have explicit timestamp on invoice
                     if (inv.archiveRequestedAt) {
-                        return new Date(inv.archiveRequestedAt).getTime() >= CUTOFF_DATE;
+                        return (parseDate(inv.archiveRequestedAt)?.getTime() || 0) >= CUTOFF_DATE;
                     }
 
-                    // Fallback: Check status history for the specific request or upload
                     const latestAction = c.statusHistory
                         ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
-                        ?.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+                        ?.sort((a, b) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[0];
 
-                    if (latestAction) {
-                        return new Date(latestAction.timestamp).getTime() >= CUTOFF_DATE;
-                    }
-
-                    // If no timestamp found, we treat as old unless it's very recent (no status history yet)
-                    return false;
+                    return latestAction ? (parseDate(latestAction.timestamp)?.getTime() || 0) >= CUTOFF_DATE : false;
                 });
-                return hasRecentInvoiceAction;
+                if (requestTime < CUTOFF_DATE || requestTime < NEW_ARCHIVE_CUTOFF) return false;
+                if (!hasRecentInvoiceAction) return false;
+                if (!isManager && c.archiveAssignedTo !== user?.email) return false;
+                if (filter === "all" && !c.archiveAssignedTo) return false;
+                if (filter === "unassigned" && !!c.archiveAssignedTo) return false;
+                if (filter === "pending" && (!c.archiveAssignedTo || (total > 0 && done === total))) return false;
+                if (filter === "done" && !(total > 0 && done === total)) return false;
+                return true;
+            };
+
+            const custPage = await getCustomerPage({
+                pageSize: itemsPerPage,
+                cursor,
+                page: targetPage,
+                searchTerm,
+                scope: "archiveTasks",
+                archiveTaskKey: isManager
+                    ? `archive:${filter}`
+                    : (user?.email ? `archive:${user.email}:all` : undefined),
+                maxReads: searchTerm.trim() ? 200 : 80,
+                searchScanLimit: 800,
+                filter: matchesArchiveFilter
             });
 
-            setCustomers(archiveRequired);
-            setArchivers((userData as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+            setCustomers(custPage.rows as CustomerRow[]);
+            setSelectedIds([]);
+            setPage(targetPage);
+            setHasNextPage(custPage.hasMore);
+            if (!custPage.searchMode) {
+                setPageCursors(prev => {
+                    const next = prev.slice(0, targetPage);
+                    next[targetPage] = custPage.cursor;
+                    return next;
+                });
+            }
         } catch (error) {
             console.error("Fetch error:", error);
             toast.error("Məlumatlar yüklənmədi");
         } finally {
             setLoading(false);
         }
+    }, [filter, isManager, searchTerm, user?.email]);
+
+    const refreshArchiveTaskStats = useCallback(async () => {
+        try {
+            setArchiveTaskStats(await getArchiveTaskStats(isManager ? null : user?.email));
+        } catch (error) {
+            console.warn("Archive task stats failed:", error);
+        }
+    }, [isManager, user?.email]);
+
+    useEffect(() => {
+        getAllUsers().then(users => {
+            setArchivers((users as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER"));
+        });
     }, []);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        refreshArchiveTaskStats();
+    }, [refreshArchiveTaskStats]);
+
+    useEffect(() => {
+        setPageCursors([null]);
+        const timer = setTimeout(() => fetchData(1, null), searchTerm.trim() ? 350 : 0);
+        return () => clearTimeout(timer);
+    }, [fetchData, filter, searchTerm]);
 
     useEffect(() => {
         if (sideTab === "stats") {
@@ -245,6 +315,7 @@ export default function ArchiveDocumentsPage() {
 
             setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? { ...c, ...updated } : c));
             setSelectedCustomer(prev => prev ? { ...prev, ...updated } : null);
+            refreshArchiveTaskStats();
             toast.success("Sənəd uğurla yükləndi");
         } catch (error) {
             console.error("Upload error:", error);
@@ -275,6 +346,7 @@ export default function ArchiveDocumentsPage() {
             const updated = await updateCustomer(selectedCustomer.id, updatePayload, user?.email || "system");
             setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? { ...c, ...updated } : c));
             setSelectedCustomer(prev => prev ? { ...prev, ...updated } : null);
+            refreshArchiveTaskStats();
             toast.success("Sənəd silindi");
         } catch { toast.error("Silinmə zamanı xəta baş verdi"); }
     };
@@ -381,6 +453,7 @@ export default function ArchiveDocumentsPage() {
     }, [customers, isManager, user?.email, getArchiveRequestTime]);
 
     const filteredCustomers = useMemo(() => {
+        return visibleCustomers;
         const s = searchTerm.toLowerCase();
         return visibleCustomers.filter(c => {
             const nameMatch = c.fullName.toLowerCase().includes(s) || (c.customerCode || "").toLowerCase().includes(s);
@@ -400,6 +473,16 @@ export default function ArchiveDocumentsPage() {
 
 
     const filterStats = useMemo(() => {
+        const getArchiveStr = (key: keyof ArchiveTaskStats) => {
+            const item = archiveTaskStats[key];
+            return `${item.jobs} iş / ${item.invoices} faktura`;
+        };
+        return {
+            all: getArchiveStr("all"),
+            unassigned: getArchiveStr("unassigned"),
+            pending: getArchiveStr("pending"),
+            done: getArchiveStr("done")
+        };
         const getStr = (list: CustomerRow[]) => {
             const invoices = getTotalInvoiceCounts(list).totalInv;
             return `${list.length} iş / ${invoices} faktura`;
@@ -410,7 +493,7 @@ export default function ArchiveDocumentsPage() {
             pending: getStr(visibleCustomers.filter(c => !!c.archiveAssignedTo && !isCustomerDone(c))),
             done: getStr(visibleCustomers.filter(c => isCustomerDone(c)))
         };
-    }, [visibleCustomers, getArchiveRequestTime, getTotalInvoiceCounts]);
+    }, [archiveTaskStats, visibleCustomers, getArchiveRequestTime, getTotalInvoiceCounts]);
 
 
     const archiverWorkloads = useMemo(() => {
@@ -690,7 +773,7 @@ export default function ArchiveDocumentsPage() {
                                 >
                                     <Download size={14} /> Export
                                 </button>
-                                <button onClick={fetchData} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
+                                <button onClick={() => fetchData(1, null)} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
                                     <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
                                 </button>
                             </div>
@@ -956,6 +1039,32 @@ export default function ArchiveDocumentsPage() {
                                 </div>
                             );
                         })}
+                        {(page > 1 || hasNextPage) && (
+                            <div className="flex items-center justify-between pt-4 px-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    Səhifə {page} - bu səhifədə {filteredCustomers.length} iş
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => fetchData(Math.max(1, page - 1), pageCursors[Math.max(0, page - 2)] || null)}
+                                        disabled={page === 1 || loading}
+                                        className="h-9 w-9 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                                    >
+                                        <ChevronLeft size={16} />
+                                    </button>
+                                    <span className="h-9 min-w-[48px] px-3 rounded-xl bg-slate-900 text-white text-[12px] font-black flex items-center justify-center">
+                                        {page}
+                                    </span>
+                                    <button
+                                        onClick={() => fetchData(page + 1, pageCursors[page] || null)}
+                                        disabled={!hasNextPage || loading}
+                                        className="h-9 w-9 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                                    >
+                                        <ChevronRight size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Bulk Action Bar - Floating Center Pill */}

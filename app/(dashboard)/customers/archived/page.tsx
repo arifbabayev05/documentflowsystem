@@ -30,7 +30,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, deleteCustomer, updateCustomer, getStores, getAllUsers } from "@/lib/db";
+import { getCustomerPage, deleteCustomer, updateCustomer, getStores, getAllUsers, CustomerPageCursor } from "@/lib/db";
 import { formatDateInput, parseDate, calculateWorkingHours, formatDetailedTime } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
@@ -661,35 +661,100 @@ export default function ArchivedCustomersPage() {
     const [exportMaxDebt, setExportMaxDebt] = useState("");
 
     const [page, setPage] = useState(1);
-    const itemsPerPage = 50;
+    const itemsPerPage = 25;
+    const [pageCursors, setPageCursors] = useState<CustomerPageCursor[]>([null]);
+    const [hasNextPage, setHasNextPage] = useState(false);
+    const archivedCustomerKey = useMemo(() => {
+        const statusSuffix = statusFilter !== "all" ? `:status:${statusFilter}` : "";
 
-    const fetchData = useCallback(async () => {
+        if (!isManager && user?.role === "ARCHIVER" && user?.email) {
+            return `archived:archiver:${user.email}${statusSuffix}`;
+        }
+        if (!isManager && user?.role === "ADMIN" && user?.email) {
+            if (executorFilter !== "all") {
+                return `archived:admin:${user.email}:executor:${executorFilter}${statusSuffix}`;
+            }
+            return `archived:admin:${user.email}${statusSuffix}`;
+        }
+        if (executorFilter !== "all") {
+            return `archived:executor:${executorFilter}${statusSuffix}`;
+        }
+        if (statusFilter !== "all") {
+            return `archived:status:${statusFilter}`;
+        }
+        return "archived:all";
+    }, [executorFilter, isManager, statusFilter, user?.email, user?.role]);
+
+    const fetchData = useCallback(async (targetPage = 1, cursor: CustomerPageCursor = null) => {
         try {
             setLoading(true);
-            const [custData, storeData] = await Promise.all([
-                getCustomers(),
-                getStores()
-            ]);
-            setRows(custData as CustomerRow[]);
-            setStores(storeData);
+            const hasDateFilter = !!(startDate || endDate);
+            const custPage = await getCustomerPage({
+                pageSize: itemsPerPage,
+                cursor,
+                page: targetPage,
+                searchTerm,
+                scope: "archived",
+                archivedCustomerKey,
+                maxReads: searchTerm.trim() ? 160 : (hasDateFilter ? 400 : 90),
+                searchScanLimit: searchTerm.trim() ? 1000 : 500,
+                filter: (c: CustomerRow) => {
+                    if (!isManager && user?.role === "ARCHIVER" && c.archiveAssignedTo !== user.email) return false;
+                    if (!isManager && user?.role === "ADMIN") {
+                        const whoArchived = c.statusHistory?.find(h => h.action === "ARCHIVE")?.user;
+                        if (whoArchived !== user.email) return false;
+                    }
+                    if (executorFilter !== "all" && c.assignedTo !== executorFilter) return false;
+                    if (statusFilter !== "all") {
+                        const historyCount = (c.statusHistory || []).length;
+                        const hasCreateInHistory = (c.statusHistory || []).some(h => h.action === 'CREATE');
+                        const effectiveCount = historyCount + (c.createdAt && !hasCreateInHistory ? 1 : 0);
+                        const effectiveStatus = effectiveCount < 2 ? 'UNFINISHED_ARCHIVE' : (c.process_status || 'INSPECTOR_ENTERED');
+                        if (effectiveStatus !== statusFilter) return false;
+                    }
+                    const archTimeVal = c.archivedAt || c.statusHistory?.find(h => h.action === "ARCHIVE" || h.action === "ARCHIVE_REQUEST")?.timestamp || c.createdAt;
+                    const archTime = archTimeVal ? new Date(archTimeVal).getTime() : 0;
+                    if (startDate) {
+                        const s = new Date(startDate).getTime();
+                        if (!archTime || isNaN(archTime) || archTime < s) return false;
+                    }
+                    if (endDate) {
+                        const e = new Date(endDate).setHours(23, 59, 59, 999);
+                        if (!archTime || isNaN(archTime) || archTime > e) return false;
+                    }
+                    return true;
+                }
+            });
+            setRows(custPage.rows as CustomerRow[]);
+            setPage(targetPage);
+            setHasNextPage(custPage.hasMore);
+            if (!custPage.searchMode) {
+                setPageCursors(prev => {
+                    const next = prev.slice(0, targetPage);
+                    next[targetPage] = custPage.cursor;
+                    return next;
+                });
+            }
         } catch (e) {
             toast.error("Məlumatlar yüklənmədi");
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [archivedCustomerKey, endDate, executorFilter, isManager, searchTerm, startDate, statusFilter, user?.email, user?.role]);
 
     useEffect(() => {
-        fetchData();
+        getStores().then(setStores);
         getAllUsers().then(users => {
             const admins = users.filter((u: any) => u.role === 'ADMIN');
             setAppUsers(admins);
         });
-    }, [fetchData]);
+    }, []);
 
     useEffect(() => {
-        setPage(1);
-    }, [searchTerm, startDate, endDate, executorFilter, statusFilter]);
+        setPageCursors([null]);
+        const timer = setTimeout(() => fetchData(1, null), searchTerm.trim() ? 350 : 0);
+        return () => clearTimeout(timer);
+    }, [fetchData, searchTerm, startDate, endDate, executorFilter, statusFilter]);
 
     const handleSave = async (data: CustomerRow, email?: string) => {
         if (!data.id) return;
@@ -870,6 +935,7 @@ export default function ArchivedCustomersPage() {
     };
 
     const filteredRows = useMemo(() => {
+        return rows;
         const lowSearch = searchTerm.toLowerCase();
 
         return rows.filter(c => {
@@ -951,7 +1017,7 @@ export default function ArchivedCustomersPage() {
                     </div>
                     <div className="flex items-center gap-3">
                         <button
-                            onClick={fetchData}
+                            onClick={() => fetchData(1, null)}
                             className="bg-white p-3 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-400 hover:shadow-md transition-all group"
                         >
                             <RefreshCw size={20} className={cn("transition-transform duration-500", loading ? "animate-spin" : "group-active:rotate-180")} />
@@ -1056,78 +1122,41 @@ export default function ArchivedCustomersPage() {
                 <div className="space-y-4">
                     {loading ? (
                         <div className="py-20 flex flex-col items-center gap-4"><Loader2 className="animate-spin text-slate-300" size={40} /><p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Arxiv Yüklənir...</p></div>
-                    ) : filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, idx) => (
-                        <CustomerCard key={row.id || (page - 1) * itemsPerPage + idx} row={row} index={(page - 1) * itemsPerPage + idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
+                    ) : filteredRows.map((row, idx) => (
+                        <CustomerCard key={row.id || idx} row={row} index={idx} totalRows={filteredRows.length} canDelete={user.role === 'SUPERADMIN'} stores={[]} onSave={handleSave} onDelete={(idx: number) => setDeleteModal({ isOpen: true, index: idx })} />
                     ))}
-                    {!loading && filteredRows.length === 0 && (
+                    {!loading && filteredRows.length === 0 && !hasNextPage && (
                         <div className="py-20 text-center opacity-20"><Search size={60} className="mx-auto mb-4" /><p className="font-black text-2xl uppercase tracking-widest italic">Arxiv Boşdur</p></div>
                     )}
                 </div>
 
-                {filteredRows.length > 0 && (
+                {(filteredRows.length > 0 || page > 1 || hasNextPage) && (
                     <div className="flex flex-col items-center gap-4 pt-10 pb-20">
                         <div className="flex items-center gap-2">
                             <button
-                                disabled={page === 1}
-                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page === 1 || loading}
+                                onClick={() => fetchData(Math.max(1, page - 1), pageCursors[Math.max(0, page - 2)] || null)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
                                 <Minus size={16} />
                             </button>
 
                             <div className="flex items-center gap-1.5 mx-4">
-                                {(() => {
-                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
-                                    let startPage = Math.max(1, page - 2);
-                                    let endPage = Math.min(totalPages, startPage + 4);
-
-                                    if (endPage - startPage < 4) {
-                                        startPage = Math.max(1, endPage - 4);
-                                    }
-
-                                    const pages = [];
-                                    for (let i = startPage; i <= endPage; i++) {
-                                        pages.push(
-                                            <button
-                                                key={i}
-                                                onClick={() => setPage(i)}
-                                                className={cn(
-                                                    "h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black transition-all border",
-                                                    page === i
-                                                        ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
-                                                        : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
-                                                )}
-                                            >
-                                                {i}
-                                            </button>
-                                        );
-                                    }
-                                    return pages;
-                                })()}
-
-                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
-                                    <>
-                                        <span className="text-slate-300 mx-1">...</span>
-                                        <button
-                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
-                                            className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
-                                        >
-                                            {Math.ceil(filteredRows.length / itemsPerPage)}
-                                        </button>
-                                    </>
-                                )}
+                                <span className="h-10 min-w-[88px] px-4 flex items-center justify-center rounded-xl text-xs font-black bg-slate-900 text-white border border-slate-900 shadow-lg shadow-slate-200">
+                                    {page}
+                                </span>
                             </div>
 
                             <button
-                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
-                                onClick={() => setPage(p => p + 1)}
+                                disabled={!hasNextPage || loading}
+                                onClick={() => fetchData(page + 1, pageCursors[page] || null)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
                                 <Plus size={16} />
                             </button>
                         </div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                            Səhifə {page} - bu səhifədə {filteredRows.length} məlumat
                         </span>
                     </div>
                 )}

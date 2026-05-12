@@ -8,7 +8,7 @@ import { formatPhoneInput, toTitleCase, formatAZDate } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { STATUS_LABELS, ProcessStatus } from "../dashboard/page";
-import { bulkAddCustomers, getInspectorCustomers, getCustomer, getCustomers, updateCustomer } from "@/lib/db";
+import { bulkAddCustomers, getCustomer, getCustomerPage, updateCustomer, CustomerPageCursor } from "@/lib/db";
 import * as XLSX from "xlsx";
 
 interface EntryRow {
@@ -279,7 +279,9 @@ export default function InspectorPage() {
     // Search & Pagination & Filter
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
-    const [itemsPerPage, setItemsPerPage] = useState(20);
+    const itemsPerPage = 25;
+    const [pageCursors, setPageCursors] = useState<CustomerPageCursor[]>([null]);
+    const [hasNextPage, setHasNextPage] = useState(false);
     const [selectedInspector, setSelectedInspector] = useState("ALL");
     const [editingRowId, setEditingRowId] = useState<string | null>(null);
     const [editData, setEditData] = useState<any>(null);
@@ -314,30 +316,46 @@ export default function InspectorPage() {
     const isLeadOrAdmin = user?.role === "INSPECTOR_LEAD" || user?.role === "SUPERADMIN" || user?.role === "DEP_HEAD" || user?.role === "MANAGER";
 
     /* ── fetch history ── */
-    const fetchHistory = useCallback(async () => {
+    const fetchHistory = useCallback(async (targetPage = 1, cursor: CustomerPageCursor = null) => {
         if (!user?.email) return;
         try {
             setLoading(true);
-            let data;
-            if (isLeadOrAdmin) {
-                data = await getCustomers();
-            } else {
-                data = await getInspectorCustomers(user.email);
+            const data = await getCustomerPage({
+                pageSize: itemsPerPage,
+                cursor,
+                page: targetPage,
+                searchTerm,
+                startDate: dateRange.start,
+                endDate: dateRange.end,
+                createdBy: isLeadOrAdmin
+                    ? (selectedInspector !== "ALL" ? selectedInspector : undefined)
+                    : user.email,
+                maxReads: searchTerm.trim() ? 250 : 500,
+                searchScanLimit: 3000
+            });
+            setHistory(data.rows);
+            setCurrentPage(targetPage);
+            setHasNextPage(data.hasMore);
+            if (!data.searchMode) {
+                setPageCursors(prev => {
+                    const next = prev.slice(0, targetPage);
+                    next[targetPage] = data.cursor;
+                    return next;
+                });
             }
-            data.sort((a: any, b: any) =>
-                new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-            );
-            setHistory(data);
         } catch (e) {
             console.error(e);
         } finally {
             setLoading(false);
         }
-    }, [user?.email, isLeadOrAdmin]);
+    }, [dateRange.end, dateRange.start, isLeadOrAdmin, itemsPerPage, searchTerm, selectedInspector, user?.email]);
 
     useEffect(() => {
-        if (user) fetchHistory();
-    }, [user, fetchHistory]);
+        if (!user) return;
+        setPageCursors([null]);
+        const timer = setTimeout(() => fetchHistory(1, null), searchTerm.trim() ? 350 : 0);
+        return () => clearTimeout(timer);
+    }, [user, fetchHistory, searchTerm, selectedInspector, dateRange]);
 
     const stats = useMemo(() => {
         let sourceData = history;
@@ -364,6 +382,7 @@ export default function InspectorPage() {
     }, [history, selectedInspector, isLeadOrAdmin]);
 
     const filteredHistory = useMemo(() => {
+        return history;
         return history.filter(row => {
             // 1. Date Range Filter
             if (dateRange.start || dateRange.end) {
@@ -413,11 +432,8 @@ export default function InspectorPage() {
     }, [history, isLeadOrAdmin]);
 
     const paginatedHistory = useMemo(() => {
-        const start = (currentPage - 1) * itemsPerPage;
-        return filteredHistory.slice(start, start + itemsPerPage);
-    }, [filteredHistory, currentPage, itemsPerPage]);
-
-    const totalPages = Math.ceil(filteredHistory.length / itemsPerPage);
+        return filteredHistory;
+    }, [filteredHistory]);
 
     // Reset page when filters change
     useEffect(() => {
@@ -1009,7 +1025,7 @@ export default function InspectorPage() {
                                     style={{ gridTemplateColumns: "60px 160px 120px 0.8fr 110px 110px 110px 150px 100px" }}
                                 >
                                     <div className="px-5 py-4 text-[13px] font-black text-slate-400 flex items-center">
-                                        {filteredHistory.length - ((currentPage - 1) * itemsPerPage + idx)}
+                                        {((currentPage - 1) * itemsPerPage) + idx + 1}
                                     </div>
                                     {(() => {
                                         const formatted = formatDateTime(row.createdAt);
@@ -1134,43 +1150,29 @@ export default function InspectorPage() {
                         )}
                     </div>
 
-                    {totalPages > 1 && (
+                    {(currentPage > 1 || hasNextPage) && (
                         <div className="flex items-center justify-between mt-6 px-1">
                             <div className="text-[12px] font-bold text-slate-500">
-                                Göstərilir {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredHistory.length)} / {filteredHistory.length} qeyd
+                                Səhifə {currentPage} - bu səhifədə {filteredHistory.length} qeyd
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
-                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                    disabled={currentPage === 1}
+                                    onClick={() => fetchHistory(Math.max(1, currentPage - 1), pageCursors[Math.max(0, currentPage - 2)] || null)}
+                                    disabled={currentPage === 1 || loading}
                                     className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-sm"
                                 >
                                     <ChevronLeft size={18} />
                                 </button>
 
                                 <div className="flex items-center gap-1">
-                                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                                        let pageNum;
-                                        if (totalPages <= 5) pageNum = i + 1;
-                                        else if (currentPage <= 3) pageNum = i + 1;
-                                        else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
-                                        else pageNum = currentPage - 2 + i;
-
-                                        return (
-                                            <button
-                                                key={pageNum}
-                                                onClick={() => setCurrentPage(pageNum)}
-                                                className={`w-10 h-10 rounded-xl text-[13px] font-black transition-all shadow-sm ${currentPage === pageNum ? "bg-blue-600 text-white shadow-blue-200" : "bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
-                                            >
-                                                {pageNum}
-                                            </button>
-                                        );
-                                    })}
+                                    <span className="w-10 h-10 rounded-xl text-[13px] font-black bg-blue-600 text-white shadow-blue-200 flex items-center justify-center">
+                                        {currentPage}
+                                    </span>
                                 </div>
 
                                 <button
-                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                    disabled={currentPage === totalPages}
+                                    onClick={() => fetchHistory(currentPage + 1, pageCursors[currentPage] || null)}
+                                    disabled={!hasNextPage || loading}
                                     className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-sm"
                                 >
                                     <ChevronRight size={18} />

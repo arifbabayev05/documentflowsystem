@@ -12,11 +12,19 @@ import {
     query,
     where,
     limit,
+    startAfter,
+    startAt,
+    endAt,
     serverTimestamp,
     deleteDoc,
     writeBatch,
     orderBy,
-    increment
+    increment,
+    documentId,
+    getCountFromServer,
+    QueryConstraint,
+    QueryDocumentSnapshot,
+    DocumentData
 } from "firebase/firestore";
 import { AVAILABLE_PERMISSIONS } from "./permissions";
 
@@ -29,6 +37,59 @@ const COURTS_COLLECTION = "Courts";
 const STORES_COLLECTION = "Stores";
 const TEMPLATES_COLLECTION = "Templates";
 const ERRORS_COLLECTION = "SystemErrors";
+const ARCHIVE_REQUEST_CUTOFF = new Date("2026-03-04T00:00:00").getTime();
+const ARCHIVE_VISIBLE_CUTOFF = new Date("2026-04-17T00:00:00").getTime();
+
+export type CustomerPageCursor = QueryDocumentSnapshot<DocumentData> | null;
+
+export interface CustomerPageOptions {
+    pageSize?: number;
+    cursor?: CustomerPageCursor;
+    page?: number;
+    searchTerm?: string;
+    scope?: "all" | "active" | "archived" | "archiveTasks";
+    assignedTo?: string;
+    archiveAssignedTo?: string;
+    createdBy?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+    archiveTaskKey?: string;
+    archivedCustomerKey?: string;
+    filter?: (customer: any) => boolean;
+    maxReads?: number;
+    searchScanLimit?: number;
+}
+
+export interface CustomerPageResult {
+    rows: any[];
+    cursor: CustomerPageCursor;
+    hasMore: boolean;
+    searchMode: boolean;
+    readCount: number;
+}
+
+export interface CustomerDashboardStats {
+    active: number;
+    archived: number;
+    total: number;
+    unassigned: number;
+    isGlobal: boolean;
+    breakdown: {
+        active: Array<{ label: string; value: number }>;
+        archived: Array<{ label: string; value: number }>;
+        total: Array<{ label: string; value: number }>;
+    };
+}
+
+export type ArchiveTaskFilter = "all" | "unassigned" | "pending" | "done";
+
+export interface ArchiveTaskCount {
+    jobs: number;
+    invoices: number;
+}
+
+export type ArchiveTaskStats = Record<ArchiveTaskFilter, ArchiveTaskCount>;
 
 // --- Helpers ---
 /**
@@ -51,6 +112,441 @@ function sanitizeFirebaseData(data: any): any {
         }
     });
     return cleaned;
+}
+
+function normalizeSearchValue(value: unknown) {
+    return (value ?? "")
+        .toString()
+        .toLocaleLowerCase("az-AZ")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/ə/g, "e")
+        .replace(/ı/g, "i")
+        .replace(/ö/g, "o")
+        .replace(/ü/g, "u")
+        .replace(/ğ/g, "g")
+        .replace(/ş/g, "s")
+        .replace(/ç/g, "c")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+function titleCaseSearchValue(value: string) {
+    return value
+        .split(" ")
+        .filter(Boolean)
+        .map(part => part.charAt(0).toLocaleUpperCase("az-AZ") + part.slice(1).toLocaleLowerCase("az-AZ"))
+        .join(" ");
+}
+
+function uniqueSearchVariants(term: string) {
+    const trimmed = term.trim();
+    return Array.from(new Set([
+        trimmed,
+        trimmed.toUpperCase(),
+        trimmed.toLocaleUpperCase("az-AZ"),
+        trimmed.toLocaleLowerCase("az-AZ"),
+        titleCaseSearchValue(trimmed)
+    ].filter(Boolean)));
+}
+
+function addCustomerSearchMeta(data: any) {
+    const details = data?.details || {};
+    const values = [
+        data?.customerCode,
+        data?.fullName,
+        details?.fin,
+        details?.passportSeries,
+        data?.createdBy,
+        data?.assignedTo,
+        data?.archiveAssignedTo
+    ];
+
+    return {
+        searchText: values.map(normalizeSearchValue).filter(Boolean).join(" "),
+        searchTokens: Array.from(new Set(values.flatMap(value =>
+            normalizeSearchValue(value)
+                .split(/[\s,.;:()/_-]+/)
+                .filter(token => token.length >= 2)
+        ))).slice(0, 80)
+    };
+}
+
+function customerMatchesScope(customer: any, scope: CustomerPageOptions["scope"]) {
+    if (scope === "active") return !customer.isArchived;
+    if (scope === "archived") return !!customer.isArchived;
+    if (scope === "archiveTasks") {
+        const invoices = customer.details?.invoices || [];
+        return invoices.some((inv: any) => inv?.archiveRequested || inv?.archiveUrl)
+            || customer.process_status === "WAITING_FOR_ARCHIVE"
+            || customer.process_status === "ARCHIVE_UPLOADED";
+    }
+    return true;
+}
+
+function customerMatchesTerm(customer: any, term: string) {
+    if (!term.trim()) return true;
+    const normalized = normalizeSearchValue(term);
+    const haystack = [
+        customer.id,
+        customer.customerCode,
+        customer.fullName,
+        customer.createdBy,
+        customer.assignedTo,
+        customer.archiveAssignedTo,
+        customer.details?.fin,
+        customer.details?.passportSeries,
+        customer.details?.phone,
+        customer.details?.contractNumber,
+        customer.searchText
+    ].map(normalizeSearchValue).join(" ");
+
+    const tokens = normalized.split(" ").filter(token => token.length >= 2);
+    return haystack.includes(normalized) || (tokens.length > 0 && tokens.every(token => haystack.includes(token)));
+}
+
+function customerMatchesOptions(customer: any, options: CustomerPageOptions) {
+    if (!customerMatchesScope(customer, options.scope || "all")) return false;
+    if (options.assignedTo && customer.assignedTo !== options.assignedTo) return false;
+    if (options.archiveAssignedTo && customer.archiveAssignedTo !== options.archiveAssignedTo) return false;
+    if (options.createdBy && customer.createdBy !== options.createdBy) return false;
+    if (options.status && customer.process_status !== options.status) return false;
+    if (options.archiveTaskKey && !(customer.archiveFilterKeys || []).includes(options.archiveTaskKey)) return false;
+    if (options.archivedCustomerKey && !(customer.archivedCustomerKeys || []).includes(options.archivedCustomerKey)) return false;
+    if (!customerMatchesTerm(customer, options.searchTerm || "")) return false;
+
+    if (options.startDate || options.endDate) {
+        if (!customer.createdAt) return false;
+        const created = new Date(customer.createdAt).getTime();
+        if (!Number.isFinite(created)) return false;
+        if (options.startDate) {
+            const start = new Date(options.startDate);
+            start.setHours(0, 0, 0, 0);
+            if (created < start.getTime()) return false;
+        }
+        if (options.endDate) {
+            const end = new Date(options.endDate);
+            end.setHours(23, 59, 59, 999);
+            if (created > end.getTime()) return false;
+        }
+    }
+
+    return options.filter ? options.filter(customer) : true;
+}
+
+function snapshotToCustomers(querySnap: any) {
+    return querySnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+}
+
+function parseArchiveTime(value: any) {
+    if (!value) return 0;
+    if (typeof value?.toDate === "function") return value.toDate().getTime();
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+}
+
+function getArchiveRequestTimeFromCustomer(customer: any) {
+    const invoices = customer?.details?.invoices?.filter((inv: any) => inv?.archiveRequested || inv?.archiveUrl) || [];
+    const invoiceTimes = invoices
+        .map((inv: any) => parseArchiveTime(inv.archiveRequestedAt))
+        .filter((time: number) => time > 0);
+
+    if (invoiceTimes.length > 0) return Math.max(...invoiceTimes);
+
+    const latestAction = customer?.statusHistory
+        ?.filter((h: any) => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
+        ?.sort((a: any, b: any) => parseArchiveTime(b.timestamp) - parseArchiveTime(a.timestamp))[0];
+
+    return latestAction ? parseArchiveTime(latestAction.timestamp) : 0;
+}
+
+function hasRecentArchiveAction(customer: any) {
+    const invoices = customer?.details?.invoices?.filter((inv: any) => inv?.archiveRequested || inv?.archiveUrl) || [];
+    return invoices.some((inv: any) => {
+        if (inv.archiveRequestedAt) return parseArchiveTime(inv.archiveRequestedAt) >= ARCHIVE_REQUEST_CUTOFF;
+
+        const latestAction = customer?.statusHistory
+            ?.filter((h: any) => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
+            ?.sort((a: any, b: any) => parseArchiveTime(b.timestamp) - parseArchiveTime(a.timestamp))[0];
+
+        return latestAction ? parseArchiveTime(latestAction.timestamp) >= ARCHIVE_REQUEST_CUTOFF : false;
+    });
+}
+
+function getArchiveMeta(customer: any) {
+    const invoices = customer?.details?.invoices?.filter((inv: any) => inv?.archiveRequested || inv?.archiveUrl) || [];
+    const total = invoices.length;
+    const done = invoices.filter((inv: any) => !!inv.archiveUrl).length;
+    const requestTime = getArchiveRequestTimeFromCustomer(customer);
+    const isVisibleArchiveTask = total > 0
+        && requestTime >= ARCHIVE_REQUEST_CUTOFF
+        && requestTime >= ARCHIVE_VISIBLE_CUTOFF
+        && hasRecentArchiveAction(customer);
+    const assignedTo = customer?.archiveAssignedTo || "";
+    const isDone = isVisibleArchiveTask && total > 0 && done === total;
+    const isPending = isVisibleArchiveTask && !!assignedTo && !isDone;
+    const keys: string[] = [];
+
+    if (isVisibleArchiveTask) {
+        if (assignedTo) {
+            keys.push("archive:all", `archive:${assignedTo}:all`);
+            keys.push(isDone ? "archive:done" : "archive:pending");
+            keys.push(isDone ? `archive:${assignedTo}:done` : `archive:${assignedTo}:pending`);
+        } else {
+            keys.push("archive:unassigned");
+        }
+    }
+
+    return {
+        archiveTaskActive: isVisibleArchiveTask,
+        archiveTaskActiveCount: isVisibleArchiveTask ? 1 : 0,
+        archiveTaskTime: requestTime || 0,
+        archiveInvoiceTotal: isVisibleArchiveTask ? total : 0,
+        archiveInvoiceDone: isVisibleArchiveTask ? done : 0,
+        archiveIsDone: isDone,
+        archiveIsPending: isPending,
+        archiveFilterKeys: keys
+    };
+}
+
+function getArchivedEffectiveStatus(customer: any) {
+    const statusHistory = Array.isArray(customer?.statusHistory) ? customer.statusHistory : [];
+    const hasCreateInHistory = statusHistory.some((h: any) => h?.action === "CREATE");
+    const effectiveCount = statusHistory.length + (customer?.createdAt && !hasCreateInHistory ? 1 : 0);
+    return effectiveCount < 2 ? "UNFINISHED_ARCHIVE" : (customer?.process_status || "INSPECTOR_ENTERED");
+}
+
+function getArchivedByUser(customer: any) {
+    const statusHistory = Array.isArray(customer?.statusHistory) ? customer.statusHistory : [];
+    return customer?.archivedBy || statusHistory.find((h: any) => h?.action === "ARCHIVE")?.user || "";
+}
+
+function getArchivedCustomerMeta(customer: any) {
+    const isArchived = !!customer?.isArchived;
+    const status = isArchived ? getArchivedEffectiveStatus(customer) : "";
+    const assignedTo = customer?.assignedTo || "";
+    const archiveAssignedTo = customer?.archiveAssignedTo || "";
+    const archivedBy = isArchived ? getArchivedByUser(customer) : "";
+    const keys: string[] = [];
+
+    if (isArchived) {
+        keys.push("archived:all", `archived:status:${status}`);
+
+        if (assignedTo) {
+            keys.push(`archived:executor:${assignedTo}`, `archived:executor:${assignedTo}:status:${status}`);
+        }
+        if (archiveAssignedTo) {
+            keys.push(`archived:archiver:${archiveAssignedTo}`, `archived:archiver:${archiveAssignedTo}:status:${status}`);
+        }
+        if (archivedBy) {
+            keys.push(`archived:admin:${archivedBy}`, `archived:admin:${archivedBy}:status:${status}`);
+            if (assignedTo) {
+                keys.push(
+                    `archived:admin:${archivedBy}:executor:${assignedTo}`,
+                    `archived:admin:${archivedBy}:executor:${assignedTo}:status:${status}`
+                );
+            }
+        }
+    }
+
+    return {
+        archivedCustomerActive: isArchived,
+        archivedEffectiveStatus: status,
+        archivedBy,
+        archivedCustomerKeys: keys
+    };
+}
+
+function emptyArchiveStats(): ArchiveTaskStats {
+    return {
+        all: { jobs: 0, invoices: 0 },
+        unassigned: { jobs: 0, invoices: 0 },
+        pending: { jobs: 0, invoices: 0 },
+        done: { jobs: 0, invoices: 0 }
+    };
+}
+
+function addArchiveStats(stats: ArchiveTaskStats, filter: ArchiveTaskFilter, customer: any) {
+    const meta = getArchiveMeta(customer);
+    if (!meta.archiveTaskActive) return;
+    if (filter === "all" && !customer.archiveAssignedTo) return;
+    if (filter === "unassigned" && customer.archiveAssignedTo) return;
+    if (filter === "pending" && (!customer.archiveAssignedTo || meta.archiveIsDone)) return;
+    if (filter === "done" && !meta.archiveIsDone) return;
+
+    stats[filter].jobs += 1;
+    stats[filter].invoices += meta.archiveInvoiceTotal;
+}
+
+async function getAggregateArchiveStats(userEmail?: string | null): Promise<ArchiveTaskStats> {
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const stats = emptyArchiveStats();
+    const assignedKey = userEmail ? `archive:${userEmail}:all` : "archive:all";
+    const assignedSnapPromise = getDocs(query(customersRef, where("archiveFilterKeys", "array-contains", assignedKey)));
+    const unassignedSnapPromise = userEmail
+        ? Promise.resolve(null)
+        : getDocs(query(customersRef, where("archiveFilterKeys", "array-contains", "archive:unassigned")));
+
+    const [assignedSnap, unassignedSnap] = await Promise.all([assignedSnapPromise, unassignedSnapPromise]);
+
+    assignedSnap.docs.forEach((snapDoc) => {
+        const customer: any = snapDoc.data();
+        const invoices = Number(customer.archiveInvoiceTotal || 0);
+
+        stats.all.jobs += 1;
+        stats.all.invoices += invoices;
+
+        const bucket: ArchiveTaskFilter = customer.archiveIsDone ? "done" : "pending";
+        stats[bucket].jobs += 1;
+        stats[bucket].invoices += invoices;
+    });
+
+    unassignedSnap?.docs.forEach((snapDoc) => {
+        const customer: any = snapDoc.data();
+        stats.unassigned.jobs += 1;
+        stats.unassigned.invoices += Number(customer.archiveInvoiceTotal || 0);
+    });
+
+    return stats;
+}
+
+async function getLegacyArchiveStats(userEmail?: string | null): Promise<ArchiveTaskStats> {
+    const stats = emptyArchiveStats();
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const archiveCandidateStatuses = [
+        "ASSIGNED_BY_MANAGER",
+        "FILLED_BY_ADMIN",
+        "WAITING_FOR_ARCHIVE",
+        "ARCHIVE_UPLOADED"
+    ];
+
+    const snap = await getDocs(query(
+        customersRef,
+        where("process_status", "in", archiveCandidateStatuses)
+    ));
+
+    snap.docs.forEach((snapDoc) => {
+        const customer: any = { ...snapDoc.data(), id: snapDoc.id };
+        if (userEmail && customer.archiveAssignedTo !== userEmail) return;
+        addArchiveStats(stats, "all", customer);
+        addArchiveStats(stats, "unassigned", customer);
+        addArchiveStats(stats, "pending", customer);
+        addArchiveStats(stats, "done", customer);
+    });
+
+    return stats;
+}
+
+export async function getArchiveTaskStats(userEmail?: string | null): Promise<ArchiveTaskStats> {
+    try {
+        const aggregateStats = await getAggregateArchiveStats(userEmail);
+        const legacyStats = await getLegacyArchiveStats(userEmail);
+        const merged = emptyArchiveStats();
+        (["all", "unassigned", "pending", "done"] as ArchiveTaskFilter[]).forEach((filter) => {
+            const aggregate = aggregateStats[filter];
+            const legacy = legacyStats[filter];
+            merged[filter] = legacy.jobs > aggregate.jobs ? legacy : aggregate;
+        });
+        return merged;
+    } catch (e) {
+        console.warn("archive stats fallback:", e);
+        return getLegacyArchiveStats(userEmail);
+    }
+}
+
+const DASHBOARD_STATUS_LABELS: Record<string, string> = {
+    INSPECTOR_ENTERED: "Yeni daxil edildi",
+    ASSIGNED_BY_MANAGER: "İcraata götürüldü",
+    FILLED_BY_ADMIN: "Məlumatlar doldurulub",
+    WAITING_FOR_ARCHIVE: "Arxivdən sənəd istənilib",
+    ARCHIVE_UPLOADED: "Arxiv faylı əlavə olundu",
+    COMPLETED: "Sənədlər tamamlandı",
+    UNFINISHED_ARCHIVE: "Tamamlanmayan sənəd"
+};
+
+const DASHBOARD_STATUSES = [
+    "INSPECTOR_ENTERED",
+    "ASSIGNED_BY_MANAGER",
+    "FILLED_BY_ADMIN",
+    "WAITING_FOR_ARCHIVE",
+    "ARCHIVE_UPLOADED",
+    "COMPLETED",
+    "UNFINISHED_ARCHIVE"
+];
+
+const DASHBOARD_ACTIVE_STATUSES = [
+    "ASSIGNED_BY_MANAGER",
+    "FILLED_BY_ADMIN",
+    "WAITING_FOR_ARCHIVE",
+    "ARCHIVE_UPLOADED",
+    "COMPLETED"
+];
+
+async function countCustomersWithConstraints(constraints: QueryConstraint[]) {
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const snap = await getCountFromServer(query(customersRef, ...constraints));
+    return snap.data().count || 0;
+}
+
+export async function getCustomerDashboardStats(targetEmail?: string | null): Promise<CustomerDashboardStats> {
+    const scoped = (constraints: QueryConstraint[]) => [
+        ...(targetEmail ? [where("assignedTo", "==", targetEmail)] : []),
+        ...constraints
+    ];
+
+    const [statusTotalsList, archivedStatusList, archivedFlagCount] = await Promise.all([
+        Promise.all(DASHBOARD_STATUSES.map(status =>
+            countCustomersWithConstraints(scoped([where("process_status", "==", status)]))
+        )),
+        Promise.all(DASHBOARD_STATUSES.map(status =>
+            countCustomersWithConstraints(scoped([where("process_status", "==", status), where("isArchived", "==", true)]))
+        )),
+        countCustomersWithConstraints(scoped([where("isArchived", "==", true)]))
+    ]);
+
+    const statusTotals = DASHBOARD_STATUSES.reduce<Record<string, number>>((acc, status, index) => {
+        acc[status] = statusTotalsList[index] || 0;
+        return acc;
+    }, {});
+    const archivedByStatus = DASHBOARD_STATUSES.reduce<Record<string, number>>((acc, status, index) => {
+        acc[status] = archivedStatusList[index] || 0;
+        return acc;
+    }, {});
+
+    const activeBreakdown = DASHBOARD_ACTIVE_STATUSES
+        .map(status => ({
+            label: DASHBOARD_STATUS_LABELS[status],
+            value: Math.max(0, (statusTotals[status] || 0) - (archivedByStatus[status] || 0))
+        }))
+        .filter(item => item.value > 0);
+
+    const active = activeBreakdown.reduce((sum, item) => sum + item.value, 0);
+    const newCount = Math.max(0, (statusTotals.INSPECTOR_ENTERED || 0) - (archivedByStatus.INSPECTOR_ENTERED || 0));
+    const unfinishedArchived = Math.max(0, (statusTotals.UNFINISHED_ARCHIVE || 0) - (archivedByStatus.UNFINISHED_ARCHIVE || 0));
+    const archived = archivedFlagCount + unfinishedArchived;
+    const total = DASHBOARD_STATUSES.reduce((sum, status) => sum + (statusTotals[status] || 0), 0);
+
+    const archivedBreakdown = [
+        { label: "Arxiv işləri", value: archivedFlagCount },
+        { label: DASHBOARD_STATUS_LABELS.UNFINISHED_ARCHIVE, value: unfinishedArchived }
+    ].filter(item => item.value > 0);
+
+    return {
+        active,
+        archived,
+        total,
+        unassigned: targetEmail ? 0 : newCount,
+        isGlobal: !targetEmail,
+        breakdown: {
+            active: activeBreakdown,
+            archived: archivedBreakdown,
+            total: [
+                { label: "Davam edən işlər", value: active },
+                { label: DASHBOARD_STATUS_LABELS.INSPECTOR_ENTERED, value: newCount },
+                { label: "Arxivə göndərilən", value: archived }
+            ].filter(item => item.value > 0)
+        }
+    };
 }
 
 // Permissions Logic
@@ -203,7 +699,12 @@ export async function bulkAddCustomers(customers: any[], userEmail: string = "sy
                     }
                 ]
             };
-            batch.set(customerRef, sanitizeFirebaseData(data), { merge: true });
+            batch.set(customerRef, sanitizeFirebaseData({
+                ...data,
+                ...addCustomerSearchMeta(data),
+                ...getArchiveMeta(data),
+                ...getArchivedCustomerMeta(data)
+            }), { merge: true });
             results.push(data);
         }
         await batch.commit();
@@ -222,6 +723,350 @@ export async function getCustomers() {
     } catch (e) {
         return [];
     }
+}
+
+function buildCustomerWhereConstraints(options: CustomerPageOptions, includeDate = true): QueryConstraint[] {
+    const constraints: QueryConstraint[] = [];
+
+    if (options.scope === "archived" && !options.archivedCustomerKey) constraints.push(where("isArchived", "==", true));
+    if (options.assignedTo) constraints.push(where("assignedTo", "==", options.assignedTo));
+    if (options.archiveAssignedTo) constraints.push(where("archiveAssignedTo", "==", options.archiveAssignedTo));
+    if (options.createdBy) constraints.push(where("createdBy", "==", options.createdBy));
+    if (options.status) constraints.push(where("process_status", "==", options.status));
+    if (options.archiveTaskKey) constraints.push(where("archiveFilterKeys", "array-contains", options.archiveTaskKey));
+    if (options.archivedCustomerKey) constraints.push(where("archivedCustomerKeys", "array-contains", options.archivedCustomerKey));
+
+    if (includeDate && options.startDate) {
+        const start = new Date(options.startDate);
+        start.setHours(0, 0, 0, 0);
+        constraints.push(where("createdAt", ">=", start.toISOString()));
+    }
+    if (includeDate && options.endDate) {
+        const end = new Date(options.endDate);
+        end.setHours(23, 59, 59, 999);
+        constraints.push(where("createdAt", "<=", end.toISOString()));
+    }
+
+    return constraints;
+}
+
+async function runCustomerQueryWithFallback(
+    primaryConstraints: QueryConstraint[],
+    fallbackConstraints: QueryConstraint[],
+    minimalConstraints: QueryConstraint[]
+) {
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    try {
+        return await getDocs(query(customersRef, ...primaryConstraints));
+    } catch (primaryError) {
+        console.warn("customer query fallback:", primaryError);
+        try {
+            return await getDocs(query(customersRef, ...fallbackConstraints));
+        } catch (fallbackError) {
+            console.warn("customer query minimal fallback:", fallbackError);
+            return await getDocs(query(customersRef, ...minimalConstraints));
+        }
+    }
+}
+
+async function getArchiveScopedSearchPage(options: CustomerPageOptions): Promise<CustomerPageResult> {
+    const pageSize = options.pageSize || 25;
+    const page = Math.max(1, options.page || 1);
+    const needed = page * pageSize + 1;
+    const scanLimit = Math.max(needed, options.searchScanLimit ?? 800);
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const rows: any[] = [];
+    let scanCursor: CustomerPageCursor = null;
+    let readCount = 0;
+    let reachedEnd = false;
+
+    while (rows.length < needed && readCount < scanLimit) {
+        const currentLimit = Math.min(100, scanLimit - readCount);
+        const snap: any = await getDocs(query(
+            customersRef,
+            where("archiveFilterKeys", "array-contains", options.archiveTaskKey as string),
+            orderBy(documentId()),
+            ...(scanCursor ? [startAfter(scanCursor)] : []),
+            limit(currentLimit)
+        ));
+
+        readCount += snap.docs.length;
+        if (snap.empty) {
+            reachedEnd = true;
+            break;
+        }
+
+        snap.docs.forEach((snapDoc: QueryDocumentSnapshot<DocumentData>) => {
+            const customer = { ...snapDoc.data(), id: snapDoc.id };
+            if (customerMatchesOptions(customer, options)) rows.push(customer);
+        });
+
+        scanCursor = snap.docs[snap.docs.length - 1];
+        if (snap.docs.length < currentLimit) {
+            reachedEnd = true;
+            break;
+        }
+    }
+
+    const sortedRows = rows.sort((a, b) =>
+        new Date(b.archiveTaskTime || b.updatedAt || b.createdAt || 0).getTime()
+        - new Date(a.archiveTaskTime || a.updatedAt || a.createdAt || 0).getTime()
+    );
+    const start = (page - 1) * pageSize;
+
+    return {
+        rows: sortedRows.slice(start, start + pageSize),
+        cursor: null,
+        hasMore: sortedRows.length > start + pageSize || (!reachedEnd && readCount >= scanLimit),
+        searchMode: true,
+        readCount
+    };
+}
+
+async function getCustomerSearchPage(options: CustomerPageOptions): Promise<CustomerPageResult> {
+    if (options.archiveTaskKey) {
+        return getArchiveScopedSearchPage(options);
+    }
+
+    const pageSize = options.pageSize || 25;
+    const page = Math.max(1, options.page || 1);
+    const needed = page * pageSize + 1;
+    const perQueryLimit = Math.min(Math.max(needed, pageSize + 1), options.maxReads || 125);
+    const term = (options.searchTerm || "").trim();
+    const variants = uniqueSearchVariants(term);
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+    const byId = new Map<string, any>();
+    let readCount = 0;
+    let searchMayHaveMore = false;
+    const scopedSearchKey = options.archivedCustomerKey
+        ? { field: "archivedCustomerKeys", value: options.archivedCustomerKey }
+        : null;
+    const queryJobs: Promise<void>[] = [];
+
+    const runAndMerge = async (constraints: QueryConstraint[]) => {
+        try {
+            const snap = await getDocs(query(customersRef, ...constraints));
+            readCount += snap.docs.length;
+            snapshotToCustomers(snap).forEach((customer: any) => {
+                if (customerMatchesOptions(customer, options)) byId.set(customer.id, customer);
+            });
+        } catch (e) {
+            console.warn("customer search query skipped:", e);
+        }
+    };
+
+    const queueAndMerge = (constraints: QueryConstraint[]) => {
+        queryJobs.push(runAndMerge(constraints));
+    };
+
+    const exactDocPromise = getCustomer(term).catch(() => null);
+
+    const token = normalizeSearchValue(term).split(" ")[0];
+    if (token.length >= 2) {
+        queueAndMerge([
+            where("searchTokens", "array-contains", token),
+            limit(perQueryLimit)
+        ]);
+    }
+
+    const exactCustomerCodeVariants = Array.from(new Set([
+        term,
+        term.trim(),
+        term.toUpperCase(),
+        term.toLocaleUpperCase("az-AZ"),
+        /^\d+$/.test(term.trim()) ? Number(term.trim()) : null
+    ].filter(value => value !== null && value !== "")));
+
+    exactCustomerCodeVariants.forEach((value) => {
+        queueAndMerge([
+            where("customerCode", "==", value),
+            limit(perQueryLimit)
+        ]);
+    });
+
+    const upperTerm = term.toLocaleUpperCase("az-AZ");
+    const isNumeric = /^\d+$/.test(term.replace(/\s+/g, ""));
+    const looksLikeFinOrSeries = /^[A-Z0-9-]{5,}$/i.test(term.replace(/\s+/g, ""));
+    const prefixFields = new Set<string>(["customerCode", "fullName"]);
+    if (isNumeric || looksLikeFinOrSeries) {
+        prefixFields.add("details.fin");
+        prefixFields.add("details.passportSeries");
+    }
+    if (term.includes("@")) {
+        prefixFields.add("createdBy");
+        prefixFields.add("assignedTo");
+        prefixFields.add("archiveAssignedTo");
+    }
+
+    for (const field of prefixFields) {
+        const fieldVariants = field === "fullName" ? variants : variants.slice(0, 3);
+        for (const variant of fieldVariants) {
+            queueAndMerge([
+                orderBy(field),
+                startAt(variant),
+                endAt(`${variant}\uf8ff`),
+                limit(perQueryLimit)
+            ]);
+        }
+    }
+
+    for (const variant of [term, upperTerm].filter(Boolean)) {
+        queueAndMerge([
+            orderBy(documentId()),
+            startAt(variant),
+            endAt(`${variant}\uf8ff`),
+            limit(perQueryLimit)
+        ]);
+    }
+
+    await Promise.all(queryJobs);
+    const exactDoc = await exactDocPromise;
+    if (exactDoc && customerMatchesOptions(exactDoc, options)) {
+        byId.set((exactDoc as any).id, exactDoc);
+    }
+
+    if (term.length >= 2 && byId.size < needed) {
+        const scanLimit = Math.max(needed, options.searchScanLimit ?? 3000);
+        let scanCursor: CustomerPageCursor = null;
+        let scanned = 0;
+        let scanReachedEnd = false;
+
+        while (byId.size < needed && scanned < scanLimit) {
+            const currentLimit = Math.min(250, scanLimit - scanned);
+            const scanConstraints: QueryConstraint[] = [
+                ...(scopedSearchKey ? [where(scopedSearchKey.field, "array-contains", scopedSearchKey.value)] : []),
+                orderBy(documentId()),
+                ...(scanCursor ? [startAfter(scanCursor)] : []),
+                limit(currentLimit)
+            ];
+
+            const snap = await getDocs(query(customersRef, ...scanConstraints));
+            readCount += snap.docs.length;
+            scanned += snap.docs.length;
+
+            if (snap.empty) {
+                scanReachedEnd = true;
+                break;
+            }
+
+            snap.docs.forEach((snapDoc: QueryDocumentSnapshot<DocumentData>) => {
+                const customer = { ...snapDoc.data(), id: snapDoc.id };
+                if (customerMatchesOptions(customer, options)) byId.set(customer.id, customer);
+            });
+
+            scanCursor = snap.docs[snap.docs.length - 1];
+            if (snap.docs.length < currentLimit) {
+                scanReachedEnd = true;
+                break;
+            }
+        }
+
+        searchMayHaveMore = byId.size < needed && !scanReachedEnd && scanned >= scanLimit;
+    }
+
+    const rows = Array.from(byId.values()).sort((a, b) =>
+        new Date((options.scope === "archived" ? b.archivedAt : b.createdAt) || b.updatedAt || b.createdAt || 0).getTime()
+        - new Date((options.scope === "archived" ? a.archivedAt : a.createdAt) || a.updatedAt || a.createdAt || 0).getTime()
+    );
+    const start = (page - 1) * pageSize;
+
+    return {
+        rows: rows.slice(start, start + pageSize),
+        cursor: null,
+        hasMore: rows.length > start + pageSize || searchMayHaveMore,
+        searchMode: true,
+        readCount
+    };
+}
+
+export async function getCustomerPage(options: CustomerPageOptions = {}): Promise<CustomerPageResult> {
+    const pageSize = options.pageSize || 25;
+    const maxReads = Math.max(pageSize + 1, options.maxReads || pageSize * 6);
+
+    if ((options.searchTerm || "").trim()) {
+        return getCustomerSearchPage(options);
+    }
+
+    const whereConstraints = buildCustomerWhereConstraints(options);
+    const fallbackWhereConstraints = buildCustomerWhereConstraints(options, false);
+    const batchSize = Math.min(Math.max(pageSize + 1, 40), maxReads);
+    let queryCursor = options.cursor || null;
+    let resultCursor: CustomerPageCursor = options.cursor || null;
+    let lastScannedCursor: CustomerPageCursor = options.cursor || null;
+    const rows: any[] = [];
+    let readCount = 0;
+    let hasMore = false;
+    let reachedCollectionEnd = false;
+
+    while (rows.length <= pageSize && readCount < maxReads) {
+        const remainingReads = Math.max(1, Math.min(batchSize, maxReads - readCount));
+        const cursorConstraint = queryCursor ? [startAfter(queryCursor)] : [];
+        const hasDateRange = !!(options.startDate || options.endDate);
+        const orderedConstraints = hasDateRange
+            ? [orderBy("createdAt", "desc")]
+            : [orderBy(documentId())];
+        const primaryConstraints = [
+            ...whereConstraints,
+            ...orderedConstraints,
+            ...cursorConstraint,
+            limit(remainingReads)
+        ];
+        const fallbackConstraints = [
+            ...fallbackWhereConstraints,
+            orderBy(documentId()),
+            ...cursorConstraint,
+            limit(remainingReads)
+        ];
+        const minimalConstraints = [
+            orderBy(documentId()),
+            ...cursorConstraint,
+            limit(remainingReads)
+        ];
+
+        const snap = await runCustomerQueryWithFallback(primaryConstraints, fallbackConstraints, minimalConstraints);
+        if (snap.empty) {
+            reachedCollectionEnd = true;
+            break;
+        }
+
+        readCount += snap.docs.length;
+        let lastRawDoc: CustomerPageCursor = null;
+
+        for (const snapDoc of snap.docs) {
+            lastRawDoc = snapDoc;
+            lastScannedCursor = snapDoc;
+            const customer = { ...snapDoc.data(), id: snapDoc.id };
+            if (!customerMatchesOptions(customer, options)) continue;
+
+            if (rows.length < pageSize) {
+                rows.push(customer);
+                resultCursor = snapDoc;
+            } else {
+                hasMore = true;
+                break;
+            }
+        }
+
+        if (hasMore) break;
+        if (snap.docs.length < remainingReads) {
+            reachedCollectionEnd = true;
+            break;
+        }
+        queryCursor = lastRawDoc;
+    }
+
+    if (!hasMore && !reachedCollectionEnd && lastScannedCursor && readCount >= maxReads) {
+        hasMore = true;
+        resultCursor = lastScannedCursor;
+    }
+
+    return {
+        rows,
+        cursor: resultCursor,
+        hasMore,
+        searchMode: false,
+        readCount
+    };
 }
 
 export async function getInspectorCustomers(email: string) {
@@ -476,7 +1321,13 @@ export async function updateCustomer(id: string, data: any, userEmail: string = 
                 cleanedData.statusHistory = statusHistory;
             }
 
-            transaction.set(customerRef, sanitizeFirebaseData({ ...cleanedData, updatedAt: serverTimestamp() }), { merge: true });
+            transaction.set(customerRef, sanitizeFirebaseData({
+                ...cleanedData,
+                ...addCustomerSearchMeta(cleanedData),
+                ...getArchiveMeta(cleanedData),
+                ...getArchivedCustomerMeta(cleanedData),
+                updatedAt: serverTimestamp()
+            }), { merge: true });
 
             if (action !== "UPDATE") {
                 await addAuditLog(action, detail, userEmail, category, {
@@ -694,6 +1545,9 @@ export async function moveCustomer(oldId: string, newCode: string, userEmail: st
             ...data,
             id: cleanNewCode,
             customerCode: cleanNewCode,
+            ...addCustomerSearchMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
+            ...getArchiveMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
+            ...getArchivedCustomerMeta({ ...data, id: cleanNewCode, customerCode: cleanNewCode }),
             updatedAt: serverTimestamp(),
             updatedBy: userEmail
         });

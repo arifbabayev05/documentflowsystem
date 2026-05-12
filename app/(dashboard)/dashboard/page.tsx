@@ -37,7 +37,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomers, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores } from "@/lib/db";
+import { getCustomerPage, getCustomerDashboardStats, bulkAddCustomers, deleteCustomer, updateCustomer, getAllUsers, getStores, CustomerPageCursor, CustomerDashboardStats } from "@/lib/db";
 import { formatDateInput, toTitleCase, numberToAzerbaijaniFinancialWords } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useBotStatus } from "@/hooks/useBotStatus";
@@ -3076,7 +3076,10 @@ export default function DashboardPage() {
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState<ProcessStatus | "all">("all");
     const [page, setPage] = useState(1);
-    const itemsPerPage = 50;
+    const itemsPerPage = 25;
+    const [pageCursors, setPageCursors] = useState<CustomerPageCursor[]>([null]);
+    const [hasNextPage, setHasNextPage] = useState(false);
+    const [dashboardStats, setDashboardStats] = useState<CustomerDashboardStats | null>(null);
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const [exportStartDate, setExportStartDate] = useState("");
     const [exportEndDate, setExportEndDate] = useState("");
@@ -3124,32 +3127,59 @@ export default function DashboardPage() {
         }
     };
 
-    const fetchCustomers = async (isInitial = false) => {
-        if (isInitial) {
-            try {
-                const cached = localStorage.getItem("legal12_customers");
-                if (cached) {
-                    const parsed = JSON.parse(cached);
-                    setRows(parsed);
-                    setLoadingData(false);
-                }
-            } catch (e) {
-                localStorage.removeItem("legal12_customers");
-            }
-        }
-
+    const fetchCustomers = async (targetPage = 1, cursor: CustomerPageCursor = null) => {
         try {
-            const data = await getCustomers() as CustomerRow[];
-            const sorted = data.sort((a, b) =>
-                new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-            );
+            setLoadingData(true);
+            const isManagerRole = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
+            const isSpecialAdminUnfinished = user?.role === 'ADMIN' && statusFilter === 'UNFINISHED_ARCHIVE' && executorFilter === "all";
+            const queryAssignedTo = executorFilter !== "all"
+                ? executorFilter
+                : (!isManagerRole && !isSpecialAdminUnfinished ? user?.email : undefined);
+            const hasClientOnlyFilters = warningFilter !== "all" || (invoiceMode !== "all" && invoiceCount !== "");
+            const needsClientFilter = hasClientOnlyFilters || isSpecialAdminUnfinished || (!isManagerRole && !queryAssignedTo);
+            const data = await getCustomerPage({
+                pageSize: itemsPerPage,
+                cursor,
+                page: targetPage,
+                searchTerm,
+                scope: statusFilter === 'UNFINISHED_ARCHIVE' ? 'all' : 'active',
+                status: statusFilter !== "all" ? statusFilter : undefined,
+                assignedTo: queryAssignedTo,
+                maxReads: searchTerm.trim() ? 250 : (needsClientFilter ? 300 : 120),
+                searchScanLimit: 3000,
+                filter: needsClientFilter ? (c: CustomerRow) => {
+                    const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
+                    const isAssignedToMe = c.assignedTo === user?.email;
+                    if (!isManagerRole && !isAssignedToMe && !canSeeUnfinished) return false;
+                    if (c.isArchived && statusFilter !== 'UNFINISHED_ARCHIVE') return false;
 
-            const mergedRows = sorted.map(row => ({
+                    const isSent = !!c.details?.isWarningSent;
+                    const overdue = isOverdue(c.details?.warningDate);
+                    if (warningFilter === "sent" && !isSent) return false;
+                    if (warningFilter === "overdue" && (!isSent || !overdue)) return false;
+                    if (warningFilter === "unsent" && isSent) return false;
+
+                    if (invoiceMode !== "all" && invoiceCount !== "") {
+                        const invoices = c.details?.invoices || [];
+                        const count = invoices.length > 0 ? invoices.length : (c.details?.contractNumber ? 1 : 0);
+                        const target = parseInt(invoiceCount);
+                        if (!isNaN(target)) {
+                            if (invoiceMode === "exact" && count !== target) return false;
+                            if (invoiceMode === "min" && count < target) return false;
+                            if (invoiceMode === "max" && count > target) return false;
+                        }
+                    }
+
+                    return true;
+                } : undefined
+            });
+
+            const mergedRows = (data.rows as CustomerRow[]).map(row => ({
                 ...row,
                 customerCode: row.customerCode || row.details?.fin || ""
             }));
 
-            const finalRows = mergedRows.length > 0 ? mergedRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
+            const finalRows = mergedRows.length > 0 ? mergedRows : [];
 
             // DIAGNOSTIC
             const idsSeen = new Set();
@@ -3163,6 +3193,15 @@ export default function DashboardPage() {
             if (dupIds.length > 0) console.warn("DUPLICATE IDs IN FETCH:", dupIds);
 
             setRows(finalRows);
+            setPage(targetPage);
+            setHasNextPage(data.hasMore);
+            if (!data.searchMode) {
+                setPageCursors(prev => {
+                    const next = prev.slice(0, targetPage);
+                    next[targetPage] = data.cursor;
+                    return next;
+                });
+            }
             updateLocalRowsCache(finalRows);
         } catch (err) {
             console.error("Failed to load customers:", err);
@@ -3173,7 +3212,6 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        fetchCustomers(true);
         if (user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD') {
             getAllUsers().then(users => {
                 const assignable = users.filter((u: any) => u.role === 'ADMIN');
@@ -3183,9 +3221,26 @@ export default function DashboardPage() {
         getStores().then(setStores);
     }, [user?.role]);
 
+    const fetchDashboardStats = useCallback(async () => {
+        if (!user?.email) return;
+        try {
+            const isManagerRole = user.role === 'SUPERADMIN' || user.role === 'MANAGER' || user.role === 'DEP_HEAD';
+            const targetEmail = executorFilter !== "all" ? executorFilter : (isManagerRole ? null : user.email);
+            setDashboardStats(await getCustomerDashboardStats(targetEmail));
+        } catch (err) {
+            console.warn("Dashboard stats count failed:", err);
+        }
+    }, [executorFilter, user?.email, user?.role]);
+
     useEffect(() => {
-        setPage(1);
-    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter]);
+        fetchDashboardStats();
+    }, [fetchDashboardStats]);
+
+    useEffect(() => {
+        setPageCursors([null]);
+        const timer = setTimeout(() => fetchCustomers(1, null), searchTerm.trim() ? 350 : 0);
+        return () => clearTimeout(timer);
+    }, [searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter, user?.email, user?.role]);
 
     const addRow = () => {
         const newRow: CustomerRow = {
@@ -3223,15 +3278,17 @@ export default function DashboardPage() {
                     updateLocalRowsCache(newRows);
                     return newRows;
                 });
+                fetchDashboardStats();
             } else {
                 await bulkAddCustomers([dataToSave], user?.email);
                 await fetchCustomers();
+                fetchDashboardStats();
             }
         } catch (error) {
             console.error("Save error:", error);
             throw error;
         }
-    }, [user?.email, rows, fetchCustomers, updateLocalRowsCache]);
+    }, [user?.email, rows, fetchCustomers, updateLocalRowsCache, fetchDashboardStats]);
 
     const onDelete = useCallback((id: string | undefined, index: number) => {
         setDeleteModal({ isOpen: true, index, id: id || null });
@@ -3261,6 +3318,7 @@ export default function DashboardPage() {
                 const finalRows = nextRows.length > 0 ? nextRows : [{ customerCode: "", fullName: "", debtAmount: "", createdAt: new Date().toISOString() }];
                 setRows(finalRows);
                 updateLocalRowsCache(finalRows);
+                fetchDashboardStats();
                 toast.error("Məlumat silindi");
             } else {
                 // For unsaved rows
@@ -3276,68 +3334,7 @@ export default function DashboardPage() {
         setDeleteModal({ isOpen: false, index: null, id: null });
     };
 
-    const filteredRows = useMemo(() => {
-        const lowSearch = searchTerm.toLowerCase();
-        const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'INSPECTOR_LEAD' || user?.role === 'DEP_HEAD';
-
-        return rows.filter(c => {
-            // Archive filter: dashboard primarily shows active work.
-            // Items in 'UNFINISHED_ARCHIVE' are technically archived but should be visible if that status is selected.
-            if (c.isArchived) {
-                if (statusFilter !== 'UNFINISHED_ARCHIVE') return false;
-            }
-
-            // First level: Role based access
-            // Inspectors/Admins see only what's assigned to them
-            // Admin sees only what's assigned to them, EXCEPT for UNFINISHED_ARCHIVE tasks that are unassigned
-            const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
-            const isAssignedToMe = c.assignedTo === user?.email;
-
-            if (!isManager && !isAssignedToMe && !canSeeUnfinished) {
-                // Exceptional case: If it's a new unsaved row being created right now
-                if (!c.id) return true;
-                return false;
-            }
-
-            const matchesSearch = !searchTerm ||
-                c.fullName.toLowerCase().includes(lowSearch) ||
-                (c.customerCode || "").toLowerCase().includes(lowSearch) ||
-                (c.details?.fin || "").toLowerCase().includes(lowSearch);
-
-            const isSent = !!c.details?.isWarningSent;
-            const overdue = isOverdue(c.details?.warningDate);
-
-            let matchesWarning = true;
-            if (warningFilter === "sent") matchesWarning = isSent;
-            else if (warningFilter === "overdue") matchesWarning = isSent && overdue;
-            else if (warningFilter === "unsent") matchesWarning = !isSent;
-
-            let matchesInvoiceCount = true;
-            if (invoiceMode !== "all" && invoiceCount !== "") {
-                const invoices = c.details?.invoices || [];
-                // Support legacy data structure (items with a contract number but no invoices array yet)
-                const count = invoices.length > 0 ? invoices.length : (c.details?.contractNumber ? 1 : 0);
-                const target = parseInt(invoiceCount);
-                if (!isNaN(target)) {
-                    if (invoiceMode === "exact") matchesInvoiceCount = count === target;
-                    else if (invoiceMode === "min") matchesInvoiceCount = count >= target;
-                    else if (invoiceMode === "max") matchesInvoiceCount = count <= target;
-                }
-            }
-
-            let matchesStatus = true;
-            if (statusFilter !== "all") {
-                matchesStatus = c.process_status === statusFilter;
-            }
-
-            let matchesExecutor = true;
-            if (executorFilter !== "all") {
-                matchesExecutor = c.assignedTo === executorFilter;
-            }
-
-            return matchesSearch && matchesWarning && matchesInvoiceCount && matchesStatus && matchesExecutor;
-        });
-    }, [rows, searchTerm, warningFilter, invoiceCount, invoiceMode, statusFilter, executorFilter, user?.email, user?.role]);
+    const filteredRows = useMemo(() => rows, [rows]);
 
     const userWorkload = useMemo(() => {
         const map: Record<string, number> = {};
@@ -3512,7 +3509,8 @@ export default function DashboardPage() {
     };
 
     const myStats = useMemo(() => {
-        if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0, breakdown: null };
+        if (dashboardStats) return dashboardStats;
+        if (!user?.email) return { active: 0, archived: 0, total: 0, unassigned: 0, isGlobal: true, breakdown: null };
 
         const isManager = user?.role === 'SUPERADMIN' || user?.role === 'MANAGER' || user?.role === 'DEP_HEAD';
         const targetEmail = (executorFilter !== 'all') ? executorFilter : (isManager ? null : user.email);
@@ -3593,7 +3591,7 @@ export default function DashboardPage() {
                 ].filter(b => b.value > 0)
             }
         };
-    }, [rows, user?.email, user?.role, executorFilter]);
+    }, [dashboardStats, rows, user?.email, user?.role, executorFilter]);
 
     if (loadingData && rows.length === 0) {
         return (
@@ -3826,6 +3824,12 @@ export default function DashboardPage() {
                 </div>
 
                 {/* 2. CARD LIST */}
+                {loadingData && rows.length > 0 && (
+                    <div className="mt-6 flex items-center justify-center gap-3 rounded-xl border border-blue-100 bg-blue-50/80 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-blue-700 shadow-sm">
+                        <Loader2 size={16} className="animate-spin" />
+                        Məlumatlar yüklənir...
+                    </div>
+                )}
                 <div className="grid grid-cols-1 gap-6 mt-6 pb-20">
                     <style dangerouslySetInnerHTML={{
                         __html: `
@@ -3839,7 +3843,7 @@ export default function DashboardPage() {
                         }
                     `}} />
 
-                    {filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage).map((row, index) => {
+                    {filteredRows.map((row, index) => {
                         return (
                             <CustomerCard
                                 key={row.id || `new-${index}`}
@@ -3862,75 +3866,38 @@ export default function DashboardPage() {
                     })}
                 </div>
 
-                {filteredRows.length > 0 && (
+                {(filteredRows.length > 0 || page > 1 || hasNextPage) && (
                     <div className="flex flex-col items-center gap-4 pt-10 pb-20">
                         <div className="flex items-center gap-2">
                             <button
-                                disabled={page === 1}
-                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page === 1 || loadingData}
+                                onClick={() => fetchCustomers(Math.max(1, page - 1), pageCursors[Math.max(0, page - 2)] || null)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
                                 <Minus size={16} />
                             </button>
 
                             <div className="flex items-center gap-1.5 mx-4">
-                                {(() => {
-                                    const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
-                                    let startPage = Math.max(1, page - 2);
-                                    let endPage = Math.min(totalPages, startPage + 4);
-
-                                    if (endPage - startPage < 4) {
-                                        startPage = Math.max(1, endPage - 4);
-                                    }
-
-                                    const pages = [];
-                                    for (let i = startPage; i <= endPage; i++) {
-                                        pages.push(
-                                            <button
-                                                key={i}
-                                                onClick={() => setPage(i)}
-                                                className={cn(
-                                                    "h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black transition-all border",
-                                                    page === i
-                                                        ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200"
-                                                        : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
-                                                )}
-                                            >
-                                                {i}
-                                            </button>
-                                        );
-                                    }
-                                    return pages;
-                                })()}
-
-                                {Math.ceil(filteredRows.length / itemsPerPage) > 5 && page < Math.ceil(filteredRows.length / itemsPerPage) - 2 && (
-                                    <>
-                                        <span className="text-slate-300 mx-1">...</span>
-                                        <button
-                                            onClick={() => setPage(Math.ceil(filteredRows.length / itemsPerPage))}
-                                            className="h-10 min-w-[40px] px-2 flex items-center justify-center rounded-xl text-xs font-black bg-white text-slate-500 border border-slate-200 hover:border-slate-400 transition-all"
-                                        >
-                                            {Math.ceil(filteredRows.length / itemsPerPage)}
-                                        </button>
-                                    </>
-                                )}
+                                <span className="h-10 min-w-[88px] px-4 flex items-center justify-center rounded-xl text-xs font-black bg-slate-900 text-white border border-slate-900 shadow-lg shadow-slate-200">
+                                    {page}
+                                </span>
                             </div>
 
                             <button
-                                disabled={page >= Math.ceil(filteredRows.length / itemsPerPage)}
-                                onClick={() => setPage(p => p + 1)}
+                                disabled={!hasNextPage || loadingData}
+                                onClick={() => fetchCustomers(page + 1, pageCursors[page] || null)}
                                 className="h-10 w-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                             >
                                 <Plus size={16} />
                             </button>
                         </div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-                            SƏHİFƏ {page} / {Math.ceil(filteredRows.length / itemsPerPage)} — CƏM {filteredRows.length} MƏLUMAT
+                            Səhifə {page} - bu səhifədə {filteredRows.length} məlumat
                         </span>
                     </div>
                 )}
 
-                {filteredRows.length === 0 && (
+                {filteredRows.length === 0 && !hasNextPage && (
                     <div className="py-40 text-center flex flex-col items-center gap-6 opacity-20">
                         <div className="p-10 bg-gray-100 rounded-full">
                             <Search size={80} />
