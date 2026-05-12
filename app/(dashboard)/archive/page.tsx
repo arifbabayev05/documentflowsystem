@@ -15,9 +15,7 @@ import {
     CheckCircle2,
     Bell,
     Check,
-    ChevronLeft,
     ChevronDown,
-    ChevronRight,
     Clock,
     FolderOpen,
     Trash2,
@@ -32,7 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getCustomerPage, getArchiveTaskStats, getArchiveWorkloadStats, updateCustomer, getAllUsers, CustomerPageCursor, ArchiveTaskStats, ArchiveWorkloadStat } from "@/lib/db";
+import { getCustomerPage, getArchiveTaskStats, getArchiveWorkloadStats, updateCustomer, getAllUsers, ArchiveTaskStats, ArchiveWorkloadStat } from "@/lib/db";
 import { parseDate } from "@/lib/format";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
@@ -105,6 +103,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
 
 const months = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
 const NEW_ARCHIVE_CUTOFF = new Date("2026-04-17T00:00:00").getTime();
+const ARCHIVE_PAGE_LOAD_LIMIT = 1000;
 
 const formatRequestDate = (dateVal: any) => {
     if (!dateVal) return "";
@@ -139,10 +138,6 @@ export default function ArchiveDocumentsPage() {
     const [uploadingId, setUploadingId] = useState<string | null>(null);
     const [sideTab, setSideTab] = useState<"tasks" | "stats">("tasks");
     const [filter, setFilter] = useState<"all" | "pending" | "done" | "unassigned">("all");
-    const itemsPerPage = 25;
-    const [page, setPage] = useState(1);
-    const [pageCursors, setPageCursors] = useState<CustomerPageCursor[]>([null]);
-    const [hasNextPage, setHasNextPage] = useState(false);
 
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [assignOpen, setAssignOpen] = useState(false);
@@ -162,7 +157,7 @@ export default function ArchiveDocumentsPage() {
     const [exportExecutor, setExportExecutor] = useState<string[]>([]);
     const [exportArchiveStatus, setExportArchiveStatus] = useState<string[]>([]);
 
-    const fetchData = useCallback(async (targetPage = 1, cursor: CustomerPageCursor = null) => {
+    const fetchData = useCallback(async () => {
         try {
             setLoading(true);
             const CUTOFF_DATE = new Date("2026-03-04T00:00:00").getTime();
@@ -205,31 +200,21 @@ export default function ArchiveDocumentsPage() {
             };
 
             const custPage = await getCustomerPage({
-                pageSize: itemsPerPage,
-                cursor,
-                page: targetPage,
+                pageSize: ARCHIVE_PAGE_LOAD_LIMIT,
+                page: 1,
                 searchTerm,
                 scope: "archiveTasks",
                 archiveTaskKey: isManager
                     ? `archive:${filter}`
                     : (user?.email ? `archive:${user.email}:all` : undefined),
-                maxReads: searchTerm.trim() ? 200 : 80,
-                searchScanLimit: 800,
+                maxReads: ARCHIVE_PAGE_LOAD_LIMIT * 2,
+                searchScanLimit: ARCHIVE_PAGE_LOAD_LIMIT * 2,
                 filter: matchesArchiveFilter
             });
 
             setCustomers(custPage.rows as CustomerRow[]);
             setSelectedIds([]);
             refreshArchiveTaskStats();
-            setPage(targetPage);
-            setHasNextPage(custPage.hasMore);
-            if (!custPage.searchMode) {
-                setPageCursors(prev => {
-                    const next = prev.slice(0, targetPage);
-                    next[targetPage] = custPage.cursor;
-                    return next;
-                });
-            }
         } catch (error) {
             console.error("Fetch error:", error);
             toast.error("Məlumatlar yüklənmədi");
@@ -281,8 +266,7 @@ export default function ArchiveDocumentsPage() {
     }, [refreshArchiveTaskStats]);
 
     useEffect(() => {
-        setPageCursors([null]);
-        const timer = setTimeout(() => fetchData(1, null), searchTerm.trim() ? 350 : 0);
+        const timer = setTimeout(() => fetchData(), searchTerm.trim() ? 350 : 0);
         return () => clearTimeout(timer);
     }, [fetchData, filter, searchTerm]);
 
@@ -787,7 +771,7 @@ export default function ArchiveDocumentsPage() {
                                 >
                                     <Download size={14} /> Export
                                 </button>
-                                <button onClick={() => fetchData(1, null)} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
+                                <button onClick={() => fetchData()} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-all">
                                     <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
                                 </button>
                             </div>
@@ -1053,32 +1037,6 @@ export default function ArchiveDocumentsPage() {
                                 </div>
                             );
                         })}
-                        {(page > 1 || hasNextPage) && (
-                            <div className="flex items-center justify-between pt-4 px-1">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                    Səhifə {page} - bu səhifədə {filteredCustomers.length} iş
-                                </span>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => fetchData(Math.max(1, page - 1), pageCursors[Math.max(0, page - 2)] || null)}
-                                        disabled={page === 1 || loading}
-                                        className="h-9 w-9 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
-                                    >
-                                        <ChevronLeft size={16} />
-                                    </button>
-                                    <span className="h-9 min-w-[48px] px-3 rounded-xl bg-slate-900 text-white text-[12px] font-black flex items-center justify-center">
-                                        {page}
-                                    </span>
-                                    <button
-                                        onClick={() => fetchData(page + 1, pageCursors[page] || null)}
-                                        disabled={!hasNextPage || loading}
-                                        className="h-9 w-9 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
-                                    >
-                                        <ChevronRight size={16} />
-                                    </button>
-                                </div>
-                            </div>
-                        )}
                     </div>
 
                     {/* Bulk Action Bar - Floating Center Pill */}
