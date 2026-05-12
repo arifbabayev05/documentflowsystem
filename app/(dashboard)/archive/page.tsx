@@ -160,44 +160,6 @@ export default function ArchiveDocumentsPage() {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const CUTOFF_DATE = new Date("2026-03-04T00:00:00").getTime();
-            const getRequestTime = (c: CustomerRow) => {
-                const invoices = c.details?.invoices?.filter(inv => inv.archiveRequested || inv.archiveUrl) || [];
-                const invoiceTimes = invoices
-                    .map(inv => inv.archiveRequestedAt ? (parseDate(inv.archiveRequestedAt)?.getTime() || 0) : 0)
-                    .filter(Boolean);
-                if (invoiceTimes.length > 0) return Math.max(...invoiceTimes);
-                const latestAction = c.statusHistory
-                    ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
-                    ?.sort((a, b) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[0];
-                return latestAction ? (parseDate(latestAction.timestamp)?.getTime() || 0) : 0;
-            };
-            const matchesArchiveFilter = (c: CustomerRow) => {
-                const invoices = c.details?.invoices?.filter(inv => inv.archiveRequested || inv.archiveUrl) || [];
-                const total = invoices.length;
-                const done = invoices.filter(inv => !!inv.archiveUrl).length;
-                const requestTime = getRequestTime(c);
-                const hasRecentInvoiceAction = invoices.some(inv => {
-                    if (!inv.archiveRequested && !inv.archiveUrl) return false;
-                    if (inv.archiveRequestedAt) {
-                        return (parseDate(inv.archiveRequestedAt)?.getTime() || 0) >= CUTOFF_DATE;
-                    }
-
-                    const latestAction = c.statusHistory
-                        ?.filter(h => h.action === "ARCHIVE_REQUEST" || h.action === "FILE_UPLOAD")
-                        ?.sort((a, b) => (parseDate(b.timestamp)?.getTime() || 0) - (parseDate(a.timestamp)?.getTime() || 0))[0];
-
-                    return latestAction ? (parseDate(latestAction.timestamp)?.getTime() || 0) >= CUTOFF_DATE : false;
-                });
-                if (requestTime < CUTOFF_DATE || requestTime < NEW_ARCHIVE_CUTOFF) return false;
-                if (!hasRecentInvoiceAction) return false;
-                if (!isManager && c.archiveAssignedTo !== user?.email) return false;
-                if (filter === "all" && !c.archiveAssignedTo) return false;
-                if (filter === "unassigned" && !!c.archiveAssignedTo) return false;
-                if (filter === "pending" && (!c.archiveAssignedTo || (total > 0 && done === total))) return false;
-                if (filter === "done" && !(total > 0 && done === total)) return false;
-                return true;
-            };
 
             const custPage = await getCustomerPage({
                 pageSize: ARCHIVE_PAGE_LOAD_LIMIT,
@@ -208,8 +170,7 @@ export default function ArchiveDocumentsPage() {
                     ? `archive:${filter}`
                     : (user?.email ? `archive:${user.email}:all` : undefined),
                 maxReads: ARCHIVE_PAGE_LOAD_LIMIT * 2,
-                searchScanLimit: ARCHIVE_PAGE_LOAD_LIMIT * 2,
-                filter: matchesArchiveFilter
+                searchScanLimit: ARCHIVE_PAGE_LOAD_LIMIT * 2
             });
 
             setCustomers(custPage.rows as CustomerRow[]);
