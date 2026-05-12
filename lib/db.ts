@@ -22,6 +22,9 @@ import {
     increment,
     documentId,
     getCountFromServer,
+    getAggregateFromServer,
+    count,
+    sum,
     QueryConstraint,
     QueryDocumentSnapshot,
     DocumentData
@@ -158,25 +161,51 @@ function uniqueSearchVariants(term: string) {
     ].filter(Boolean)));
 }
 
-function addCustomerSearchMeta(data: any) {
+function buildCustomerSearchValues(data: any) {
     const details = data?.details || {};
-    const values = [
+    return [
+        data?.id,
         data?.customerCode,
         data?.fullName,
         details?.fin,
         details?.passportSeries,
+        details?.phone,
+        details?.contractNumber,
         data?.createdBy,
         data?.assignedTo,
         data?.archiveAssignedTo
     ];
+}
+
+function buildSearchTokens(values: any[]) {
+    return Array.from(new Set(values.flatMap(value =>
+        normalizeSearchValue(value)
+            .split(/[\s,.;:()/_-]+/)
+            .filter(token => token.length >= 2)
+    ))).slice(0, 80);
+}
+
+function buildSearchPrefixes(tokens: string[]) {
+    const prefixes = new Set<string>();
+
+    tokens.forEach(token => {
+        const maxLength = Math.min(token.length, 18);
+        for (let length = 2; length <= maxLength; length += 1) {
+            prefixes.add(token.slice(0, length));
+        }
+    });
+
+    return Array.from(prefixes).slice(0, 300);
+}
+
+function addCustomerSearchMeta(data: any) {
+    const values = buildCustomerSearchValues(data);
+    const tokens = buildSearchTokens(values);
 
     return {
         searchText: values.map(normalizeSearchValue).filter(Boolean).join(" "),
-        searchTokens: Array.from(new Set(values.flatMap(value =>
-            normalizeSearchValue(value)
-                .split(/[\s,.;:()/_-]+/)
-                .filter(token => token.length >= 2)
-        ))).slice(0, 80)
+        searchTokens: tokens,
+        searchPrefixes: buildSearchPrefixes(tokens)
     };
 }
 
@@ -426,31 +455,35 @@ function addArchiveStats(stats: ArchiveTaskStats, filter: ArchiveTaskFilter, cus
 async function getAggregateArchiveStats(userEmail?: string | null): Promise<ArchiveTaskStats> {
     const customersRef = collection(db, CUSTOMERS_COLLECTION);
     const stats = emptyArchiveStats();
-    const assignedKey = userEmail ? `archive:${userEmail}:all` : "archive:all";
-    const assignedSnapPromise = getDocs(query(customersRef, where("archiveFilterKeys", "array-contains", assignedKey)));
-    const unassignedSnapPromise = userEmail
-        ? Promise.resolve(null)
-        : getDocs(query(customersRef, where("archiveFilterKeys", "array-contains", "archive:unassigned")));
+    const aggregateByKey = async (key: string) => {
+        const snap = await getAggregateFromServer(
+            query(customersRef, where("archiveFilterKeys", "array-contains", key)),
+            {
+                jobs: count(),
+                invoices: sum("archiveInvoiceTotal")
+            }
+        );
+        const data = snap.data();
+        return {
+            jobs: Number(data.jobs || 0),
+            invoices: Number(data.invoices || 0)
+        };
+    };
 
-    const [assignedSnap, unassignedSnap] = await Promise.all([assignedSnapPromise, unassignedSnapPromise]);
+    const allKey = userEmail ? `archive:${userEmail}:all` : "archive:all";
+    const pendingKey = userEmail ? `archive:${userEmail}:pending` : "archive:pending";
+    const doneKey = userEmail ? `archive:${userEmail}:done` : "archive:done";
+    const [all, pending, done, unassigned] = await Promise.all([
+        aggregateByKey(allKey),
+        aggregateByKey(pendingKey),
+        aggregateByKey(doneKey),
+        userEmail ? Promise.resolve({ jobs: 0, invoices: 0 }) : aggregateByKey("archive:unassigned")
+    ]);
 
-    assignedSnap.docs.forEach((snapDoc) => {
-        const customer: any = snapDoc.data();
-        const invoices = Number(customer.archiveInvoiceTotal || 0);
-
-        stats.all.jobs += 1;
-        stats.all.invoices += invoices;
-
-        const bucket: ArchiveTaskFilter = customer.archiveIsDone ? "done" : "pending";
-        stats[bucket].jobs += 1;
-        stats[bucket].invoices += invoices;
-    });
-
-    unassignedSnap?.docs.forEach((snapDoc) => {
-        const customer: any = snapDoc.data();
-        stats.unassigned.jobs += 1;
-        stats.unassigned.invoices += Number(customer.archiveInvoiceTotal || 0);
-    });
+    stats.all = all;
+    stats.pending = pending;
+    stats.done = done;
+    stats.unassigned = unassigned;
 
     return stats;
 }
@@ -484,15 +517,7 @@ async function getLegacyArchiveStats(userEmail?: string | null): Promise<Archive
 
 export async function getArchiveTaskStats(userEmail?: string | null): Promise<ArchiveTaskStats> {
     try {
-        const aggregateStats = await getAggregateArchiveStats(userEmail);
-        const legacyStats = await getLegacyArchiveStats(userEmail);
-        const merged = emptyArchiveStats();
-        (["all", "unassigned", "pending", "done"] as ArchiveTaskFilter[]).forEach((filter) => {
-            const aggregate = aggregateStats[filter];
-            const legacy = legacyStats[filter];
-            merged[filter] = legacy.jobs > aggregate.jobs ? legacy : aggregate;
-        });
-        return merged;
+        return await getAggregateArchiveStats(userEmail);
     } catch (e) {
         console.warn("archive stats fallback:", e);
         return getLegacyArchiveStats(userEmail);
@@ -617,7 +642,7 @@ export async function getDashboardWorkloadStats(emails: string[] = []): Promise<
     return Object.fromEntries(entries);
 }
 
-export async function getArchiveWorkloadStats(emails: string[] = []): Promise<Record<string, ArchiveWorkloadStat>> {
+async function getArchiveWorkloadStatsByReadingDocs(emails: string[] = []): Promise<Record<string, ArchiveWorkloadStat>> {
     const allowedEmails = new Set(emails.filter(Boolean));
     const customersRef = collection(db, CUSTOMERS_COLLECTION);
     const stats: Record<string, ArchiveWorkloadStat> = {};
@@ -644,6 +669,44 @@ export async function getArchiveWorkloadStats(emails: string[] = []): Promise<Re
     });
 
     return stats;
+}
+
+export async function getArchiveWorkloadStats(emails: string[] = []): Promise<Record<string, ArchiveWorkloadStat>> {
+    const uniqueEmails = Array.from(new Set(emails.filter(Boolean)));
+    if (uniqueEmails.length === 0) return {};
+
+    const customersRef = collection(db, CUSTOMERS_COLLECTION);
+
+    try {
+        const entries = await Promise.all(uniqueEmails.map(async (email) => {
+            const [allSnap, doneSnap] = await Promise.all([
+                getAggregateFromServer(
+                    query(customersRef, where("archiveFilterKeys", "array-contains", `archive:${email}:all`)),
+                    {
+                        customerCount: count(),
+                        invoiceCount: sum("archiveInvoiceTotal"),
+                        invoiceDone: sum("archiveInvoiceDone")
+                    }
+                ),
+                getCountFromServer(query(
+                    customersRef,
+                    where("archiveFilterKeys", "array-contains", `archive:${email}:done`)
+                ))
+            ]);
+            const allData = allSnap.data();
+            return [email, {
+                customerCount: Number(allData.customerCount || 0),
+                invoiceCount: Number(allData.invoiceCount || 0),
+                customerDone: Number(doneSnap.data().count || 0),
+                invoiceDone: Number(allData.invoiceDone || 0)
+            }] as const;
+        }));
+
+        return Object.fromEntries(entries);
+    } catch (error) {
+        console.warn("archive workload aggregate fallback:", error);
+        return getArchiveWorkloadStatsByReadingDocs(uniqueEmails);
+    }
 }
 
 // Permissions Logic
@@ -959,12 +1022,25 @@ async function getCustomerSearchPage(options: CustomerPageOptions): Promise<Cust
         queryJobs.push(runAndMerge(constraints));
     };
 
-    const exactDocPromise = getCustomer(term).catch(() => null);
+    const exactDoc = await getCustomer(term).catch(() => null);
+    if (exactDoc && customerMatchesOptions(exactDoc, options)) {
+        return {
+            rows: page === 1 ? [exactDoc] : [],
+            cursor: null,
+            hasMore: false,
+            searchMode: true,
+            readCount: 1
+        };
+    }
 
     const token = normalizeSearchValue(term).split(" ")[0];
     if (token.length >= 2) {
         queueAndMerge([
             where("searchTokens", "array-contains", token),
+            limit(perQueryLimit)
+        ]);
+        queueAndMerge([
+            where("searchPrefixes", "array-contains", token),
             limit(perQueryLimit)
         ]);
     }
@@ -1020,18 +1096,16 @@ async function getCustomerSearchPage(options: CustomerPageOptions): Promise<Cust
     }
 
     await Promise.all(queryJobs);
-    const exactDoc = await exactDocPromise;
-    if (exactDoc && customerMatchesOptions(exactDoc, options)) {
-        byId.set((exactDoc as any).id, exactDoc);
-    }
 
     if (term.length >= 2 && byId.size < needed) {
-        const scanLimit = Math.max(needed, options.searchScanLimit ?? 3000);
+        const scanLimit = options.searchScanLimit === undefined
+            ? Math.max(needed, 3000)
+            : Math.max(0, options.searchScanLimit);
         let scanCursor: CustomerPageCursor = null;
         let scanned = 0;
         let scanReachedEnd = false;
 
-        while (byId.size < needed && scanned < scanLimit) {
+        while (scanLimit > 0 && byId.size < needed && scanned < scanLimit) {
             const currentLimit = Math.min(250, scanLimit - scanned);
             const scanConstraints: QueryConstraint[] = [
                 ...(scopedSearchKey ? [where(scopedSearchKey.field, "array-contains", scopedSearchKey.value)] : []),

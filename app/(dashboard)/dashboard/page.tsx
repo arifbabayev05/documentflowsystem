@@ -3143,6 +3143,8 @@ export default function DashboardPage() {
             const isManagerRole = hasDashboardRole(user?.role, DASHBOARD_GLOBAL_ROLES);
             const selectedAssignedTo = executorFilter !== "all" ? executorFilter : undefined;
             const hasClientOnlyFilters = warningFilter !== "all" || (invoiceMode !== "all" && invoiceCount !== "");
+            const searchReadLimit = Math.min(1000, Math.max(150, targetPage * itemsPerPage + 1));
+            const searchScanLimit = Math.min(1000, Math.max(300, targetPage * itemsPerPage + 1));
             const data = await getCustomerPage({
                 pageSize: itemsPerPage,
                 cursor,
@@ -3150,8 +3152,8 @@ export default function DashboardPage() {
                 searchTerm,
                 sortBy: "updatedAt",
                 scope: statusFilter === 'UNFINISHED_ARCHIVE' ? 'all' : 'active',
-                maxReads: searchTerm.trim() ? 1000 : (hasClientOnlyFilters || statusFilter !== "all" || selectedAssignedTo ? 5000 : 2500),
-                searchScanLimit: 5000,
+                maxReads: searchTerm.trim() ? searchReadLimit : (hasClientOnlyFilters || statusFilter !== "all" || selectedAssignedTo ? 5000 : 2500),
+                searchScanLimit: searchTerm.trim() ? searchScanLimit : 5000,
                 filter: (c: CustomerRow) => {
                     const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
                     const isAssignedToMe = c.assignedTo === user?.email;

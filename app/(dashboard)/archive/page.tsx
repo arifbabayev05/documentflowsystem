@@ -247,7 +247,10 @@ export default function ArchiveDocumentsPage() {
     }, [isManager, user?.email]);
 
     const refreshArchiveWorkloads = useCallback(async (users = archivers) => {
-        const emails = users.map((u: any) => u.email || u.id).filter(Boolean);
+        const emails = Array.from(new Set([
+            ...users.map((u: any) => u.email || u.id),
+            user?.email
+        ].filter(Boolean)));
         if (emails.length === 0) {
             setArchiveWorkloads({});
             return;
@@ -258,17 +261,20 @@ export default function ArchiveDocumentsPage() {
         } catch (error) {
             console.warn("Archive workload stats failed:", error);
         }
-    }, [archivers]);
+    }, [archivers, user?.email]);
 
     useEffect(() => {
         getAllUsers().then(users => {
             const archiveUsers = (users as any[]).filter(u => u.role === "ARCHIVER" || u.role === "ARCHIVE_MANAGER");
             setArchivers(archiveUsers);
-            getArchiveWorkloadStats(archiveUsers.map((u: any) => u.email || u.id).filter(Boolean))
+            getArchiveWorkloadStats(Array.from(new Set([
+                ...archiveUsers.map((u: any) => u.email || u.id),
+                user?.email
+            ].filter(Boolean))))
                 .then(setArchiveWorkloads)
                 .catch(error => console.warn("Archive workload stats failed:", error));
         });
-    }, []);
+    }, [user?.email]);
 
     useEffect(() => {
         refreshArchiveTaskStats();
@@ -554,44 +560,34 @@ export default function ArchiveDocumentsPage() {
     }, [selectedArchiverEmail, archiverWorkloads]);
 
     const overallStats = useMemo(() => {
-        let targets = selectedArchiverEmail
-            ? customers.filter(c => c.archiveAssignedTo === selectedArchiverEmail)
-            : customers;
+        const sumWorkload = (list: Array<ArchiveWorkloadStat>) => list.reduce((acc, item) => ({
+            customerCount: acc.customerCount + Number(item.customerCount || 0),
+            invoiceCount: acc.invoiceCount + Number(item.invoiceCount || 0),
+            customerDone: acc.customerDone + Number(item.customerDone || 0),
+            invoiceDone: acc.invoiceDone + Number(item.invoiceDone || 0)
+        }), { customerCount: 0, invoiceCount: 0, customerDone: 0, invoiceDone: 0 });
 
-        targets = targets.filter(c => getArchiveRequestTime(c) >= NEW_ARCHIVE_CUTOFF);
+        const workload = selectedArchiverEmail
+            ? (statsArchiver || { customerCount: 0, invoiceCount: 0, customerDone: 0, invoiceDone: 0 })
+            : sumWorkload(archiverWorkloads);
 
-        const { totalInv, doneInv } = getTotalInvoiceCounts(targets);
-
-        // Store breakdown
-        const storeStats: Record<string, { total: number, done: number }> = {};
-        targets.forEach(c => {
-            const store = c.store || "Seçilməyən Mağaza";
-            if (!storeStats[store]) storeStats[store] = { total: 0, done: 0 };
-            const { total, done } = getArchiveCounts(c);
-            storeStats[store].total += total;
-            storeStats[store].done += done;
-        });
-
-        const storeDist = Object.entries(storeStats)
-            .map(([name, data]) => ({
-                name,
-                ...data,
-                rate: data.total > 0 ? Math.round((data.done / data.total) * 100) : 0
-            }))
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 4);
+        const totalCustomers = Number(workload.customerCount || 0);
+        const totalInvoices = Number(workload.invoiceCount || 0);
+        const doneCustomers = Number(workload.customerDone || 0);
+        const doneInvoices = Number(workload.invoiceDone || 0);
 
         return {
-            totalCustomers: targets.length,
-            totalInvoices: totalInv,
-            doneInvoices: doneInv,
-            pendingInvoices: totalInv - doneInv,
-            pendingCustomers: targets.filter(c => !isCustomerDone(c)).length,
-            completionRate: totalInv > 0 ? Math.round((doneInv / totalInv) * 100) : 0,
-            avgInvoices: targets.length > 0 ? (totalInv / targets.length).toFixed(1) : "0",
-            storeDist
+            totalCustomers,
+            totalInvoices,
+            doneInvoices,
+            pendingInvoices: Math.max(0, totalInvoices - doneInvoices),
+            pendingCustomers: Math.max(0, totalCustomers - doneCustomers),
+            completionRate: totalInvoices > 0 ? Math.round((doneInvoices / totalInvoices) * 100) : 0,
+            avgInvoices: totalCustomers > 0 ? (totalInvoices / totalCustomers).toFixed(1) : "0",
+            storeDist: [] as Array<{ name: string; total: number; done: number; rate: number }>
         };
-    }, [customers, selectedArchiverEmail, getTotalInvoiceCounts, getArchiveRequestTime]);
+
+    }, [archiverWorkloads, selectedArchiverEmail, statsArchiver]);
 
     useEffect(() => {
         if (isExportModalOpen) {
