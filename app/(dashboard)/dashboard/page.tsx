@@ -3145,22 +3145,23 @@ export default function DashboardPage() {
             const hasClientOnlyFilters = warningFilter !== "all" || (invoiceMode !== "all" && invoiceCount !== "");
             const searchReadLimit = Math.min(1000, Math.max(150, targetPage * itemsPerPage + 1));
             const searchScanLimit = Math.min(1000, Math.max(300, targetPage * itemsPerPage + 1));
+            const serverAssignedTo = selectedAssignedTo || (!isManagerRole ? user?.email : undefined);
             const data = await getCustomerPage({
                 pageSize: itemsPerPage,
                 cursor,
                 page: targetPage,
                 searchTerm,
-                sortBy: "updatedAt",
+                assignedTo: serverAssignedTo,
+                status: statusFilter !== "all" ? statusFilter : undefined,
+                sortBy: serverAssignedTo ? "documentId" : "updatedAt",
                 scope: statusFilter === 'UNFINISHED_ARCHIVE' ? 'all' : 'active',
-                maxReads: searchTerm.trim() ? searchReadLimit : (hasClientOnlyFilters || statusFilter !== "all" || selectedAssignedTo ? 5000 : 2500),
+                maxReads: searchTerm.trim() ? searchReadLimit : (hasClientOnlyFilters || statusFilter !== "all" || serverAssignedTo ? 5000 : 2500),
                 searchScanLimit: searchTerm.trim() ? searchScanLimit : 5000,
                 filter: (c: CustomerRow) => {
                     const canSeeUnfinished = user?.role === 'ADMIN' && c.process_status === 'UNFINISHED_ARCHIVE' && !c.assignedTo;
                     const isAssignedToMe = c.assignedTo === user?.email;
                     if (!isManagerRole && !isAssignedToMe && !canSeeUnfinished) return false;
                     if (c.isArchived && statusFilter !== 'UNFINISHED_ARCHIVE') return false;
-                    if (selectedAssignedTo && c.assignedTo !== selectedAssignedTo) return false;
-                    if (statusFilter !== "all" && c.process_status !== statusFilter) return false;
 
                     const isSent = !!c.details?.isWarningSent;
                     const overdue = isOverdue(c.details?.warningDate);
